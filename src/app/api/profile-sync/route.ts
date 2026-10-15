@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { guardRequest, jsonError } from '@/lib/api-guard';
 import {
   PROFILE_CATALOG_KEY,
+  deleteStoredJson,
   profileDataKey,
   readStoredJson,
   writeStoredJson,
@@ -74,6 +75,22 @@ export async function PUT(req: Request) {
     });
     await writeStoredJson(profileDataKey(body.id), json);
     await writeStoredJson(PROFILE_CATALOG_KEY, JSON.stringify({ profiles }));
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    return jsonError(err instanceof Error ? err.message : '同步存储不可用', 503);
+  }
+}
+
+/** 从「谁在看」名单和云端资料里删掉一个设定档。 */
+export async function DELETE(req: Request) {
+  const guarded = guardRequest(req);
+  if (guarded) return guarded;
+  const id = new URL(req.url).searchParams.get('id') || '';
+  if (!id) return jsonError('设定档无效', 400);
+  try {
+    const profiles = (await readCatalog()).filter((item) => item.id !== id);
+    await writeStoredJson(PROFILE_CATALOG_KEY, JSON.stringify({ profiles }));
+    await deleteStoredJson(profileDataKey(id));
     return NextResponse.json({ ok: true });
   } catch (err) {
     return jsonError(err instanceof Error ? err.message : '同步存储不可用', 503);

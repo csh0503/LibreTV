@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from 'fs/promises';
 import path from 'path';
-import { get, put } from '@vercel/blob';
+import { del, get, put } from '@vercel/blob';
+import { unlink } from 'fs/promises';
 
 
 /**
@@ -76,6 +77,27 @@ export async function writeStoredJson(key: string, json: string): Promise<void> 
   const target = filePath(key);
   await mkdir(path.dirname(target), { recursive: true });
   await writeFile(target, json, 'utf8');
+}
+
+export async function deleteStoredJson(key: string): Promise<void> {
+  const kind = backend();
+  if (kind === 'kv') {
+    await kvCommand(['DEL', `profile:${key}`]);
+    return;
+  }
+  if (kind === 'blob') {
+    try {
+      await del(`profile-sync/${key}`);
+    } catch {
+      // 本来就没有这份资料时，删名单即可
+    }
+    return;
+  }
+  try {
+    await unlink(filePath(key));
+  } catch {
+    // 本地文件不存在
+  }
 }
 
 export function profileDataKey(id: string): string {

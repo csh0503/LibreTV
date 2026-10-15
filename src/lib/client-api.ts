@@ -144,6 +144,9 @@ export const api = {
       body: JSON.stringify(input),
     }),
 
+  profileSyncDelete: (id: string) =>
+    request<{ ok: boolean }>(`/api/profile-sync?id=${encodeURIComponent(id)}`, { method: 'DELETE' }),
+
   /**
    * 聚合搜索。传入 onSource 时走 /api/search?stream=1 的 NDJSON 流：
    * 每个源结算立即回调（健康源结果不再等坏源超时），最终以聚合结果 resolve。

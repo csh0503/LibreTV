@@ -94,9 +94,9 @@ export function Drawer({
   useEffect(() => {
     if (!mounted) return;
     const handler = (e: KeyboardEvent) => {
+      // 上层确认框打开时，Esc 和 Tab 都留给它，避免焦点被拉回抽屉或把抽屉一起关掉
+      if (document.querySelector('[role="alertdialog"]')) return;
       if (e.key === 'Escape') {
-        // 抽屉内若有确认弹窗等上层对话框（role=alertdialog），Esc 交给它处理，避免一并关闭抽屉
-        if (document.querySelector('[role="alertdialog"]')) return;
         e.stopPropagation();
         onClose();
         return;

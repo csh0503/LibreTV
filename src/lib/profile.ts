@@ -6,6 +6,7 @@ import {
   resetProfileReady,
   setProfileSnapshot,
 } from './profile-session';
+import { api } from './client-api';
 import { createSyncSecret } from './sync-code';
 import { markProfileDirty } from './profile-session';
 import { useAppStore, type LiveRecentEntry } from './store';
@@ -252,6 +253,11 @@ export async function renameProfile(id: string, name: string): Promise<void> {
 export async function deleteProfile(id: string): Promise<void> {
   const all = await db.profiles.orderBy('createdAt').toArray();
   if (all.length <= 1) throw new Error('至少留一个设定档');
+  try {
+    await api.profileSyncDelete(id);
+  } catch {
+    // 云端没有这份时，仍然删本机
+  }
   await db.transaction('rw', [db.profiles, db.history, db.favorites, db.progress, db.savedSearches], async () => {
     await db.profiles.delete(id);
     await db.history.where('profileId').equals(id).delete();
