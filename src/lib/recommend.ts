@@ -85,7 +85,8 @@ export function buildDoubanRequest(sel: HallSelection): DoubanRequest | null {
   if (sel.area !== '全部') tags.push(sel.area);
   const year = yearSelection(sel.year);
   if (year.tag) tags.push(year.tag);
-  if (tags.length === 0) tags.push('热门');
+  // 豆瓣不认「热门」这个标签，会返回 0 条。电影频道没有基础标签时用「电影」。
+  if (tags.length === 0) tags.push('电影');
   const score = scoreRange(sel.score);
   return {
     kind,

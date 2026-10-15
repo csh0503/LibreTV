@@ -31,8 +31,8 @@ describe('buildDoubanRequest', () => {
     });
   });
 
-  it('没有筛选时电影用热门，区间年份先取年代再留给客户端裁剪', () => {
-    expect(buildDoubanRequest(base)?.tags).toEqual(['热门']);
+  it('没有筛选时电影用「电影」，区间年份先取年代再留给客户端裁剪', () => {
+    expect(buildDoubanRequest(base)?.tags).toEqual(['电影']);
     expect(buildDoubanRequest({ ...base, channel: 'tv', year: '2015-2018' })).toMatchObject({
       kind: 'tv',
       tags: ['电视剧', '2010年代'],
