@@ -5,6 +5,7 @@ import type { SearchResultItem } from '@/lib/types';
 import { useAppStore } from '@/lib/store';
 import { cn } from '@/lib/utils';
 import { SmartImage } from './smart-image';
+import { titleMatchesQuery } from '@/lib/title-aliases';
 import { FavoriteButton } from './favorite-button';
 import type { FavoriteEntry } from '@/lib/db';
 
@@ -37,11 +38,14 @@ function buildGroup(name: string, year: string | undefined, items: SearchResultI
  * - 以名称分桶；桶内年份不一致时（同名翻拍）按年份拆分，无年份的条目并入年份桶；
  * - 保持传入顺序（搜索结果已按名称排序）。
  */
-export function aggregateResults(list: SearchResultItem[]): AggregatedGroup[] {
+export function aggregateResults(list: SearchResultItem[], query?: string): AggregatedGroup[] {
   const byName = new Map<string, SearchResultItem[]>();
+  const searched = query?.trim();
   for (const item of list) {
-    const k = (item.name || '').trim();
-    if (!k) continue;
+    const raw = (item.name || '').trim();
+    if (!raw) continue;
+    // 海贼王和航海王收成用户点的那张卡片，来源行仍显示片源站上的原名
+    const k = searched && titleMatchesQuery(raw, searched) ? searched : raw;
     if (!byName.has(k)) byName.set(k, []);
     byName.get(k)!.push(item);
   }

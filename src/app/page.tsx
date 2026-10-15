@@ -166,7 +166,7 @@ function HomeContent() {
       .filter((o) => !o.ok)
       .map((o) => ({ sourceKey: o.sourceKey, error: o.error || '请求失败', timedOut: o.timedOut }));
   // 跨源同名聚合：同名影片合并为一张卡片，展开后可选择具体来源
-  const groups = useMemo(() => aggregateResults(list), [list]);
+  const groups = useMemo(() => aggregateResults(list, urlQuery), [list, urlQuery]);
 
   // 分批渲染：新一次搜索（groups 变化）时重置回首批
   const [visibleCount, setVisibleCount] = useState(RESULT_PAGE_SIZE);
@@ -346,6 +346,11 @@ function HomeContent() {
                 )}
               </h2>
             </div>
+            {searchQuery.data?.aliases && searchQuery.data.aliases.length > 0 && (
+              <p className="text-xs text-faint mb-3 -mt-1">
+                片源站常用别名，已同时搜索：{searchQuery.data.aliases.join('、')}
+              </p>
+            )}
 
             {failures.length > 0 && (
               <div className="mb-3 text-xs bg-chip rounded-lg px-3 py-2 flex flex-wrap gap-x-3 gap-y-1">

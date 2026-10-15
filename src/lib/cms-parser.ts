@@ -269,7 +269,9 @@ export function isRelevant(name: string, wd: string): boolean {
  * 结果相关性过滤：丢弃与关键词无关的条目。
  * 过滤后为空时回退到原列表——宁可多展示也不把源站唯一可用的结果清空。
  */
-export function filterRelevantResults<T extends { name?: string }>(items: T[], wd: string): T[] {
-  const filtered = items.filter((item) => isRelevant(item.name || '', wd));
+export function filterRelevantResults<T extends { name?: string }>(items: T[], wd: string | string[]): T[] {
+  const terms = (Array.isArray(wd) ? wd : [wd]).map((term) => term.trim()).filter(Boolean);
+  if (terms.length === 0) return items;
+  const filtered = items.filter((item) => terms.some((term) => isRelevant(item.name || '', term)));
   return filtered.length > 0 ? filtered : items;
 }

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { guardRequest } from '@/lib/api-guard';
 import { cmsRequestHeaders, filterAdultResults, filterRelevantResults, normalizeTitle, parseSearchList } from '@/lib/cms-parser';
+import { expandSearchTerms } from '@/lib/title-aliases';
 import { fetchUpstream, getCache, setCache } from '@/lib/fetch-utils';
 import { checkUpstreamAllowed } from '@/lib/ssrf';
 import type { SearchResponse, SearchStreamEvent, SourceConfig, SourceSearchOutcome } from '@/lib/types';
@@ -91,8 +92,9 @@ async function searchSource(source: SourceConfig, wd: string): Promise<SourceSea
   });
 
   const base = source.url.replace(/\/+$/, '');
-  const fetchPage = async (page: number) => {
-    const api = `${base}?ac=videolist&wd=${encodeURIComponent(wd)}&pg=${page}`;
+  const terms = expandSearchTerms(wd);
+  const fetchPage = async (term: string, page: number) => {
+    const api = `${base}?ac=videolist&wd=${encodeURIComponent(term)}&pg=${page}`;
     const res = await fetchUpstream(api, {
       timeoutMs: 8000,
       headers: cmsRequestHeaders(),
@@ -102,17 +104,16 @@ async function searchSource(source: SourceConfig, wd: string): Promise<SourceSea
     return res.json();
   };
 
-  const run = async (): Promise<SourceSearchOutcome> => {
-    const first = await fetchPage(1);
+  const fetchTerm = async (term: string, maxPages: number) => {
+    const first = await fetchPage(term, 1);
     const list = parseSearchList(first, source);
-    // 源站真实总页数与配置上限取较小者；pagecount 缺失或非法时视为 1 页
     const rawPageCount = parseInt(String((first as { pagecount?: unknown }).pagecount ?? '1'), 10);
-    const pageCount = Math.min(Number.isFinite(rawPageCount) ? Math.max(1, rawPageCount) : 1, SEARCH_MAX_PAGES);
+    const pageCount = Math.min(Number.isFinite(rawPageCount) ? Math.max(1, rawPageCount) : 1, maxPages);
     if (pageCount > 1) {
       const extraPages = await Promise.all(
         Array.from({ length: pageCount - 1 }, (_, i) => i + 2).map(async (page) => {
           try {
-            return parseSearchList(await fetchPage(page), source);
+            return parseSearchList(await fetchPage(term, page), source);
           } catch {
             return [];
           }
@@ -120,6 +121,30 @@ async function searchSource(source: SourceConfig, wd: string): Promise<SourceSea
       );
       list.push(...extraPages.flat());
     }
+    return list;
+  };
+
+  const run = async (): Promise<SourceSearchOutcome> => {
+    // 原词翻多页；别名只取第一页，避免每个源的请求量成倍涨
+    let primaryError: unknown;
+    const parts = await Promise.all(
+      terms.map(async (term, index) => {
+        try {
+          return await fetchTerm(term, index === 0 ? SEARCH_MAX_PAGES : 1);
+        } catch (err) {
+          if (index === 0) primaryError = err;
+          return [];
+        }
+      })
+    );
+    const seen = new Set<string>();
+    const list = parts.flat().filter((item) => {
+      const key = item.vodId;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    if (list.length === 0 && primaryError) throw primaryError;
     return { sourceKey: source.key, ok: true, list };
   };
 
@@ -161,14 +186,19 @@ function aggregateOutcomes(outcomes: SourceSearchOutcome[], wd: string, filterAd
   });
 
   list = filterAdultResults(list, filterAdult);
-  // 部分源站做分词/OR 模糊搜索（搜「摔跤吧！爸爸」返回一堆「爸爸XXX」），按关键词过滤
-  list = filterRelevantResults(list, wd);
+  // 别名（海贼王）和原词（航海王）都算命中，避免别名结果被相关性过滤丢掉
+  const terms = expandSearchTerms(wd);
+  list = filterRelevantResults(list, terms);
 
-  // 精确命中（忽略标点差异）排在最前，其余按名称（与旧版一致），名称相同按源名
-  const exact = normalizeTitle(wd);
+  const ranks = terms.map((term) => normalizeTitle(term));
+  const rankOf = (name: string) => {
+    const n = normalizeTitle(name || '');
+    const index = ranks.findIndex((term) => term && n === term);
+    return index === -1 ? ranks.length : index;
+  };
   list.sort((a, b) => {
-    const aExact = normalizeTitle(a.name || '') === exact ? 0 : 1;
-    const bExact = normalizeTitle(b.name || '') === exact ? 0 : 1;
+    const aExact = rankOf(a.name || '');
+    const bExact = rankOf(b.name || '');
     if (aExact !== bExact) return aExact - bExact;
     const nameCompare = (a.name || '').localeCompare(b.name || '', 'zh-Hans-CN');
     if (nameCompare !== 0) return nameCompare;
@@ -179,7 +209,8 @@ function aggregateOutcomes(outcomes: SourceSearchOutcome[], wd: string, filterAd
     .filter((o) => !o.ok)
     .map((o) => ({ sourceKey: o.sourceKey, error: o.error || '请求失败', timedOut: o.timedOut }));
 
-  return { list, failures };
+  const aliases = expandSearchTerms(wd).slice(1);
+  return { list, failures, ...(aliases.length > 0 ? { aliases } : null) };
 }
 
 /**

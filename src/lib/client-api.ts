@@ -312,7 +312,7 @@ async function searchStream(
       if (event.type === 'source') {
         onSource(event);
       } else if (event.type === 'done') {
-        final = { list: event.list, failures: event.failures };
+        final = { list: event.list, failures: event.failures, aliases: event.aliases };
       }
     });
     return final;

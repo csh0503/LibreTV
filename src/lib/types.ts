@@ -102,12 +102,14 @@ export interface SourceSearchOutcome {
 export interface SearchResponse {
   list: SearchResultItem[];
   failures: { sourceKey: string; error: string; timedOut?: boolean }[];
+  /** 除用户输入外额外搜过的通行名，例如搜航海王时的海贼王 */
+  aliases?: string[];
 }
 
 /** /api/search?stream=1 的 NDJSON 事件：逐源推送 + 最终聚合 */
 export type SearchStreamEvent =
   | ({ type: 'source' } & SourceSearchOutcome)
-  | { type: 'done'; list: SearchResultItem[]; failures: SearchResponse['failures'] };
+  | { type: 'done'; list: SearchResultItem[]; failures: SearchResponse['failures']; aliases?: string[] };
 
 export interface DoubanResponse {
   items: DoubanItem[];
