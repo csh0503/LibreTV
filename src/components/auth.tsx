@@ -6,6 +6,7 @@ import { api, onUnauthorized, STATUS_QUERY_KEY } from '@/lib/client-api';
 import { applyEnvPresets } from '@/lib/subscription-sync';
 import type { AuthStatusResponse } from '@/lib/types';
 import { useToast } from './toast';
+import { ProfileGate } from './profile-gate';
 
 /**
  * 认证上下文：
@@ -117,6 +118,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   return (
     <AuthContext.Provider value={{ checked, verified, setupRequired, version, openLogin, logout }}>
       {children}
+      {verified && <ProfileGate />}
       {modalOpen && (
         <LoginModal
           setupRequired={setupRequired}
