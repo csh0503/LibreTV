@@ -44,6 +44,7 @@ describe('buildDoubanRequest', () => {
     expect(buildDoubanRequest({ ...base, channel: 'show', genre: '音乐' })?.tags).toEqual(['综艺', '音乐']);
     expect(buildDoubanRequest({ ...base, channel: 'doc' })).toMatchObject({ kind: 'movie', tags: ['纪录片'] });
     expect(buildDoubanRequest({ ...base, channel: 'anime', genre: '热血' })?.tags).toEqual(['动画', '热血']);
+    expect(buildDoubanRequest({ ...base, channel: 'anime', genre: '机战' })?.tags).toEqual(['动画', '机甲']);
     expect(buildDoubanRequest({ ...base, channel: 'adult' })).toBeNull();
   });
 });
@@ -71,8 +72,10 @@ describe('rexxarToItem / deriveStatus', () => {
     expect(rexxarToItem({ ...raw, episodes_info: '更新至18集', year: '2024' }, true, 2026)?.status).toBe('airing');
     expect(rexxarToItem(raw, false, 2026)?.status).toBeUndefined();
     expect(deriveStatus({ episodesInfo: '全12集', year: '2026' }, 2026)).toBe('ended');
+    expect(deriveStatus({ episodesInfo: '47集全', year: '2026' }, 2026)).toBe('ended');
     expect(deriveStatus({ fromCalendar: true, year: '2020' }, 2026)).toBe('airing');
-    expect(deriveStatus({ year: '2026' }, 2026)).toBeUndefined();
+    expect(deriveStatus({ year: '2026' }, 2026)).toBe('airing');
+    expect(deriveStatus({ year: '2016' }, 2026)).toBe('ended');
   });
 });
 
@@ -95,6 +98,14 @@ describe('filterHallItems', () => {
   it('年份区间、地区、评分和成人片名一起生效', () => {
     expect(filterHallItems(items, filter).map((item) => item.id)).toEqual(['2']);
     expect(filterHallItems(items, { ...filter, area: '日本', hideAdult: false, minScore: 9 }).map((item) => item.id)).toEqual(['3']);
+    const airing = filterHallItems(
+      [
+        { id: 'new', title: '新番', cover: 'c', year: '2026', status: 'airing' },
+        { id: 'old', title: '旧番', cover: 'c', year: '2016', status: 'ended' },
+      ],
+      { ...filter, yearRange: null, status: 'airing', hideAdult: false }
+    );
+    expect(airing.map((item) => item.id)).toEqual(['new']);
     expect(areaMatches('华语', '中国大陆')).toBe(true);
     expect(areaMatches('中国台湾', '中国大陆')).toBe(false);
   });

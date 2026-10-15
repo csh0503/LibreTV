@@ -81,7 +81,7 @@ export function buildDoubanRequest(sel: HallSelection): DoubanRequest | null {
     null;
   const tags: string[] = [];
   if (base) tags.push(base);
-  if (sel.genre !== '全部') tags.push(sel.genre);
+  if (sel.genre !== '全部') tags.push(genreTag(sel.genre));
   if (sel.area !== '全部') tags.push(sel.area);
   const year = yearSelection(sel.year);
   if (year.tag) tags.push(year.tag);
@@ -98,6 +98,15 @@ export function buildDoubanRequest(sel: HallSelection): DoubanRequest | null {
   };
 }
 
+/** 豆瓣不认的芯片词，换成它实际能搜到的标签。 */
+const GENRE_TAGS: Record<string, string> = {
+  机战: '机甲',
+};
+
+function genreTag(genre: string): string {
+  return GENRE_TAGS[genre] ?? genre;
+}
+
 export function areaMatches(filter: string, itemArea: string): boolean {
   if (filter === '全部') return true;
   const keys = AREA_GROUPS[filter] ?? [filter];
@@ -111,11 +120,13 @@ export function deriveStatus(
   if (input.fromCalendar) return 'airing';
   const text = input.episodesInfo ?? '';
   if (/更新|连载/.test(text)) return 'airing';
-  if (/完结|已完结|全集|全\d+\s*集/.test(text)) return 'ended';
+  // 「47集全」是豆瓣常见的完结写法，不只「全47集」
+  if (/完结|已完结|全集|全\d+\s*集|\d+\s*集全/.test(text)) return 'ended';
   const year = parseInt(input.year ?? '', 10);
-  // 今年的片子没有更新说明时不猜：可能刚上，也可能还在播
-  if (Number.isFinite(year) && year > 0 && year <= nowYear - 1) return 'ended';
-  return undefined;
+  if (!Number.isFinite(year) || year <= 0) return undefined;
+  // 今年的条目当成还在播，否则「连载中」会把整页滤空
+  if (year >= nowYear) return 'airing';
+  return 'ended';
 }
 
 /** 豆瓣 rexxar /movie|tv/recommend 的单条 items */
@@ -131,7 +142,7 @@ export function rexxarToItem(raw: unknown, isTv: boolean, nowYear: number): Doub
   const subtitle = typeof row.card_subtitle === 'string' ? row.card_subtitle : '';
   const parts = subtitle.split('/').map((part) => part.trim());
   const yearFromSub = parts[0] && /^\d{4}$/.test(parts[0]) ? parts[0] : undefined;
-  const yearField = typeof row.year === 'string' && /^\d{4}$/.test(row.year) ? row.year : undefined;
+  const yearField = yearText(row.year);
   const year = yearField || yearFromSub;
   const area = parts[1] || undefined;
   const genres = parts[2] || undefined;
@@ -166,6 +177,12 @@ export interface HallFilter {
   hideAdult: boolean;
 }
 
+function yearText(value: unknown): string | undefined {
+  if (typeof value === 'number' && value >= 1900 && value <= 2100) return String(value);
+  if (typeof value === 'string' && /^\d{4}$/.test(value)) return value;
+  return undefined;
+}
+
 function inYearRange(year: string | undefined, range: [number, number]): boolean {
   const y = parseInt(year ?? '', 10);
   if (!Number.isFinite(y)) return false;
@@ -177,10 +194,10 @@ export function filterHallItems(items: DoubanItem[], filter: HallFilter): Douban
     if (filter.hideAdult && (isAdultContent(item.title) || isAdultContent(item.genres) || isAdultContent(item.remarks))) {
       return false;
     }
-    if (filter.yearRange && !inYearRange(item.year, filter.yearRange)) return false;
-    if (filter.area !== '全部' && item.area && !areaMatches(filter.area, item.area)) return false;
-    // 题材不再按副标题抠字。豆瓣标签「热血」返回的片子副标题常写成「动作 奇幻」，
-    // 按芯片文字再滤一遍会把整页清空，页面就停在骨架上。
+    // 没解析出年份就留着：请求里已经带了年份标签。解析出来且落在区间外才丢掉。
+    if (filter.yearRange && item.year && !inYearRange(item.year, filter.yearRange)) return false;
+    // 地区、题材都不再按副标题抠字。豆瓣「热血」的副标题常是「动作 奇幻」，
+    // 「华语」的副标题常是「中国大陆」，再滤一遍会把整页清空。
     if (filter.minScore != null) {
       const score = parseFloat(item.rating ?? '');
       if (!Number.isFinite(score) || score < filter.minScore) return false;
