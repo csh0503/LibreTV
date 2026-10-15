@@ -1,7 +1,7 @@
 import { api, ApiError } from './client-api';
 import { db, type HistoryEntry, type FavoriteEntry } from './db';
 import type { ProfileBundle } from './profile-bundle';
-import { switchProfile } from './profile';
+import { clearActiveProfile, eraseLocalProfile, switchProfile } from './profile';
 import {
   getActiveProfileId,
   markProfileDirty,
@@ -24,6 +24,40 @@ function stripLocalIds<T extends { id: string; profileId: string }>(row: T): Omi
 
 function isNotFound(err: unknown): boolean {
   return err instanceof ApiError && err.status === 404;
+}
+
+type CatalogProfile = { id: string; name: string; pinHash?: string; updatedAt: number };
+
+/**
+ * 云端名单里没有的旧档，是别的设备删掉的。
+ * 本机刚建、还没上传成功的不算，那种要留下来推上去。
+ */
+export function shouldDropLocalProfile(
+  profile: { id: string; pendingPush?: boolean; cloudUpdatedAt?: number },
+  catalogIds: Set<string>
+): boolean {
+  if (catalogIds.has(profile.id)) return false;
+  if (profile.pendingPush && profile.cloudUpdatedAt == null) return false;
+  return true;
+}
+
+/** 按云端名单清掉本机已经不该存在的设定档。云端没连上时返回 null，本机先不动。 */
+export async function forgetProfilesRemovedFromCloud(): Promise<CatalogProfile[] | null> {
+  let profiles: CatalogProfile[];
+  try {
+    profiles = (await api.profileCatalog()).profiles;
+  } catch {
+    return null;
+  }
+  const ids = new Set(profiles.map((item) => item.id));
+  const local = await db.profiles.toArray();
+  const drop = local.filter((profile) => shouldDropLocalProfile(profile, ids));
+  const active = getActiveProfileId();
+  await withoutProfileDirty(async () => {
+    for (const profile of drop) await eraseLocalProfile(profile.id);
+    if (drop.some((profile) => profile.id === active)) clearActiveProfile();
+  });
+  return profiles;
 }
 
 async function buildBundle(profileId: string, name: string): Promise<ProfileBundle> {
@@ -144,6 +178,16 @@ async function applyBundle(profileId: string, bundle: ProfileBundle): Promise<vo
 export async function pushProfile(profileId: string): Promise<void> {
   const profile = await db.profiles.get(profileId);
   if (!profile) return;
+  const catalog = await api.profileCatalog();
+  const ids = new Set(catalog.profiles.map((item) => item.id));
+  // 别的设备刚删掉的档，不能因为本机还留着就再写回云端。
+  if (shouldDropLocalProfile(profile, ids)) {
+    await withoutProfileDirty(async () => {
+      await eraseLocalProfile(profileId);
+      if (getActiveProfileId() === profileId) clearActiveProfile();
+    });
+    return;
+  }
   const bundle = await buildBundle(profile.id, profile.name);
   await api.profileSyncPut({ id: profile.id, name: profile.name, pinHash: profile.pinHash, bundle });
   await db.profiles.update(profile.id, { cloudUpdatedAt: bundle.updatedAt, pendingPush: false });
@@ -159,9 +203,13 @@ export async function reconcileProfile(): Promise<void> {
   if (syncing) return;
   syncing = true;
   try {
+    const catalog = await forgetProfilesRemovedFromCloud();
     const profileId = getActiveProfileId();
     const profile = profileId ? await db.profiles.get(profileId) : undefined;
     if (!profile) return;
+    const listed = catalog?.some((item) => item.id === profile.id) ?? false;
+    // 名单已经确认没有这份，就停。404 再上传会把别的手机删掉的档写回去。
+    if (catalog && !listed && profile.cloudUpdatedAt != null) return;
     let remote: ProfileBundle | null = null;
     try {
       remote = await api.profileSyncGet(profile.id);
@@ -173,7 +221,10 @@ export async function reconcileProfile(): Promise<void> {
       await applyBundle(profile.id, remote);
       return;
     }
-    if (profile.pendingPush || !remote) await pushActiveProfile();
+    const mayPush = catalog
+      ? listed || (profile.pendingPush === true && profile.cloudUpdatedAt == null)
+      : Boolean(remote && profile.pendingPush);
+    if ((profile.pendingPush || !remote) && mayPush) await pushActiveProfile();
   } finally {
     syncing = false;
   }
@@ -182,14 +233,23 @@ export async function reconcileProfile(): Promise<void> {
 /** 选中云端设定档：本机没有就先建同 id 的档，再拉下资料。 */
 export async function openCloudProfile(id: string, pin?: string): Promise<void> {
   const catalog = await api.profileCatalog();
+  const ids = new Set(catalog.profiles.map((item) => item.id));
   const remote = catalog.profiles.find((item) => item.id === id);
   let local = await db.profiles.get(id);
+  if (local && shouldDropLocalProfile(local, ids)) {
+    await withoutProfileDirty(async () => {
+      await eraseLocalProfile(id);
+      if (getActiveProfileId() === id) clearActiveProfile();
+    });
+    throw new Error('这个设定档已经在其他设备删除');
+  }
   if (!local) {
+    if (!remote) throw new Error('云端还没有这个设定档');
     local = {
       id,
-      name: remote?.name || '设定档',
+      name: remote.name || '设定档',
       createdAt: Date.now(),
-      pinHash: remote?.pinHash,
+      pinHash: remote.pinHash,
       cloudUpdatedAt: 0,
     };
     await db.profiles.add(local);

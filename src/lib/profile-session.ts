@@ -18,8 +18,9 @@ export function getProfileSnapshot(): ProfileSnapshot {
 
 export function setProfileSnapshot(next: ProfileSnapshot): void {
   snapshot = next;
-  if (typeof localStorage !== 'undefined' && next.id) {
-    localStorage.setItem('libretv-active-profile', next.id);
+  if (typeof localStorage !== 'undefined') {
+    if (next.id) localStorage.setItem('libretv-active-profile', next.id);
+    else localStorage.removeItem('libretv-active-profile');
   }
   listeners.forEach((listener) => listener());
 }

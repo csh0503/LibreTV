@@ -250,6 +250,23 @@ export async function renameProfile(id: string, name: string): Promise<void> {
   if (id === getActiveProfileId()) setProfileSnapshot({ id, name: trimmed });
 }
 
+/** 只删这台浏览器里的档，不动云端。别的设备已经删掉时用这个。 */
+export async function eraseLocalProfile(id: string): Promise<void> {
+  await db.transaction('rw', [db.profiles, db.history, db.favorites, db.progress, db.savedSearches], async () => {
+    await db.profiles.delete(id);
+    await db.history.where('profileId').equals(id).delete();
+    await db.favorites.where('profileId').equals(id).delete();
+    await db.progress.where('profileId').equals(id).delete();
+    await db.savedSearches.where('profileId').equals(id).delete();
+  });
+}
+
+export function clearActiveProfile(): void {
+  syncing = true;
+  setProfileSnapshot({ id: '', name: '' });
+  syncing = false;
+}
+
 export async function deleteProfile(id: string): Promise<void> {
   const all = await db.profiles.orderBy('createdAt').toArray();
   if (all.length <= 1) throw new Error('至少留一个设定档');
@@ -258,16 +275,13 @@ export async function deleteProfile(id: string): Promise<void> {
   } catch {
     // 云端没有这份时，仍然删本机
   }
-  await db.transaction('rw', [db.profiles, db.history, db.favorites, db.progress, db.savedSearches], async () => {
-    await db.profiles.delete(id);
-    await db.history.where('profileId').equals(id).delete();
-    await db.favorites.where('profileId').equals(id).delete();
-    await db.progress.where('profileId').equals(id).delete();
-    await db.savedSearches.where('profileId').equals(id).delete();
-  });
+  await eraseLocalProfile(id);
   if (id !== getActiveProfileId()) return;
   const fallback = (await db.profiles.orderBy('createdAt').toArray())[0];
-  if (!fallback) return;
+  if (!fallback) {
+    clearActiveProfile();
+    return;
+  }
   syncing = true;
   setProfileSnapshot({ id: fallback.id, name: fallback.name });
   applyPrefs(prefsOf(fallback) ?? defaultPrefs());

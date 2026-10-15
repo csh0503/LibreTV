@@ -6,6 +6,7 @@ import { ConfirmDialog } from './confirm-dialog';
 import { useToast } from './toast';
 import { useProfile } from '@/lib/use-profile';
 import { api } from '@/lib/client-api';
+import { forgetProfilesRemovedFromCloud } from '@/lib/profile-sync';
 import { createProfile, deleteProfile, listProfiles, switchProfile } from '@/lib/profile';
 import type { UserProfile } from '@/lib/db';
 import { cn } from '@/lib/utils';
@@ -31,13 +32,9 @@ export function ProfileDrawer({ open, onClose }: { open: boolean; onClose: () =>
 
   const reload = () => {
     void (async () => {
+      const listed = await forgetProfilesRemovedFromCloud();
       const local = await listProfiles();
-      let cloud: { id: string; name: string; pinHash?: string; updatedAt: number }[] = [];
-      try {
-        cloud = (await api.profileCatalog()).profiles;
-      } catch {
-        // 云端暂时不可用时仍显示本机设定档
-      }
+      const cloud = listed ?? [];
       const localIds = new Set(local.map((item) => item.id));
       const extras: ListedProfile[] = cloud
         .filter((item) => !localIds.has(item.id))

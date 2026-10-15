@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { createProfile, deleteProfile, listProfiles } from '@/lib/profile';
 import { api } from '@/lib/client-api';
-import { openCloudProfile } from '@/lib/profile-sync';
+import { forgetProfilesRemovedFromCloud, openCloudProfile } from '@/lib/profile-sync';
 import type { UserProfile } from '@/lib/db';
 
 
@@ -37,14 +37,11 @@ export function ProfileGate() {
   const [pending, setPending] = useState<GateProfile | null>(null);
   const reload = () => {
     void (async () => {
+      const listed = await forgetProfilesRemovedFromCloud();
       let local = await listProfiles();
-      let cloud: { id: string; name: string; pinHash?: string; updatedAt: number }[] = [];
-      try {
-        cloud = (await api.profileCatalog()).profiles;
-      } catch {
-        // 云端暂时不可用时仍显示本机设定档
-      }
-      if (local.length === 0 && cloud.length === 0) {
+      // 云端没连上时不要把本机档清掉，也不要当成「云端是空的」再新建一个默认
+      const cloud = listed ?? [];
+      if (listed && local.length === 0 && cloud.length === 0) {
         await createProfile('默认');
         local = await listProfiles();
       }
