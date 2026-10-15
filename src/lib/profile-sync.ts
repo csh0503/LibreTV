@@ -1,5 +1,5 @@
 import { api, ApiError } from './client-api';
-import { db, type HistoryEntry, type FavoriteEntry } from './db';
+import { db, MAX_FAVORITES, MAX_HISTORY, MAX_SEARCH_HISTORY, type HistoryEntry, type FavoriteEntry } from './db';
 import type { ProfileBundle } from './profile-bundle';
 import { clearActiveProfile, eraseLocalProfile, switchProfile } from './profile';
 import {
@@ -107,11 +107,88 @@ function mergeByUrl<T extends { url?: string }>(local: T[], remote: T[]): T[] {
   return [...local, ...remote.filter((item) => item.url && !seen.has(item.url))];
 }
 
-async function applyBundle(profileId: string, bundle: ProfileBundle, opts?: { live?: boolean }): Promise<void> {
-  const history = bundle.history.filter((row) => typeof row.sourceKey === 'string' && typeof row.vodId === 'string') as unknown as Omit<HistoryEntry, 'id' | 'profileId'>[];
-  const favorites = bundle.favorites.filter((row) => typeof row.localId === 'string' && typeof row.title === 'string') as unknown as Omit<FavoriteEntry, 'id' | 'profileId'>[];
+/**
+ * 以最后一次同步成功的时间为界，合并两边的收藏、历史和进度。
+ * 那之后任一边新增的留下；那之前只剩一边的，算另一边删掉了。
+ */
+export function mergeSyncedRows<T>(
+  base: number,
+  local: T[],
+  remote: T[],
+  keyOf: (row: T) => string,
+  timeOf: (row: T) => number,
+): T[] {
+  const localMap = new Map<string, T>();
+  const remoteMap = new Map<string, T>();
+  for (const row of local) {
+    const key = keyOf(row);
+    const prev = localMap.get(key);
+    if (!prev || timeOf(row) >= timeOf(prev)) localMap.set(key, row);
+  }
+  for (const row of remote) {
+    const key = keyOf(row);
+    const prev = remoteMap.get(key);
+    if (!prev || timeOf(row) >= timeOf(prev)) remoteMap.set(key, row);
+  }
+  const out: T[] = [];
+  for (const key of new Set([...localMap.keys(), ...remoteMap.keys()])) {
+    const left = localMap.get(key);
+    const right = remoteMap.get(key);
+    if (left && right) {
+      out.push(timeOf(left) >= timeOf(right) ? left : right);
+      continue;
+    }
+    const only = left ?? right;
+    if (only && timeOf(only) > base) out.push(only);
+  }
+  return out;
+}
+
+type HistRow = Omit<HistoryEntry, 'id' | 'profileId'>;
+type FavRow = Omit<FavoriteEntry, 'id' | 'profileId'>;
+
+async function applyBundle(profileId: string, bundle: ProfileBundle, opts?: { live?: boolean; keepPending?: boolean }): Promise<void> {
+  const remoteHistory = bundle.history.filter((row) => typeof row.sourceKey === 'string' && typeof row.vodId === 'string') as unknown as HistRow[];
+  const remoteFavorites = bundle.favorites.filter((row) => typeof row.localId === 'string' && typeof row.title === 'string') as unknown as FavRow[];
+  const remoteProgress = bundle.progress.filter((row) => row.localKey);
+  const remoteSearches = bundle.searches.filter((row) => row.text);
   await withoutProfileDirty(async () => {
     await db.transaction('rw', [db.history, db.favorites, db.progress, db.savedSearches, db.profiles], async () => {
+      const profile = await db.profiles.get(profileId);
+      const base = profile?.cloudUpdatedAt ?? 0;
+      const prefix = `${profileId}::`;
+      const localHistory = (await db.history.where('profileId').equals(profileId).toArray()).map((row) => {
+        const copy = { ...row };
+        delete (copy as { id?: string }).id;
+        delete (copy as { profileId?: string }).profileId;
+        return copy as HistRow;
+      });
+      const localFavorites = (await db.favorites.where('profileId').equals(profileId).toArray()).map((row) => {
+        const copy = { ...row };
+        delete (copy as { id?: string }).id;
+        delete (copy as { profileId?: string }).profileId;
+        return copy as FavRow;
+      });
+      const localProgress = (await db.progress.where('profileId').equals(profileId).toArray()).map((row) => ({
+        localKey: row.key.startsWith(prefix) ? row.key.slice(prefix.length) : row.key,
+        position: row.position,
+        duration: row.duration,
+        updatedAt: row.updatedAt,
+      }));
+      const localSearches = (await db.savedSearches.where('profileId').equals(profileId).toArray()).map((row) => ({
+        text: row.text,
+        timestamp: row.timestamp,
+      }));
+      const history = mergeSyncedRows(base, localHistory, remoteHistory, (row) => `${row.sourceKey}_${row.vodId}`, (row) => row.timestamp)
+        .sort((a, b) => b.timestamp - a.timestamp)
+        .slice(0, MAX_HISTORY);
+      const favorites = mergeSyncedRows(base, localFavorites, remoteFavorites, (row) => row.localId, (row) => row.addedAt)
+        .sort((a, b) => b.addedAt - a.addedAt)
+        .slice(0, MAX_FAVORITES);
+      const progress = mergeSyncedRows(base, localProgress, remoteProgress, (row) => row.localKey, (row) => row.updatedAt);
+      const searches = mergeSyncedRows(base, localSearches, remoteSearches, (row) => row.text, (row) => row.timestamp)
+        .sort((a, b) => b.timestamp - a.timestamp)
+        .slice(0, MAX_SEARCH_HISTORY);
       await db.history.where('profileId').equals(profileId).delete();
       await db.favorites.where('profileId').equals(profileId).delete();
       await db.progress.where('profileId').equals(profileId).delete();
@@ -130,8 +207,8 @@ async function applyBundle(profileId: string, bundle: ProfileBundle, opts?: { li
           id: `${profileId}::${row.localId}`,
         })));
       }
-      if (bundle.progress.length) {
-        await db.progress.bulkAdd(bundle.progress.filter((row) => row.localKey).map((row) => ({
+      if (progress.length) {
+        await db.progress.bulkAdd(progress.map((row) => ({
           key: `${profileId}::${row.localKey}`,
           profileId,
           position: row.position,
@@ -139,26 +216,25 @@ async function applyBundle(profileId: string, bundle: ProfileBundle, opts?: { li
           updatedAt: row.updatedAt,
         })));
       }
-      if (bundle.searches.length) {
-        await db.savedSearches.bulkAdd(bundle.searches.filter((row) => row.text).map((row) => ({
+      if (searches.length) {
+        await db.savedSearches.bulkAdd(searches.map((row) => ({
           id: `${profileId}::${row.text}`,
           profileId,
           text: row.text,
           timestamp: row.timestamp,
         })));
       }
-      const profile = await db.profiles.get(profileId);
       if (profile) {
         await db.profiles.put({
           ...profile,
           name: bundle.name || profile.name,
-          prefs: bundle.prefs,
+          prefs: opts?.keepPending ? profile.prefs : bundle.prefs,
           cloudUpdatedAt: bundle.updatedAt,
-          pendingPush: false,
+          pendingPush: Boolean(opts?.keepPending),
         });
       }
     });
-    const live = opts?.live ?? profileId === getActiveProfileId();
+    const live = (opts?.live ?? profileId === getActiveProfileId()) && !opts?.keepPending;
     if (live) {
       const state = useAppStore.getState();
       const device = bundle.device;
@@ -191,7 +267,13 @@ async function pullCatalogProfile(item: CatalogProfile): Promise<void> {
 
 async function pullCatalogProfileOnce(item: CatalogProfile): Promise<void> {
   const local = await db.profiles.get(item.id);
-  if (local?.pendingPush) return;
+  // 名单上的时间没变就不用把整份收藏和历史再下一次。
+  if (local && (local.cloudUpdatedAt ?? 0) >= (item.updatedAt || 0)) {
+    if (local.name !== (item.name || local.name) || local.pinHash !== item.pinHash) {
+      await db.profiles.update(item.id, { name: item.name || local.name, pinHash: item.pinHash });
+    }
+    return;
+  }
   let bundle: ProfileBundle | null = null;
   try {
     bundle = await api.profileSyncGet(item.id);
@@ -228,7 +310,10 @@ async function pullCatalogProfileOnce(item: CatalogProfile): Promise<void> {
   } else if (item.pinHash !== local.pinHash) {
     await db.profiles.update(item.id, { pinHash: item.pinHash });
   }
-  await applyBundle(item.id, bundle, { live: item.id === getActiveProfileId() });
+  await applyBundle(item.id, bundle, {
+    live: item.id === getActiveProfileId(),
+    keepPending: Boolean(local?.pendingPush),
+  });
 }
 
 /** 云端有的设定档，立刻拉到这台设备。删掉的也会从本机去掉。 */
@@ -258,9 +343,21 @@ export async function pushProfile(profileId: string): Promise<void> {
     });
     return;
   }
-  const bundle = await buildBundle(profile.id, profile.name);
-  await api.profileSyncPut({ id: profile.id, name: profile.name, pinHash: profile.pinHash, bundle });
-  await db.profiles.update(profile.id, { cloudUpdatedAt: bundle.updatedAt, pendingPush: false });
+  let remote: ProfileBundle | null = null;
+  try {
+    remote = await api.profileSyncGet(profile.id);
+  } catch (err) {
+    if (!isNotFound(err)) throw err;
+  }
+  // 先把另一台刚加上的收藏和记录并进来，再整份上传，避免盖掉对方。
+  if (remote && remote.updatedAt > (profile.cloudUpdatedAt ?? 0)) {
+    await applyBundle(profile.id, remote, { live: profile.id === getActiveProfileId(), keepPending: true });
+  }
+  const latest = await db.profiles.get(profile.id);
+  if (!latest) return;
+  const bundle = await buildBundle(latest.id, latest.name);
+  await api.profileSyncPut({ id: latest.id, name: latest.name, pinHash: latest.pinHash, bundle });
+  await db.profiles.update(latest.id, { cloudUpdatedAt: bundle.updatedAt, pendingPush: false });
 }
 
 export async function pushActiveProfile(): Promise<void> {
@@ -270,31 +367,27 @@ export async function pushActiveProfile(): Promise<void> {
 }
 
 export async function reconcileProfile(): Promise<void> {
-  if (syncing) return;
+  if (syncing) {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      void reconcileProfile().catch(() => {});
+    }, 300);
+    return;
+  }
   syncing = true;
   try {
     const catalog = await syncCloudProfilesToDevice();
     const profileId = getActiveProfileId();
     const profile = profileId ? await db.profiles.get(profileId) : undefined;
     if (!profile) return;
-    const listed = catalog?.some((item) => item.id === profile.id) ?? false;
-    // 名单已经确认没有这份，就停。404 再上传会把别的手机删掉的档写回去。
-    if (catalog && !listed && profile.cloudUpdatedAt != null) return;
-    let remote: ProfileBundle | null = null;
-    try {
-      remote = await api.profileSyncGet(profile.id);
-    } catch (err) {
-      if (!isNotFound(err)) throw err;
-    }
-    const cloud = profile.cloudUpdatedAt ?? 0;
-    if (remote && !profile.pendingPush && remote.updatedAt > cloud) {
-      await applyBundle(profile.id, remote);
+    if (!catalog) {
+      if (profile.pendingPush) await pushActiveProfile();
       return;
     }
-    const mayPush = catalog
-      ? listed || (profile.pendingPush === true && profile.cloudUpdatedAt == null)
-      : Boolean(remote && profile.pendingPush);
-    if ((profile.pendingPush || !remote) && mayPush) await pushActiveProfile();
+    const listed = catalog.some((item) => item.id === profile.id);
+    // 名单已经确认没有这份，就停。再上传会把别的手机删掉的档写回去。
+    if (!listed && profile.cloudUpdatedAt != null) return;
+    if (profile.pendingPush && (listed || profile.cloudUpdatedAt == null)) await pushActiveProfile();
   } finally {
     syncing = false;
   }
@@ -351,7 +444,7 @@ export function startProfileSync(): void {
     clearTimeout(timer);
     timer = setTimeout(() => {
       void reconcileProfile().catch(() => {});
-    }, 1500);
+    }, 300);
   });
   useAppStore.subscribe((next) => {
     const sig = JSON.stringify([next.customAPIs, next.selectedKeys, next.subscriptions, next.liveSubscriptions, next.liveSelectedUrls]);
@@ -362,5 +455,10 @@ export function startProfileSync(): void {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') void reconcileProfile().catch(() => {});
   });
+  // 页面开着时持续把别的设备新收藏、新观看记录拉下来。
+  window.setInterval(() => {
+    if (document.visibilityState !== 'visible') return;
+    void reconcileProfile().catch(() => {});
+  }, 2000);
   void reconcileProfile().catch(() => {});
 }
