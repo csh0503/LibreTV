@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { createProfile, listProfiles } from '@/lib/profile';
 import { api } from '@/lib/client-api';
-import { openCloudProfile, pushProfile } from '@/lib/profile-sync';
+import { openCloudProfile } from '@/lib/profile-sync';
 import type { UserProfile } from '@/lib/db';
 
 
@@ -27,21 +27,16 @@ export function ProfileGate() {
   const [pin, setPin] = useState('');
   const reload = () => {
     void (async () => {
-      const local = await listProfiles();
+      let local = await listProfiles();
       let cloud: { id: string; name: string; pinHash?: string; updatedAt: number }[] = [];
       try {
         cloud = (await api.profileCatalog()).profiles;
       } catch {
         // 云端暂时不可用时仍显示本机设定档
       }
-      for (const item of local) {
-        if (!cloud.some((remote) => remote.id === item.id)) {
-          try {
-            await pushProfile(item.id);
-          } catch {
-            // 上传失败不挡住选档
-          }
-        }
+      if (local.length === 0 && cloud.length === 0) {
+        await createProfile('默认');
+        local = await listProfiles();
       }
       const byId = new Map(local.map((item) => [item.id, item]));
       for (const remote of cloud) {

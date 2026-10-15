@@ -158,8 +158,11 @@ async function initProfiles(): Promise<void> {
     profile = all[0];
   }
   if (!profile) {
-    profile = { id: crypto.randomUUID(), name: '默认', createdAt: Date.now(), syncSecret: createSyncSecret() };
-    await db.profiles.add(profile);
+    // 本机还没有设定档时不要立刻新建「默认」。
+    // 每次换一个部署链接都是新的浏览器存储，自动新建会在云端堆出很多同名档。
+    setProfileSnapshot({ id: '', name: '' });
+    startPrefsSync();
+    return;
   }
   if (!profile.syncSecret) {
     profile = { ...profile, syncSecret: createSyncSecret() };
