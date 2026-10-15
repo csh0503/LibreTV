@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { createProfile, deleteProfile, listProfiles } from '@/lib/profile';
 import { api } from '@/lib/client-api';
-import { forgetProfilesRemovedFromCloud, openCloudProfile } from '@/lib/profile-sync';
+import { openCloudProfile, syncCloudProfilesToDevice } from '@/lib/profile-sync';
 import type { UserProfile } from '@/lib/db';
 
 
@@ -15,12 +15,6 @@ function colorFor(name: string): string {
   let n = 0;
   for (const ch of name) n = (n + ch.charCodeAt(0)) % COLORS.length;
   return COLORS[n] ?? COLORS[0];
-}
-
-function shortDate(ts?: number): string {
-  if (!ts) return '';
-  const d = new Date(ts);
-  return `${d.getMonth() + 1}月${d.getDate()}日`;
 }
 
 /** 登录后先选设定档，选完才进入首页。刷新或重新登录会再出现一次。 */
@@ -37,7 +31,7 @@ export function ProfileGate() {
   const [pending, setPending] = useState<GateProfile | null>(null);
   const reload = () => {
     void (async () => {
-      const listed = await forgetProfilesRemovedFromCloud();
+      const listed = await syncCloudProfilesToDevice();
       let local = await listProfiles();
       // 云端没连上时不要把本机档清掉，也不要当成「云端是空的」再新建一个默认
       const cloud = listed ?? [];
@@ -152,9 +146,9 @@ export function ProfileGate() {
               {profile.name}
               {profile.pinHash ? ' · 有密码' : ''}
             </span>
-            <span className="text-[11px] text-faint -mt-1">
-              {profile.onDevice ? '这台设备' : `只在云端${shortDate(profile.cloudUpdatedAt) ? ` · ${shortDate(profile.cloudUpdatedAt)}` : ''}`}
-            </span>
+            {!profile.onDevice && (
+              <span className="text-[11px] text-faint -mt-1">点一下同步到这台</span>
+            )}
           </div>
         ))}
         <button type="button" className="flex flex-col items-center gap-2 w-28" onClick={() => setAdding(true)}>

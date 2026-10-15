@@ -6,20 +6,14 @@ import { ConfirmDialog } from './confirm-dialog';
 import { useToast } from './toast';
 import { useProfile } from '@/lib/use-profile';
 import { api } from '@/lib/client-api';
-import { forgetProfilesRemovedFromCloud } from '@/lib/profile-sync';
-import { createProfile, deleteProfile, listProfiles, switchProfile } from '@/lib/profile';
+import { openCloudProfile, syncCloudProfilesToDevice } from '@/lib/profile-sync';
+import { createProfile, deleteProfile, listProfiles } from '@/lib/profile';
 import type { UserProfile } from '@/lib/db';
 import { cn } from '@/lib/utils';
 
 type ListedProfile = UserProfile & { cloudOnly?: boolean };
 
-function shortDate(ts?: number): string {
-  if (!ts) return '';
-  const d = new Date(ts);
-  return `${d.getMonth() + 1}月${d.getDate()}日`;
-}
-
-/** 同一台设备上的设定档。换档后历史、收藏和个人偏好一起换。 */
+/** 同一台设备上的设定档。云端有的档打开时就会拉下来。换档后历史、收藏和个人偏好一起换。 */
 export function ProfileDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
   const current = useProfile();
   const { toast } = useToast();
@@ -32,7 +26,7 @@ export function ProfileDrawer({ open, onClose }: { open: boolean; onClose: () =>
 
   const reload = () => {
     void (async () => {
-      const listed = await forgetProfilesRemovedFromCloud();
+      const listed = await syncCloudProfilesToDevice();
       const local = await listProfiles();
       const cloud = listed ?? [];
       const localIds = new Set(local.map((item) => item.id));
@@ -68,10 +62,11 @@ export function ProfileDrawer({ open, onClose }: { open: boolean; onClose: () =>
 
   const onSwitch = async (profile: UserProfile, password?: string) => {
     try {
-      await switchProfile(profile.id, password);
+      await openCloudProfile(profile.id, password);
       setUnlockId('');
       setUnlockPin('');
       toast(`已切换到「${profile.name}」`, 'success');
+      reload();
     } catch (err) {
       toast(err instanceof Error ? err.message : '切换失败', 'error');
     }
@@ -81,7 +76,7 @@ export function ProfileDrawer({ open, onClose }: { open: boolean; onClose: () =>
     <>
     <Drawer open={open} onClose={onClose} title="设定档" width="max-w-md">
       <p className="text-xs text-faint mb-3">
-        每个设定档有自己的观看历史、收藏和偏好。标着「只在云端」的是以前自动建出来的重复档，这台设备的列表里本来看不到，可以直接删。
+        每个设定档有自己的观看历史、收藏和偏好。其他设备上新建的档会自动同步到这里。
       </p>
       <ul className="space-y-2 mb-4">
         {profiles.map((profile) => {
@@ -94,11 +89,11 @@ export function ProfileDrawer({ open, onClose }: { open: boolean; onClose: () =>
                   <div className="text-sm font-medium text-content truncate">{profile.name}</div>
                   <div className="text-[11px] text-faint">
                     {profile.cloudOnly
-                      ? `只在云端${shortDate(profile.cloudUpdatedAt) ? ` · ${shortDate(profile.cloudUpdatedAt)}` : ''}`
+                      ? '正在从云端同步'
                       : `${profile.pinHash ? '有密码' : '无密码'}${active ? ' · 使用中' : ''}`}
                   </div>
                 </div>
-                {!active && !profile.cloudOnly && (
+                {!active && (
                   <button
                     type="button"
                     className="btn-ghost btn-sm"

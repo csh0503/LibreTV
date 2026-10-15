@@ -107,7 +107,7 @@ function mergeByUrl<T extends { url?: string }>(local: T[], remote: T[]): T[] {
   return [...local, ...remote.filter((item) => item.url && !seen.has(item.url))];
 }
 
-async function applyBundle(profileId: string, bundle: ProfileBundle): Promise<void> {
+async function applyBundle(profileId: string, bundle: ProfileBundle, opts?: { live?: boolean }): Promise<void> {
   const history = bundle.history.filter((row) => typeof row.sourceKey === 'string' && typeof row.vodId === 'string') as unknown as Omit<HistoryEntry, 'id' | 'profileId'>[];
   const favorites = bundle.favorites.filter((row) => typeof row.localId === 'string' && typeof row.title === 'string') as unknown as Omit<FavoriteEntry, 'id' | 'profileId'>[];
   await withoutProfileDirty(async () => {
@@ -158,21 +158,91 @@ async function applyBundle(profileId: string, bundle: ProfileBundle): Promise<vo
         });
       }
     });
-    const state = useAppStore.getState();
-    const device = bundle.device;
-    useAppStore.setState({
-      ...(bundle.prefs as object),
-      customAPIs: mergeByUrl(state.customAPIs, (device?.customAPIs ?? []) as typeof state.customAPIs),
-      selectedKeys: [...new Set([...state.selectedKeys, ...(device?.selectedKeys ?? [])])],
-      subscriptions: mergeByUrl(state.subscriptions, (device?.subscriptions ?? []) as typeof state.subscriptions),
-      liveSubscriptions: mergeByUrl(state.liveSubscriptions, (device?.liveSubscriptions ?? []) as typeof state.liveSubscriptions),
-      liveSelectedUrls: [...new Set([...state.liveSelectedUrls, ...(device?.liveSelectedUrls ?? [])])],
-    });
-    const profile = await db.profiles.get(profileId);
-    if (profile && profileId === getActiveProfileId()) {
-      setProfileSnapshot({ id: profileId, name: profile.name });
+    const live = opts?.live ?? profileId === getActiveProfileId();
+    if (live) {
+      const state = useAppStore.getState();
+      const device = bundle.device;
+      useAppStore.setState({
+        ...(bundle.prefs as object),
+        customAPIs: mergeByUrl(state.customAPIs, (device?.customAPIs ?? []) as typeof state.customAPIs),
+        selectedKeys: [...new Set([...state.selectedKeys, ...(device?.selectedKeys ?? [])])],
+        subscriptions: mergeByUrl(state.subscriptions, (device?.subscriptions ?? []) as typeof state.subscriptions),
+        liveSubscriptions: mergeByUrl(state.liveSubscriptions, (device?.liveSubscriptions ?? []) as typeof state.liveSubscriptions),
+        liveSelectedUrls: [...new Set([...state.liveSelectedUrls, ...(device?.liveSelectedUrls ?? [])])],
+      });
+      const profile = await db.profiles.get(profileId);
+      if (profile && profileId === getActiveProfileId()) {
+        setProfileSnapshot({ id: profileId, name: profile.name });
+      }
     }
   });
+}
+
+const pulling = new Map<string, Promise<void>>();
+
+/** 把云端某一个设定档的历史、收藏和偏好写进这台浏览器。不切换当前正在看的人。 */
+async function pullCatalogProfile(item: CatalogProfile): Promise<void> {
+  const inflight = pulling.get(item.id);
+  if (inflight) return inflight;
+  const job = pullCatalogProfileOnce(item).finally(() => pulling.delete(item.id));
+  pulling.set(item.id, job);
+  return job;
+}
+
+async function pullCatalogProfileOnce(item: CatalogProfile): Promise<void> {
+  const local = await db.profiles.get(item.id);
+  if (local?.pendingPush) return;
+  let bundle: ProfileBundle | null = null;
+  try {
+    bundle = await api.profileSyncGet(item.id);
+  } catch (err) {
+    if (!isNotFound(err)) throw err;
+  }
+  if (!bundle) {
+    if (!local) {
+      await db.profiles.add({
+        id: item.id,
+        name: item.name || '设定档',
+        createdAt: item.updatedAt || Date.now(),
+        pinHash: item.pinHash,
+        cloudUpdatedAt: item.updatedAt,
+        pendingPush: false,
+      });
+    }
+    return;
+  }
+  if (local && (local.cloudUpdatedAt ?? 0) >= bundle.updatedAt) {
+    if (local.name !== item.name || local.pinHash !== item.pinHash) {
+      await db.profiles.update(item.id, { name: item.name || local.name, pinHash: item.pinHash });
+    }
+    return;
+  }
+  if (!local) {
+    await db.profiles.add({
+      id: item.id,
+      name: item.name || bundle.name || '设定档',
+      createdAt: item.updatedAt || Date.now(),
+      pinHash: item.pinHash,
+      pendingPush: false,
+    });
+  } else if (item.pinHash !== local.pinHash) {
+    await db.profiles.update(item.id, { pinHash: item.pinHash });
+  }
+  await applyBundle(item.id, bundle, { live: item.id === getActiveProfileId() });
+}
+
+/** 云端有的设定档，立刻拉到这台设备。删掉的也会从本机去掉。 */
+export async function syncCloudProfilesToDevice(): Promise<CatalogProfile[] | null> {
+  const catalog = await forgetProfilesRemovedFromCloud();
+  if (!catalog) return null;
+  for (const item of catalog) {
+    try {
+      await pullCatalogProfile(item);
+    } catch {
+      // 一个档失败不挡住其他档，下次打开再拉
+    }
+  }
+  return catalog;
 }
 
 export async function pushProfile(profileId: string): Promise<void> {
@@ -203,7 +273,7 @@ export async function reconcileProfile(): Promise<void> {
   if (syncing) return;
   syncing = true;
   try {
-    const catalog = await forgetProfilesRemovedFromCloud();
+    const catalog = await syncCloudProfilesToDevice();
     const profileId = getActiveProfileId();
     const profile = profileId ? await db.profiles.get(profileId) : undefined;
     if (!profile) return;
@@ -255,14 +325,16 @@ export async function openCloudProfile(id: string, pin?: string): Promise<void> 
     await db.profiles.add(local);
   }
   await switchProfile(id, pin);
+  const current = (await db.profiles.get(id)) ?? local;
   let bundle: ProfileBundle | null = null;
   try {
     bundle = await api.profileSyncGet(id);
   } catch (err) {
     if (!isNotFound(err)) throw err;
   }
-  if (bundle && bundle.updatedAt > (local.cloudUpdatedAt ?? 0)) {
-    await applyBundle(id, bundle);
+  // 云端这份不比本机旧，就只用云端的。不要用当前画面的偏好把别人的档盖掉。
+  if (bundle && !current.pendingPush) {
+    if (bundle.updatedAt > (current.cloudUpdatedAt ?? 0)) await applyBundle(id, bundle);
     return;
   }
   await pushProfile(id);
