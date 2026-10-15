@@ -6,6 +6,7 @@ import {
   filterHallItems,
   mergeAiringCalendar,
   rexxarToItem,
+  sortHallItems,
 } from './recommend';
 import type { DoubanItem } from './types';
 
@@ -74,7 +75,8 @@ describe('rexxarToItem / deriveStatus', () => {
     expect(deriveStatus({ episodesInfo: '全12集', year: '2026' }, 2026)).toBe('ended');
     expect(deriveStatus({ episodesInfo: '47集全', year: '2026' }, 2026)).toBe('ended');
     expect(deriveStatus({ fromCalendar: true, year: '2020' }, 2026)).toBe('airing');
-    expect(deriveStatus({ year: '2026' }, 2026)).toBe('airing');
+    expect(deriveStatus({ year: '2026' }, 2026)).toBe('ended');
+    expect(deriveStatus({ episodesInfo: '更新至12集', year: '2026' }, 2026)).toBe('airing');
     expect(deriveStatus({ year: '2016' }, 2026)).toBe('ended');
   });
 });
@@ -106,6 +108,25 @@ describe('filterHallItems', () => {
       { ...filter, yearRange: null, status: 'airing', hideAdult: false }
     );
     expect(airing.map((item) => item.id)).toEqual(['new']);
+    const endedThisYear = filterHallItems(
+      [{ id: 'film', title: '今年完结', cover: 'c', year: '2026', status: 'ended', rating: '9.1' }],
+      { ...filter, yearRange: [2026, 2026], status: 'ended', hideAdult: false }
+    );
+    expect(endedThisYear.map((item) => item.id)).toEqual(['film']);
+  });
+
+  it('评分和日期可以升序、降序，没有分数的排在最后', () => {
+    const rows = [
+      { title: '乙', rating: '7', year: '2020' },
+      { title: '甲', rating: '9', year: '2024' },
+      { title: '丙' },
+    ];
+    expect(sortHallItems(rows, 'rate', 'desc').map((item) => item.title)).toEqual(['甲', '乙', '丙']);
+    expect(sortHallItems(rows, 'rate', 'asc').map((item) => item.title)).toEqual(['乙', '甲', '丙']);
+    expect(sortHallItems(rows, 'date', 'asc').map((item) => item.title)).toEqual(['乙', '甲', '丙']);
+    expect(sortHallItems(rows, 'title', 'asc').map((item) => item.title)).toEqual(['丙', '甲', '乙']);
+    expect(sortHallItems(rows, 'hot', 'desc').map((item) => item.title)).toEqual(['乙', '甲', '丙']);
+    expect(sortHallItems(rows, 'hot', 'asc').map((item) => item.title)).toEqual(['丙', '甲', '乙']);
     expect(areaMatches('华语', '中国大陆')).toBe(true);
     expect(areaMatches('中国台湾', '中国大陆')).toBe(false);
   });

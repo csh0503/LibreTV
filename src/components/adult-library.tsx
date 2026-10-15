@@ -9,7 +9,8 @@ import { cn } from '@/lib/utils';
 import type { SearchResultItem, VodListItem } from '@/lib/types';
 import { DoubanCard } from './video-card';
 import { favoriteIdOf } from '@/lib/db';
-import { areaMatches, deriveStatus, yearSelection, type HallSort, type HallStatus } from '@/lib/recommend';
+import { areaMatches, deriveStatus, sortHallItems, yearSelection, type HallSortDir, type HallSortKey, type HallStatus } from '@/lib/recommend';
+import { SortArrows } from './sort-arrows';
 import { useLoadMore } from './use-load-more';
 
 const AREAS = ['全部', '日本', '韩国', '大陆', '国产', '欧美', '美国', '香港', '台湾', '泰国'];
@@ -38,7 +39,8 @@ export function AdultLibrary({ onOpen }: { onOpen: (item: SearchResultItem) => v
   const [area, setArea] = useState('全部');
   const [year, setYear] = useState('全部');
   const [status, setStatus] = useState<HallStatus>('all');
-  const [sort, setSort] = useState<HallSort>('new');
+  const [sortKey, setSortKey] = useState<HallSortKey>('date');
+  const [sortDir, setSortDir] = useState<HallSortDir>('desc');
 
   const active = sources.find((s) => s.key === sourceKey) ?? sources[0];
 
@@ -100,13 +102,12 @@ export function AdultLibrary({ onOpen }: { onOpen: (item: SearchResultItem) => v
       if (status === 'ended' && play !== 'ended') return false;
       return true;
     });
-    if (sort === 'rate') {
-      list = [...list].sort((a, b) => (parseFloat(b.rating || '0') || 0) - (parseFloat(a.rating || '0') || 0));
-    } else if (sort === 'new') {
-      list = [...list].sort((a, b) => (parseInt(b.year || '0', 10) || 0) - (parseInt(a.year || '0', 10) || 0));
-    }
-    return list;
-  }, [browseData, year, area, status, sort]);
+    return sortHallItems(
+      list.map((item) => ({ ...item, title: item.name })),
+      sortKey,
+      sortDir
+    );
+  }, [browseData, year, area, status, sortKey, sortDir]);
 
   const classes = browseData?.pages[0]?.classes ?? [];
   const loadMore = useCallback(() => {
@@ -184,8 +185,14 @@ export function AdultLibrary({ onOpen }: { onOpen: (item: SearchResultItem) => v
           <FilterChip active={status === 'ended'} onClick={() => setStatus('ended')}>已完结</FilterChip>
         </FilterRow>
         <FilterRow label="排序">
-          <FilterChip active={sort === 'new'} onClick={() => setSort('new')}>最新</FilterChip>
-          <FilterChip active={sort === 'rate'} onClick={() => setSort('rate')}>高分</FilterChip>
+          <SortArrows
+            sortKey={sortKey}
+            sortDir={sortDir}
+            onChange={(key, dir) => {
+              setSortKey(key);
+              setSortDir(dir);
+            }}
+          />
         </FilterRow>
       </div>
 

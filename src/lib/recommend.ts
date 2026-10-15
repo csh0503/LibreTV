@@ -11,7 +11,8 @@ import { isAdultContent } from './cms-parser';
 export const HALL_PAGE_SIZE = 20;
 
 export type HallChannel = 'anime' | 'movie' | 'tv' | 'show' | 'doc' | 'adult';
-export type HallSort = 'hot' | 'rate' | 'new';
+export type HallSortKey = 'hot' | 'rate' | 'date' | 'title';
+export type HallSortDir = 'asc' | 'desc';
 export type HallScore = 'all' | '9' | '8' | '7';
 export type HallStatus = 'all' | 'airing' | 'ended';
 
@@ -20,7 +21,7 @@ export interface HallSelection {
   genre: string;
   area: string;
   year: string;
-  sort: HallSort;
+  sort: HallSortKey;
   score: HallScore;
   status: HallStatus;
 }
@@ -56,9 +57,9 @@ export function yearSelection(year: string): { tag: string | null; range: [numbe
   return { tag: null, range: null };
 }
 
-export function doubanSortCode(sort: HallSort): 'U' | 'S' | 'R' {
+export function doubanSortCode(sort: HallSortKey): 'U' | 'S' | 'R' {
   if (sort === 'rate') return 'S';
-  if (sort === 'new') return 'R';
+  if (sort === 'date') return 'R';
   return 'U';
 }
 
@@ -124,8 +125,8 @@ export function deriveStatus(
   if (/完结|已完结|全集|全\d+\s*集|\d+\s*集全/.test(text)) return 'ended';
   const year = parseInt(input.year ?? '', 10);
   if (!Number.isFinite(year) || year <= 0) return undefined;
-  // 今年的条目当成还在播，否则「连载中」会把整页滤空
-  if (year >= nowYear) return 'airing';
+  // 没有「更新至」的年份条目算已完结，包括今年。
+  // 若把今年一律当成连载，「2026 + 已完结」会整页被滤空，而「连载中」却全是这些片子。
   return 'ended';
 }
 
@@ -224,13 +225,33 @@ export function mergeAiringCalendar(douban: DoubanItem[], calendar: DoubanItem[]
   return [...extra, ...douban];
 }
 
-export function sortHallItems(items: DoubanItem[], sort: HallSort): DoubanItem[] {
-  if (sort === 'hot') return items;
-  const copy = [...items];
-  if (sort === 'rate') {
-    copy.sort((a, b) => (parseFloat(b.rating || '0') || 0) - (parseFloat(a.rating || '0') || 0));
-    return copy;
-  }
-  copy.sort((a, b) => (parseInt(b.year || '0', 10) || 0) - (parseInt(a.year || '0', 10) || 0));
-  return copy;
+export function sortHallItems<T extends { title?: string; name?: string; rating?: string; year?: string }>(
+  items: T[],
+  key: HallSortKey,
+  dir: HallSortDir
+): T[] {
+  const sign = dir === 'asc' ? 1 : -1;
+  return items
+    .map((item, index) => ({ item, index }))
+    .sort((a, b) => {
+      // 热度没有独立分数，降序就是接口原来的顺序
+      if (key === 'hot') return (a.index - b.index) * -sign;
+      if (key === 'title') {
+        const cmp = (a.item.title || a.item.name || '').localeCompare(b.item.title || b.item.name || '', 'zh');
+        return cmp === 0 ? a.index - b.index : cmp * sign;
+      }
+      const av = key === 'rate' ? positiveNum(a.item.rating) : positiveNum(a.item.year);
+      const bv = key === 'rate' ? positiveNum(b.item.rating) : positiveNum(b.item.year);
+      if (av == null && bv == null) return a.index - b.index;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      return av === bv ? a.index - b.index : (av - bv) * sign;
+    })
+    .map((row) => row.item);
+}
+
+function positiveNum(value: string | undefined): number | null {
+  if (!value) return null;
+  const n = parseFloat(value);
+  return Number.isFinite(n) && n > 0 ? n : null;
 }

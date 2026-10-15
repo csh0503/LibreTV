@@ -15,9 +15,11 @@ import {
   sortHallItems,
   type HallChannel,
   type HallScore,
-  type HallSort,
+  type HallSortDir,
+  type HallSortKey,
   type HallStatus,
 } from '@/lib/recommend';
+import { SortArrows } from './sort-arrows';
 import { DoubanCard } from './video-card';
 import { favoriteIdOf } from '@/lib/db';
 import { AdultLibrary } from './adult-library';
@@ -60,7 +62,8 @@ export function RecommendSection({
   const [year, setYear] = useState('全部');
   const [status, setStatus] = useState<HallStatus>('all');
   const [score, setScore] = useState<HallScore>('all');
-  const [sort, setSort] = useState<HallSort>('hot');
+  const [sortKey, setSortKey] = useState<HallSortKey>('hot');
+  const [sortDir, setSortDir] = useState<HallSortDir>('desc');
   const [weekday, setWeekday] = useState<number | 'all'>('all');
 
   useEffect(() => {
@@ -72,8 +75,8 @@ export function RecommendSection({
   const weekdayMode = channel === 'anime' && weekday !== 'all';
 
   const request = useMemo(
-    () => buildDoubanRequest({ channel, genre, area, year, sort, score, status }),
-    [channel, genre, area, year, sort, score, status]
+    () => buildDoubanRequest({ channel, genre, area, year, sort: sortKey, score, status }),
+    [channel, genre, area, year, sortKey, score, status]
   );
 
   const doubanQuery = useInfiniteQuery({
@@ -113,9 +116,13 @@ export function RecommendSection({
   const items = useMemo(() => {
     if (weekdayMode) {
       const day = bangumiQuery.data?.days.find((d) => d.weekday === weekday)?.items ?? [];
-      return day
-        .map((item) => ({ ...item, status: 'airing' as const, area: item.area || '日本', year: item.year || String(nowYear), isTv: true }))
-        .filter((item) => status !== 'ended' && (!yellowFilter || !isAdultContent(item.title)));
+      return sortHallItems(
+        day
+          .map((item) => ({ ...item, status: 'airing' as const, area: item.area || '日本', year: item.year || String(nowYear), isTv: true }))
+          .filter((item) => status !== 'ended' && (!yellowFilter || !isAdultContent(item.title))),
+        sortKey,
+        sortDir
+      );
     }
     if (!request) return [];
     const seen = new Set<string>();
@@ -144,7 +151,7 @@ export function RecommendSection({
       minScore: request.minScore,
       hideAdult: yellowFilter,
     });
-    return sortHallItems(filtered, sort);
+    return sortHallItems(filtered, sortKey, sortDir);
   }, [
     weekdayMode,
     weekday,
@@ -159,7 +166,8 @@ export function RecommendSection({
     year,
     nowYear,
     showStatus,
-    sort,
+    sortKey,
+    sortDir,
   ]);
 
   const loadMore = useCallback(() => {
@@ -183,7 +191,8 @@ export function RecommendSection({
     setYear('全部');
     setStatus('all');
     setScore('all');
-    setSort('hot');
+    setSortKey('hot');
+    setSortDir('desc');
     setWeekday('all');
   };
 
@@ -262,9 +271,14 @@ export function RecommendSection({
               <FilterChip active={score === '7'} onClick={() => setScore('7')}>7 分以上</FilterChip>
             </FilterRow>
             <FilterRow label="排序">
-              <FilterChip active={sort === 'hot'} onClick={() => setSort('hot')}>热门</FilterChip>
-              <FilterChip active={sort === 'rate'} onClick={() => setSort('rate')}>高分</FilterChip>
-              <FilterChip active={sort === 'new'} onClick={() => setSort('new')}>最新</FilterChip>
+              <SortArrows
+                sortKey={sortKey}
+                sortDir={sortDir}
+                onChange={(key, dir) => {
+                  setSortKey(key);
+                  setSortDir(dir);
+                }}
+              />
             </FilterRow>
           </div>
 
