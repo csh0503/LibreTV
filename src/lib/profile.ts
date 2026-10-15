@@ -151,7 +151,7 @@ function startPrefsSync(): void {
 }
 
 async function initProfiles(): Promise<void> {
-  let id = readStoredProfileId();
+  const id = readStoredProfileId();
   let profile = id ? await db.profiles.get(id) : undefined;
   if (!profile) {
     const all = await db.profiles.orderBy('createdAt').toArray();

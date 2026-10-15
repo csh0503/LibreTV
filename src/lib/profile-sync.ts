@@ -16,6 +16,13 @@ let timer: ReturnType<typeof setTimeout> | undefined;
 let syncing = false;
 let lastDevice = '';
 
+function stripLocalIds<T extends { id: string; profileId: string }>(row: T): Omit<T, 'id' | 'profileId'> {
+  const copy = { ...row };
+  delete (copy as { id?: string }).id;
+  delete (copy as { profileId?: string }).profileId;
+  return copy;
+}
+
 function isNotFound(err: unknown): boolean {
   return err instanceof ApiError && err.status === 404;
 }
@@ -43,14 +50,8 @@ async function buildBundle(profileId: string, name: string): Promise<ProfileBund
       liveFavorites: state.liveFavorites,
       liveRecent: state.liveRecent,
     },
-    history: history.map((row) => {
-      const { id: _id, profileId: _profileId, ...rest } = row;
-      return rest;
-    }),
-    favorites: favorites.map((row) => {
-      const { id: _id, profileId: _profileId, ...rest } = row;
-      return rest;
-    }),
+    history: history.map((row) => stripLocalIds(row)),
+    favorites: favorites.map((row) => stripLocalIds(row)),
     progress: progress.map((row) => ({
       localKey: row.key.startsWith(prefix) ? row.key.slice(prefix.length) : row.key,
       position: row.position,

@@ -124,7 +124,7 @@ export function deriveStatus(
   // 「47集全」是豆瓣常见的完结写法，不只「全47集」
   if (/完结|已完结|全集|全\d+\s*集|\d+\s*集全/.test(text)) return 'ended';
   const year = parseInt(input.year ?? '', 10);
-  if (!Number.isFinite(year) || year <= 0) return undefined;
+  if (!Number.isFinite(year) || year < 1900 || year > nowYear + 5) return undefined;
   // 没有「更新至」的年份条目算已完结，包括今年。
   // 若把今年一律当成连载，「2026 + 已完结」会整页被滤空，而「连载中」却全是这些片子。
   return 'ended';
