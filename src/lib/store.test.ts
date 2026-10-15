@@ -390,3 +390,38 @@ describe('订阅整体开关', () => {
     expect(isInDisabledSubscription(store(), 'manual_0')).toBe(false);
   });
 });
+
+describe('成人内容开关', () => {
+  it('关闭过滤时勾上成人源，打开过滤时取消勾选，普通源不动', () => {
+    useAppStore.setState({
+      customAPIs: [
+        { key: 'n', name: '普通', url: 'https://a.example.com/api.php' },
+        { key: 'a', name: '成人', url: 'https://b.example.com/api.php', isAdult: true },
+      ],
+      envSources: [{ key: 'e', name: '预置成人', url: 'https://c.example.com/api.php', isAdult: true }],
+      selectedKeys: ['n'],
+      yellowFilter: true,
+    });
+
+    store().updateSettings({ yellowFilter: false });
+    expect(store().yellowFilter).toBe(false);
+    expect(store().selectedKeys).toEqual(['n', 'a', 'e']);
+
+    store().updateSettings({ yellowFilter: true });
+    expect(store().selectedKeys).toEqual(['n']);
+    expect(store().yellowFilter).toBe(true);
+  });
+
+  it('没勾标记、但是黄色仓库这类地址，开关一样会停用和启用', () => {
+    useAppStore.setState({
+      customAPIs: [{ key: 'k', name: '155', url: 'https://155api.com/api.php/provide/vod' }],
+      envSources: [],
+      selectedKeys: ['k'],
+      yellowFilter: false,
+    });
+    store().updateSettings({ yellowFilter: true });
+    expect(store().selectedKeys).toEqual([]);
+    store().updateSettings({ yellowFilter: false });
+    expect(store().selectedKeys).toEqual(['k']);
+  });
+});

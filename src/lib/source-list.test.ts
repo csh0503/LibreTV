@@ -38,7 +38,18 @@ describe('parseSourceListPayload', () => {
     });
 
     expect(result.sources[0].name).toBe('vod.example.com');
+    expect(result.sources[0].isAdult).toBe(false);
     expect(result.liveSources[0].name).toBe('live.example.com');
+  });
+
+  it('已知成人地址即使没写 isAdult 也会标上', () => {
+    const result = parseSourceListPayload({
+      sources: [{ name: '黄色仓库', url: 'https://hsckzy.vip/api.php/provide/vod/' }],
+    });
+    expect(result.sources[0]).toMatchObject({
+      url: 'https://hsckzy.vip/api.php/provide/vod',
+      isAdult: true,
+    });
   });
 
   it('老格式（只有 sources）兼容为纯点播订阅', () => {

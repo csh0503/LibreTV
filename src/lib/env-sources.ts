@@ -1,4 +1,5 @@
 import type { SourceConfig } from './types';
+import { isKnownAdultSource } from './adult-sources';
 
 /**
  * 部署者通过 DEFAULT_SOURCES 环境变量预置的采集站。
@@ -27,7 +28,7 @@ export function getEnvSources(): SourceConfig[] {
         name: name.trim(),
         url: url.trim().replace(/\/+$/, ''),
         detail: typeof detail === 'string' && detail.trim() ? detail.trim() : undefined,
-        isAdult: isAdult === true,
+        isAdult: isAdult === true || isKnownAdultSource(url.trim()),
       };
     });
     return list;

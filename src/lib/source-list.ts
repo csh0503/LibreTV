@@ -1,4 +1,5 @@
 import type { SourceListPayload } from './types';
+import { isKnownAdultSource } from './adult-sources';
 
 /**
  * 数据源订阅（LibreTV-SourceList JSON）的纯解析层：只做字段裁剪、去重与上限，
@@ -90,7 +91,7 @@ export function parseSourceListPayload(json: unknown): SourceListPayload {
       name: optionalString(s?.name) || hostnameOf(url),
       url,
       detail: optionalString(s?.detail),
-      isAdult: s?.isAdult === true,
+      isAdult: s?.isAdult === true || isKnownAdultSource(url),
     });
   }
 

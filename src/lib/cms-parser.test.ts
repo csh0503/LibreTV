@@ -7,6 +7,9 @@ import {
   isAdultContent,
   isRelevant,
   normalizeTitle,
+  parseBrowseVideos,
+  parseCmsClasses,
+  parsePageCount,
   parseDetail,
   parseDetailPageHtml,
   parseSearchList,
@@ -147,6 +150,36 @@ describe('成人内容过滤', () => {
     const items = [{ typeName: '伦理片' }, { typeName: '剧情片' }];
     expect(filterAdultResults(items, true)).toEqual([{ typeName: '剧情片' }]);
     expect(filterAdultResults(items, false)).toHaveLength(2);
+  });
+
+  it('片名命中敏感词时同样滤掉，分类名正常也挡不住', () => {
+    const items = [{ name: '日本无码作品', typeName: '剧情片' }, { title: '科幻片', typeName: '科幻' }];
+    expect(filterAdultResults(items, true)).toEqual([{ title: '科幻片', typeName: '科幻' }]);
+    expect(isAdultContent('SWAG专区')).toBe(true);
+  });
+});
+
+describe('分类浏览解析', () => {
+  it('分类表丢掉非法 id，影片保留数字年份和评分', () => {
+    const data = {
+      class: [
+        { type_id: 3, type_name: '伦理片' },
+        { type_id: 'x', type_name: '坏分类' },
+        { type_id: 3, type_name: '重复' },
+      ],
+      list: [{ vod_id: 9, vod_name: '示例', vod_year: 2020, vod_area: '日本', vod_remarks: '全12集', vod_score: '7.5' }],
+    };
+    expect(parsePageCount({ pagecount: 12 })).toBe(12);
+    expect(parsePageCount({})).toBe(1);
+    expect(parseCmsClasses(data)).toEqual([{ id: '3', name: '伦理片' }]);
+    expect(parseBrowseVideos(data)[0]).toMatchObject({
+      vodId: '9',
+      name: '示例',
+      year: '2020',
+      area: '日本',
+      remarks: '全12集',
+      rating: '7.5',
+    });
   });
 });
 

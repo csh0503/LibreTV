@@ -1,6 +1,6 @@
 'use client';
 
-import type { SearchResponse, SearchStreamEvent, SourceSearchOutcome, VideoDetail, DoubanResponse, BangumiCalendarResponse, AuthStatusResponse, SourceConfig, SearchResultItem, LivePlaylistResponse, LiveEpgResponse, SourceListPayload } from './types';
+import type { SearchResponse, SearchStreamEvent, SourceSearchOutcome, VideoDetail, DoubanResponse, BangumiCalendarResponse, AuthStatusResponse, SourceConfig, SearchResultItem, LivePlaylistResponse, LiveEpgResponse, SourceListPayload, BrowseResponse } from './types';
 
 /**
  * 客户端 API 封装。401 时触发全局事件打开登录框，
@@ -146,9 +146,28 @@ export const api = {
     return request<VideoDetail>(`/api/detail?${sp.toString()}`, { signal });
   },
 
-  douban: (type: 'movie' | 'tv', tag: string, pageStart: number, pageSize: number, signal?: AbortSignal) => {
-    const sp = new URLSearchParams({ type, tag, pageStart: String(pageStart), pageSize: String(pageSize) });
+  douban: (
+    query: { kind: 'movie' | 'tv'; tags: string[]; sort: string; score: string; pageStart?: number; pageSize?: number },
+    signal?: AbortSignal
+  ) => {
+    const sp = new URLSearchParams({
+      kind: query.kind,
+      tags: query.tags.join(','),
+      sort: query.sort,
+      score: query.score,
+      pageStart: String(query.pageStart ?? 0),
+      pageSize: String(query.pageSize ?? 20),
+    });
     return request<DoubanResponse>(`/api/douban?${sp.toString()}`, { signal });
+  },
+
+  /** 采集站分类浏览（成人片库：分类、年份、地区、完结备注），pg 从 1 起 */
+  browse: (query: { url: string; t?: string; year?: string; area?: string; page?: number }, signal?: AbortSignal) => {
+    const sp = new URLSearchParams({ url: query.url, pg: String(query.page ?? 1) });
+    if (query.t) sp.set('t', query.t);
+    if (query.year) sp.set('year', query.year);
+    if (query.area) sp.set('area', query.area);
+    return request<BrowseResponse>(`/api/browse?${sp.toString()}`, { signal });
   },
 
   /** Bangumi 每日放送（免 key），首页推荐的另一数据源 */

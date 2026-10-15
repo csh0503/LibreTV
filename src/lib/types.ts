@@ -10,9 +10,8 @@ export interface SourceConfig {
   isAdult?: boolean;
 }
 
-export interface SearchResultItem {
-  sourceKey: string;
-  sourceName: string;
+/** 采集站列表里的一条影片（搜索和分类浏览共用） */
+export interface VodListItem {
   vodId: string;
   name: string;
   pic?: string;
@@ -20,9 +19,30 @@ export interface SearchResultItem {
   year?: string;
   area?: string;
   remarks?: string;
+  /** 源站自带评分（vod_douban_score / vod_score），没有或为 0 时不填 */
+  rating?: string;
+}
+
+export interface SearchResultItem extends VodListItem {
+  sourceKey: string;
+  sourceName: string;
   /** 自定义源的 API 地址，详情请求需要 */
   sourceUrl?: string;
   isAdult?: boolean;
+}
+
+/** 采集站分类（ac=list 的 class） */
+export interface CmsClass {
+  id: string;
+  name: string;
+}
+
+/** 分类浏览：分类表 + 当前条件下的一页影片（不含源身份，由调用方补上） */
+export interface BrowseResponse {
+  classes: CmsClass[];
+  items: VodListItem[];
+  page: number;
+  pageCount: number;
 }
 
 export interface VideoInfo {
@@ -51,6 +71,19 @@ export interface DoubanItem {
   cover: string;
   rating?: string;
   isTv?: boolean;
+  /** 上映年，豆瓣 card_subtitle 或 year 字段 */
+  year?: string;
+  /** 地区，可能是「美国 加拿大」这种多地区 */
+  area?: string;
+  /** 题材，空格分隔，来自 card_subtitle 的第三段 */
+  genres?: string;
+  /**
+   * 能判断时才有。连载来自「更新至」或本周放送；
+   * 完结来自「全N集 / 完结」，或上映年早于今年。
+   */
+  status?: 'airing' | 'ended';
+  /** 原始更新说明，如「更新至18集」 */
+  remarks?: string;
 }
 
 export interface SourceSearchOutcome {
@@ -78,6 +111,8 @@ export type SearchStreamEvent =
 
 export interface DoubanResponse {
   items: DoubanItem[];
+  /** 该筛选条件下的总条数；没有时前端按「本页是否满页」判断还有没有下一页 */
+  total?: number;
 }
 
 export interface BangumiCalendarDay {

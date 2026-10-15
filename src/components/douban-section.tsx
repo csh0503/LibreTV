@@ -1,281 +1,341 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { keepPreviousData, useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/client-api';
 import { useAppStore } from '@/lib/store';
 import { cn } from '@/lib/utils';
-import type { DoubanItem } from '@/lib/types';
+import type { DoubanItem, SearchResultItem } from '@/lib/types';
+import { isAdultContent } from '@/lib/cms-parser';
+import {
+  HALL_PAGE_SIZE,
+  buildDoubanRequest,
+  filterHallItems,
+  mergeAiringCalendar,
+  sortHallItems,
+  type HallChannel,
+  type HallScore,
+  type HallSort,
+  type HallStatus,
+} from '@/lib/recommend';
 import { DoubanCard } from './video-card';
+import { AdultLibrary } from './adult-library';
+import { useLoadMore } from './use-load-more';
 
-// —— 分类与筛选项常量 ——
-export type ChannelType = 'anime' | 'movie' | 'tv' | 'show' | 'doc';
-
-const CHANNELS: { id: ChannelType; label: string; icon: string }[] = [
-  { id: 'anime', label: '动漫新番', icon: '🌸' },
+const CHANNELS: { id: HallChannel; label: string; icon: string }[] = [
+  { id: 'anime', label: '动漫', icon: '🌸' },
   { id: 'movie', label: '电影', icon: '🍿' },
-  { id: 'tv', label: '电视剧集', icon: '📺' },
-  { id: 'show', label: '综艺娱乐', icon: '🎪' },
+  { id: 'tv', label: '电视剧', icon: '📺' },
+  { id: 'show', label: '综艺', icon: '🎪' },
   { id: 'doc', label: '纪录片', icon: '🌍' },
 ];
 
-const ANIME_GENRES = ['全部', '热血', '奇幻', '恋爱', '日常', '搞笑', '科幻', '治愈', '机战', '悬疑', '冒险', '异世界', '战斗', '百合'];
-const MOVIE_GENRES = ['全部', '热门', '科幻', '喜剧', '动作', '悬疑', '爱情', '动画', '恐怖', '犯罪', '惊悚', '战争', '奇幻', '经典'];
-const TV_GENRES = ['全部', '国产剧', '韩剧', '美剧', '日剧', '港剧', '英剧', '悬疑', '古装', '都市', '科幻', '短剧'];
-const SHOW_GENRES = ['全部', '真人秀', '搞笑', '脱口秀', '音乐', '恋爱', '美食', '游戏'];
-const DOC_GENRES = ['全部', '自然', '历史', '科技', '美食', '人文', '宇宙', '人物'];
+const GENRES: Record<Exclude<HallChannel, 'adult'>, string[]> = {
+  anime: ['全部', '热血', '奇幻', '恋爱', '日常', '搞笑', '科幻', '治愈', '机战', '悬疑', '冒险', '战斗', '校园', '催泪'],
+  movie: ['全部', '喜剧', '爱情', '动作', '科幻', '动画', '悬疑', '犯罪', '惊悚', '冒险', '奇幻', '恐怖', '战争', '武侠', '历史', '灾难', '音乐'],
+  tv: ['全部', '剧情', '悬疑', '犯罪', '古装', '都市', '爱情', '喜剧', '奇幻', '科幻', '武侠', '战争', '历史', '惊悚', '短剧'],
+  show: ['全部', '真人秀', '音乐', '脱口秀', '搞笑', '恋爱', '美食', '游戏', '访谈', '选秀'],
+  doc: ['全部', '自然', '历史', '人物', '科技', '社会', '美食', '战争', '灾难', '传记'],
+};
 
-const YEARS = ['全部', '2026', '2025', '2024', '2023', '2022', '2021', '2020', '2019', '2015-2018', '2010-2014', '2000年代', '更早'];
-const STATUSES = ['全部', '完结', '连载中'];
-const SORTS = [
-  { id: 'hot', label: '🔥 热门推荐' },
-  { id: 'rate', label: '⭐ 高分榜' },
-  { id: 'new', label: '🕒 最新上线' },
-];
+const AREAS = ['全部', '华语', '中国大陆', '中国香港', '中国台湾', '日本', '韩国', '美国', '英国', '法国', '德国', '泰国', '印度', '欧美'];
+const YEARS = ['全部', '2026', '2025', '2024', '2023', '2022', '2021', '2020', '2019', '2015-2018', '2010-2014', '2000年代', '90年代', '更早'];
 const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
-export function RecommendSection({ onPick }: { onPick: (title: string) => void }) {
+export function RecommendSection({
+  onPick,
+  onOpen,
+}: {
+  onPick: (title: string) => void;
+  onOpen: (item: SearchResultItem) => void;
+}) {
   const doubanEnabled = useAppStore((s) => s.doubanEnabled);
   const yellowFilter = useAppStore((s) => s.yellowFilter);
+  const nowYear = new Date().getFullYear();
 
-  // 一级频道
-  const [channel, setChannel] = useState<ChannelType>('anime');
-  // 题材标签
+  const [channel, setChannel] = useState<HallChannel>('anime');
   const [genre, setGenre] = useState('全部');
-  // 年份
+  const [area, setArea] = useState('全部');
   const [year, setYear] = useState('全部');
-  // 连载状态
-  const [status, setStatus] = useState('全部');
-  // 排序
-  const [sort, setSort] = useState('hot');
-  // 动漫专属：星期放送筛选（仅当选择动漫且年份为全部时激活）
+  const [status, setStatus] = useState<HallStatus>('all');
+  const [score, setScore] = useState<HallScore>('all');
+  const [sort, setSort] = useState<HallSort>('hot');
   const [weekday, setWeekday] = useState<number | 'all'>('all');
 
-  // 获取当前频道的题材列表
-  const genreList = useMemo(() => {
-    switch (channel) {
-      case 'anime': return ANIME_GENRES;
-      case 'movie': return MOVIE_GENRES;
-      case 'tv': return TV_GENRES;
-      case 'show': return SHOW_GENRES;
-      case 'doc': return DOC_GENRES;
-    }
-  }, [channel]);
+  useEffect(() => {
+    if (yellowFilter && channel === 'adult') setChannel('anime');
+  }, [yellowFilter, channel]);
 
-  // 1. 数据获取：豆瓣影视库
-  const doubanTag = useMemo(() => {
-    if (channel === 'anime') {
-      return genre === '全部' ? '日本动画' : genre;
-    }
-    if (channel === 'show') return '综艺';
-    if (channel === 'doc') return '纪录片';
-    if (genre !== '全部') return genre;
-    if (sort === 'rate') return '豆瓣高分';
-    if (sort === 'new') return '最新';
-    return '热门';
-  }, [channel, genre, sort]);
+  const genreList = channel === 'adult' ? [] : GENRES[channel];
+  const showStatus = channel === 'anime' || channel === 'tv' || channel === 'show';
+  const weekdayMode = channel === 'anime' && weekday !== 'all';
 
-  const doubanType = channel === 'movie' ? 'movie' : 'tv';
+  const request = useMemo(
+    () => buildDoubanRequest({ channel, genre, area, year, sort, score, status }),
+    [channel, genre, area, year, sort, score, status]
+  );
 
-  const doubanQuery = useQuery({
-    queryKey: ['douban', doubanType, doubanTag],
-    queryFn: ({ signal }) => api.douban(doubanType, doubanTag, 0, 50, signal),
-    enabled: doubanEnabled,
+  const doubanQuery = useInfiniteQuery({
+    queryKey: ['douban-hall', request?.kind, request?.tags.join(','), request?.sort, request?.score],
+    queryFn: ({ pageParam, signal }) =>
+      api.douban({ ...request!, pageStart: pageParam, pageSize: HALL_PAGE_SIZE }, signal),
+    initialPageParam: 0,
+    getNextPageParam: (last, allPages) => {
+      if (last.items.length === 0) return undefined;
+      const prev = allPages[allPages.length - 2];
+      if (prev?.items[0]?.id && prev.items[0].id === last.items[0]?.id) return undefined;
+      const loaded = allPages.reduce((sum, page) => sum + page.items.length, 0);
+      if (typeof last.total === 'number' && loaded >= last.total) return undefined;
+      if (last.items.length < HALL_PAGE_SIZE) return undefined;
+      return loaded;
+    },
+    enabled: doubanEnabled && request !== null && !weekdayMode,
+    placeholderData: keepPreviousData,
   });
+  const {
+    data: doubanData,
+    hasNextPage,
+    isFetching,
+    isFetchingNextPage,
+    isLoading,
+    isError,
+    fetchNextPage,
+  } = doubanQuery;
 
-  // 2. 数据获取：Bangumi 每日放送（用于动漫新番与周历）
   const bangumiQuery = useQuery({
     queryKey: ['bangumi-calendar'],
     queryFn: ({ signal }) => api.bangumiCalendar(signal),
     enabled: doubanEnabled && channel === 'anime',
   });
 
-  // 综合条目生成与多维过滤
   const items = useMemo(() => {
-    let list: DoubanItem[] = [];
-
-    // 如果是动漫频道，并且选择当周放送/未选特定年份
-    if (channel === 'anime' && (year === '全部' || year === '2025' || year === '2026') && bangumiQuery.data) {
-      const bgmItems = weekday === 'all'
-        ? bangumiQuery.data.days.flatMap((d) => d.items)
-        : (bangumiQuery.data.days.find((d) => d.weekday === weekday)?.items ?? []);
-      
-      const doubanItems = doubanQuery.data?.items ?? [];
-      // 合并两方数据并按名称去重
-      const map = new Map<string, DoubanItem>();
-      for (const item of bgmItems) map.set(item.title.trim(), item);
-      for (const item of doubanItems) {
-        if (!map.has(item.title.trim())) map.set(item.title.trim(), item);
-      }
-      list = Array.from(map.values());
-    } else {
-      list = doubanQuery.data?.items ?? [];
+    if (weekdayMode) {
+      const day = bangumiQuery.data?.days.find((d) => d.weekday === weekday)?.items ?? [];
+      return day
+        .map((item) => ({ ...item, status: 'airing' as const, area: item.area || '日本', year: item.year || String(nowYear), isTv: true }))
+        .filter((item) => status !== 'ended' && (!yellowFilter || !isAdultContent(item.title)));
     }
-
-    // 状态过滤（完结 / 连载中）：通过名称或已有信息识别，连载新番与电影
-    if (status !== '全部') {
-      if (status === '完结') {
-        list = list.filter((i) => !i.title.includes('更新') && !i.title.includes('连载'));
-      } else if (status === '连载中') {
-        list = list.filter((i) => i.isTv);
+    if (!request) return [];
+    const seen = new Set<string>();
+    const doubanItems: DoubanItem[] = [];
+    for (const page of doubanData?.pages ?? []) {
+      for (const item of page.items) {
+        if (seen.has(item.id)) continue;
+        seen.add(item.id);
+        doubanItems.push(item);
       }
     }
+    const mergeCalendar =
+      channel === 'anime' &&
+      status !== 'ended' &&
+      genre === '全部' &&
+      (area === '全部' || area === '日本') &&
+      (year === '全部' || year === String(nowYear) || year === String(nowYear - 1));
+    const calendar = mergeCalendar ? bangumiQuery.data?.days.flatMap((d) => d.items) ?? [] : [];
+    const merged = mergeAiringCalendar(doubanItems, calendar, nowYear);
+    const filtered = filterHallItems(merged, {
+      genre,
+      area,
+      yearRange: request.yearRange,
+      status,
+      applyStatus: showStatus,
+      minScore: request.minScore,
+      hideAdult: yellowFilter,
+    });
+    return sortHallItems(filtered, sort);
+  }, [
+    weekdayMode,
+    weekday,
+    bangumiQuery.data,
+    yellowFilter,
+    status,
+    request,
+    doubanData,
+    channel,
+    genre,
+    area,
+    year,
+    nowYear,
+    showStatus,
+    sort,
+  ]);
 
-    // 高分排序
-    if (sort === 'rate') {
-      list = [...list].sort((a, b) => {
-        const ra = parseFloat(a.rating || '0');
-        const rb = parseFloat(b.rating || '0');
-        return rb - ra;
-      });
-    }
+  const loadMore = useCallback(() => {
+    if (hasNextPage && !isFetching) void fetchNextPage();
+  }, [hasNextPage, isFetching, fetchNextPage]);
+  const sentinel = useLoadMore(!weekdayMode && !!hasNextPage && !isFetching, doubanData?.pages.length ?? 0, loadMore);
 
-    // 成人过滤：若开启了 yellowFilter，排除敏感关键词
-    if (yellowFilter) {
-      const sensitiveWords = ['伦理', '福利', '无码', '有码', '里番', '18禁', '三级'];
-      list = list.filter((i) => !sensitiveWords.some((w) => i.title.includes(w)));
-    }
-
-    return list;
-  }, [channel, year, status, sort, weekday, bangumiQuery.data, doubanQuery.data, yellowFilter]);
+  useEffect(() => {
+    if (weekdayMode || items.length > 0) return;
+    if (!hasNextPage || isFetching) return;
+    void fetchNextPage();
+  }, [weekdayMode, items.length, hasNextPage, isFetching, fetchNextPage]);
 
   if (!doubanEnabled) return null;
 
+  const reset = () => {
+    setGenre('全部');
+    setArea('全部');
+    setYear('全部');
+    setStatus('all');
+    setScore('all');
+    setSort('hot');
+    setWeekday('all');
+  };
+
+  const pickChannel = (id: HallChannel) => {
+    setChannel(id);
+    setGenre('全部');
+    setWeekday('all');
+  };
+
   return (
     <section aria-label="影视与动漫大厅" className="space-y-3.5">
-      {/* 1. 一级频道导航（大分类） */}
-      <div className="flex items-center justify-between border-b border-line pb-2.5">
-        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
-          {CHANNELS.map((c) => (
-            <button
-              key={c.id}
-              onClick={() => {
-                setChannel(c.id);
-                setGenre('全部');
-                setWeekday('all');
-              }}
-              className={cn(
-                'flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs sm:text-sm font-semibold transition-all',
-                channel === c.id
-                  ? 'bg-accent text-on-accent shadow-sm scale-105'
-                  : 'bg-chip text-muted hover:text-content hover:bg-hover'
-              )}
-            >
-              <span>{c.icon}</span>
-              <span>{c.label}</span>
-            </button>
-          ))}
-        </div>
-
-        {/* 排序方式选择 */}
-        <div className="hidden sm:flex items-center gap-1 bg-chip p-1 rounded-lg text-xs">
-          {SORTS.map((s) => (
-            <button
-              key={s.id}
-              onClick={() => setSort(s.id)}
-              className={cn(
-                'px-2.5 py-1 rounded-md transition-colors',
-                sort === s.id ? 'bg-accent text-on-accent font-medium' : 'text-muted hover:text-content'
-              )}
-            >
-              {s.label}
-            </button>
-          ))}
-        </div>
+      <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 border-b border-line pb-2.5">
+        {CHANNELS.map((c) => (
+          <ChannelButton key={c.id} active={channel === c.id} onClick={() => pickChannel(c.id)}>
+            <span>{c.icon}</span>
+            <span>{c.label}</span>
+          </ChannelButton>
+        ))}
+        {!yellowFilter && (
+          <ChannelButton active={channel === 'adult'} onClick={() => pickChannel('adult')}>
+            <span>18+</span>
+            <span>成人</span>
+          </ChannelButton>
+        )}
       </div>
 
-      {/* 2. 多维度筛选矩阵 */}
-      <div className="bg-surface/60 border border-line rounded-2xl p-3 sm:p-4 space-y-2.5 text-xs">
-        {/* A. 动漫专属：按周几放送 */}
-        {channel === 'anime' && (
-          <div className="flex items-start sm:items-center gap-2">
-            <span className="text-muted shrink-0 w-12 font-medium pt-1 sm:pt-0">新番放送:</span>
-            <div className="flex flex-wrap gap-1">
-              <FilterChip active={weekday === 'all'} onClick={() => setWeekday('all')}>
-                全部星期
-              </FilterChip>
-              {WEEKDAYS.map((w, idx) => (
-                <FilterChip key={w} active={weekday === idx + 1} onClick={() => setWeekday(idx + 1)}>
-                  {w}
+      {channel === 'adult' ? (
+        <AdultLibrary onOpen={onOpen} />
+      ) : (
+        <>
+          <div className="bg-surface/60 border border-line rounded-2xl p-3 sm:p-4 space-y-2.5 text-xs">
+            {channel === 'anime' && (
+              <FilterRow label="放送">
+                <FilterChip active={weekday === 'all'} onClick={() => setWeekday('all')}>
+                  全部
+                </FilterChip>
+                {WEEKDAYS.map((label, index) => (
+                  <FilterChip key={label} active={weekday === index + 1} onClick={() => setWeekday(index + 1)}>
+                    {label}
+                  </FilterChip>
+                ))}
+              </FilterRow>
+            )}
+            <FilterRow label="题材">
+              {genreList.map((name) => (
+                <FilterChip key={name} active={genre === name} onClick={() => setGenre(name)}>
+                  {name}
                 </FilterChip>
               ))}
+            </FilterRow>
+            <FilterRow label="地区">
+              {AREAS.map((name) => (
+                <FilterChip key={name} active={area === name} onClick={() => setArea(name)}>
+                  {name}
+                </FilterChip>
+              ))}
+            </FilterRow>
+            <FilterRow label="年份">
+              {YEARS.map((name) => (
+                <FilterChip key={name} active={year === name} onClick={() => setYear(name)}>
+                  {name}
+                </FilterChip>
+              ))}
+            </FilterRow>
+            {showStatus && (
+              <FilterRow label="状态">
+                <FilterChip active={status === 'all'} onClick={() => setStatus('all')}>全部</FilterChip>
+                <FilterChip active={status === 'airing'} onClick={() => setStatus('airing')}>连载中</FilterChip>
+                <FilterChip active={status === 'ended'} onClick={() => setStatus('ended')}>已完结</FilterChip>
+              </FilterRow>
+            )}
+            <FilterRow label="评分">
+              <FilterChip active={score === 'all'} onClick={() => setScore('all')}>全部</FilterChip>
+              <FilterChip active={score === '9'} onClick={() => setScore('9')}>9 分以上</FilterChip>
+              <FilterChip active={score === '8'} onClick={() => setScore('8')}>8 分以上</FilterChip>
+              <FilterChip active={score === '7'} onClick={() => setScore('7')}>7 分以上</FilterChip>
+            </FilterRow>
+            <FilterRow label="排序">
+              <FilterChip active={sort === 'hot'} onClick={() => setSort('hot')}>热门</FilterChip>
+              <FilterChip active={sort === 'rate'} onClick={() => setSort('rate')}>高分</FilterChip>
+              <FilterChip active={sort === 'new'} onClick={() => setSort('new')}>最新</FilterChip>
+            </FilterRow>
+          </div>
+
+          {weekdayMode && (
+            <p className="text-xs text-faint">这一行是 Bangumi 本周放送。题材、地区、年份和评分留到「全部」放送时再生效。</p>
+          )}
+
+          {isError && !weekdayMode ? (
+            <p className="text-center text-sm text-faint py-12">推荐内容加载失败，请检查网络</p>
+          ) : (weekdayMode ? bangumiQuery.isLoading : isLoading || (items.length === 0 && (isFetching || hasNextPage))) ? (
+            <GridSkeleton />
+          ) : items.length === 0 ? (
+            <div className="text-center py-12 space-y-2">
+              <p className="text-sm text-muted">当前筛选下没有片子</p>
+              <button type="button" className="text-xs text-accent underline hover:opacity-80" onClick={reset}>
+                重置筛选
+              </button>
             </div>
-          </div>
-        )}
-
-        {/* B. 题材筛选 */}
-        <div className="flex items-start sm:items-center gap-2">
-          <span className="text-muted shrink-0 w-12 font-medium pt-1 sm:pt-0">题材类型:</span>
-          <div className="flex flex-wrap gap-1">
-            {genreList.map((g) => (
-              <FilterChip key={g} active={genre === g} onClick={() => setGenre(g)}>
-                {g}
-              </FilterChip>
-            ))}
-          </div>
-        </div>
-
-        {/* C. 年份筛选 */}
-        <div className="flex items-start sm:items-center gap-2">
-          <span className="text-muted shrink-0 w-12 font-medium pt-1 sm:pt-0">发布年份:</span>
-          <div className="flex flex-wrap gap-1">
-            {YEARS.map((y) => (
-              <FilterChip key={y} active={year === y} onClick={() => setYear(y)}>
-                {y}
-              </FilterChip>
-            ))}
-          </div>
-        </div>
-
-        {/* D. 连载状态 */}
-        <div className="flex items-start sm:items-center gap-2">
-          <span className="text-muted shrink-0 w-12 font-medium pt-1 sm:pt-0">更新状态:</span>
-          <div className="flex flex-wrap gap-1">
-            {STATUSES.map((st) => (
-              <FilterChip key={st} active={status === st} onClick={() => setStatus(st)}>
-                {st === '全部' ? '全部状态' : st === '完结' ? '✅ 已完结' : '⏳ 连载中'}
-              </FilterChip>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* 3. 卡片网格展示 */}
-      {doubanQuery.isError ? (
-        <p className="text-center text-sm text-faint py-12">推荐内容加载失败，请检查网络</p>
-      ) : doubanQuery.isLoading ? (
-        <GridSkeleton />
-      ) : items.length === 0 ? (
-        <div className="text-center py-12 space-y-2">
-          <p className="text-sm text-muted">当前筛选条件下暂无片源</p>
-          <button
-            onClick={() => {
-              setGenre('全部');
-              setYear('全部');
-              setStatus('全部');
-              setWeekday('all');
-            }}
-            className="text-xs text-accent underline hover:opacity-80"
-          >
-            重置所有筛选条件
-          </button>
-        </div>
-      ) : (
-        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2.5 sm:gap-3">
-          {items.map((item) => (
-            <div key={`${item.id}_${item.title}`} className="relative group">
-              <DoubanCard item={item} onClick={() => onPick(item.title)} />
-              {/* 完结/类型标签指示 */}
-              {status === '完结' && (
-                <span className="absolute bottom-9 left-1.5 px-1.5 py-0.5 rounded bg-emerald-600/90 text-[10px] text-white font-medium shadow-sm pointer-events-none">
-                  完结
-                </span>
+          ) : (
+            <>
+              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2.5 sm:gap-3">
+                {items.map((item) => (
+                  <DoubanCard key={`${item.id}_${item.title}`} item={toCard(item)} onClick={() => onPick(item.title)} />
+                ))}
+              </div>
+              {!weekdayMode && hasNextPage && (
+                <div ref={sentinel} className="py-6 text-center text-xs text-faint">
+                  {isFetchingNextPage ? '正在加载更多…' : '继续下滑'}
+                </div>
               )}
-            </div>
-          ))}
-        </div>
+            </>
+          )}
+        </>
       )}
     </section>
+  );
+}
+
+function toCard(item: DoubanItem) {
+  const meta = [item.year, item.area].filter(Boolean).join(' · ');
+  return {
+    title: item.title,
+    cover: item.cover,
+    rating: item.rating,
+    meta: meta || undefined,
+    badge:
+      item.status === 'ended'
+        ? { text: '完结', tone: 'ok' as const }
+        : item.status === 'airing'
+          ? { text: '连载', tone: 'warn' as const }
+          : undefined,
+  };
+}
+
+function ChannelButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs sm:text-sm font-semibold transition-all',
+        active ? 'bg-accent text-on-accent shadow-sm' : 'bg-chip text-muted hover:text-content hover:bg-hover'
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+function FilterRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-start gap-2">
+      <span className="text-muted shrink-0 w-12 font-medium pt-1">{label}</span>
+      <div className="flex flex-wrap gap-1">{children}</div>
+    </div>
   );
 }
 
@@ -285,9 +345,7 @@ function FilterChip({ active, onClick, children }: { active: boolean; onClick: (
       type="button"
       className={cn(
         'px-2.5 py-0.5 rounded-full text-xs transition-colors shrink-0',
-        active
-          ? 'bg-accent text-on-accent font-medium shadow-sm'
-          : 'bg-chip text-muted hover:text-content hover:bg-hover'
+        active ? 'bg-accent text-on-accent font-medium shadow-sm' : 'bg-chip text-muted hover:text-content hover:bg-hover'
       )}
       onClick={onClick}
     >

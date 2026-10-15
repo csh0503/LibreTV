@@ -262,8 +262,20 @@ export function VideoCard({ item, onClick }: { item: SearchResultItem; onClick: 
   );
 }
 
-/** 豆瓣推荐卡片（无来源徽章，点击直接搜索） */
-export function DoubanCard({ item, onClick }: { item: { title: string; cover: string; rating?: string }; onClick: () => void }) {
+/** 推荐卡片。badge 用来标完结 / 连载，meta 是年份和地区。 */
+export function DoubanCard({
+  item,
+  onClick,
+}: {
+  item: {
+    title: string;
+    cover: string;
+    rating?: string;
+    meta?: string;
+    badge?: { text: string; tone: 'ok' | 'warn' };
+  };
+  onClick: () => void;
+}) {
   const imageProxyMode = useAppStore((s) => s.imageProxyMode);
   const customImageProxy = useAppStore((s) => s.customImageProxy);
   const [imgFailed, setImgFailed] = useState(false);
@@ -305,11 +317,22 @@ export function DoubanCard({ item, onClick }: { item: { title: string; cover: st
             ★ {item.rating}
           </span>
         )}
+        {item.badge && (
+          <span
+            className={cn(
+              'absolute bottom-1.5 left-1.5 px-1.5 py-0.5 rounded text-[10px] text-white font-medium shadow-sm',
+              item.badge.tone === 'ok' ? 'bg-emerald-600/90' : 'bg-amber-500/90'
+            )}
+          >
+            {item.badge.text}
+          </span>
+        )}
       </div>
       <div className="p-2">
         <div className="text-xs font-medium text-content truncate" title={item.title}>
           {item.title}
         </div>
+        {item.meta && <div className="text-[10px] text-faint truncate mt-0.5">{item.meta}</div>}
       </div>
     </div>
   );

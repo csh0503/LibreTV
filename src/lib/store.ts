@@ -5,6 +5,7 @@ import { createJSONStorage, persist } from 'zustand/middleware';
 import type { SourceConfig, LiveSourceConfig, SourceSearchOutcome } from './types';
 import { clearLiveProbeResultsDb, loadLiveProbeResults, saveLiveProbeResults } from './db';
 import { PERSIST_KEY, createThrottledStorage } from './persist-storage';
+import { sourceIsAdult } from './adult-sources';
 
 /**
  * 全局设置（zustand + localStorage 持久化）。
@@ -304,7 +305,7 @@ export const useAppStore = create<AppState>()(
 
       addCustomApi: (api) => {
         const list = get().customAPIs;
-        const entry: SourceConfig = { ...api, key: api.key || nextCustomKey(list) };
+        const entry: SourceConfig = { ...api, key: api.key || nextCustomKey(list), isAdult: sourceIsAdult(api) };
         // 成人内容过滤开启时，成人源默认不勾选（用户可在关闭过滤后手动勾选）
         const selectable = !(entry.isAdult && get().yellowFilter);
         set({
@@ -314,10 +315,13 @@ export const useAppStore = create<AppState>()(
       },
 
       updateCustomApi: (key, patch) => {
-        // 源被标记为成人内容且过滤开启时，同步取消勾选
-        const drop = patch.isAdult === true && get().yellowFilter;
+        const current = get().customAPIs.find((a) => a.key === key);
+        const merged = { ...current, ...patch };
+        // 已知成人地址保持标记。过滤开启时，成人源不能留在勾选里。
+        const isAdult = sourceIsAdult(merged);
+        const drop = isAdult && get().yellowFilter;
         set({
-          customAPIs: get().customAPIs.map((a) => (a.key === key ? { ...a, ...patch } : a)),
+          customAPIs: get().customAPIs.map((a) => (a.key === key ? { ...a, ...patch, isAdult } : a)),
           selectedKeys: drop ? get().selectedKeys.filter((k) => k !== key) : get().selectedKeys,
         });
       },
@@ -351,7 +355,7 @@ export const useAppStore = create<AppState>()(
         }
         // 成人内容过滤开启时不允许勾选成人源
         const src = [...get().customAPIs, ...get().envSources].find((a) => a.key === key);
-        if (src?.isAdult && get().yellowFilter) return;
+        if (sourceIsAdult(src) && get().yellowFilter) return;
         set({ selectedKeys: [...cur, key] });
       },
 
@@ -364,7 +368,7 @@ export const useAppStore = create<AppState>()(
         // 成人内容过滤开启时，成人预置源不自动勾选
         const toSelect = freshKeys.filter((k) => {
           const src = list.find((s) => s.key === k);
-          return !src?.isAdult || !get().yellowFilter;
+          return !sourceIsAdult(src) || !get().yellowFilter;
         });
         set({
           envSources: list,
@@ -452,12 +456,13 @@ export const useAppStore = create<AppState>()(
         const incoming: SourceConfig[] = list.map((s, i) => ({
           ...s,
           key: `${prefix}_${i}`,
+          isAdult: sourceIsAdult(s),
         }));
         // 新源自动勾选（成人过滤开启时跳过成人源），已有源维持原勾选状态
         const toSelect = incoming
           .filter((s) => {
             const u = s.url.replace(/\/+$/, '');
-            return prevUrlSet.has(u) ? prevSelectedUrls.has(u) : !s.isAdult || !get().yellowFilter;
+            return prevUrlSet.has(u) ? prevSelectedUrls.has(u) : !sourceIsAdult(s) || !get().yellowFilter;
           })
           .map((s) => s.key);
         set({
@@ -713,26 +718,31 @@ export const useAppStore = create<AppState>()(
         // DEFAULT_RECOMMEND_SOURCE / DEFAULT_IMAGE_MODE 默认值不再覆盖该用户的选择
         const touched = 'recommendSource' in patch;
         const imageTouched = 'imageProxyMode' in patch;
-        // 打开成人内容过滤时，同步取消勾选所有成人源，避免两者并存
+        const extra = {
+          ...(touched ? { recommendSourceTouched: true } : null),
+          ...(imageTouched ? { imageProxyModeTouched: true } : null),
+        };
+        const adultKeys = [...get().customAPIs, ...get().envSources]
+          .filter((s) => sourceIsAdult(s))
+          .map((s) => s.key);
+        // 打开过滤：成人源退出搜索。关闭过滤：把这些源勾回来，首页开关一次就能搜。
         if (patch.yellowFilter === true) {
-          const adultKeys = new Set(
-            [...get().customAPIs, ...get().envSources]
-              .filter((s) => s.isAdult)
-              .map((s) => s.key)
-          );
+          const blocked = new Set(adultKeys);
           set({
             ...patch,
-            ...(touched ? { recommendSourceTouched: true } : null),
-            ...(imageTouched ? { imageProxyModeTouched: true } : null),
-            selectedKeys: get().selectedKeys.filter((k) => !adultKeys.has(k)),
+            ...extra,
+            selectedKeys: get().selectedKeys.filter((k) => !blocked.has(k)),
           });
           return;
         }
-        set({
-          ...patch,
-          ...(touched ? { recommendSourceTouched: true } : null),
-          ...(imageTouched ? { imageProxyModeTouched: true } : null),
-        });
+        if (patch.yellowFilter === false) {
+          const have = new Set(get().selectedKeys);
+          const selectedKeys = [...get().selectedKeys];
+          for (const key of adultKeys) if (!have.has(key)) selectedKeys.push(key);
+          set({ ...patch, ...extra, selectedKeys });
+          return;
+        }
+        set({ ...patch, ...extra });
       },
     }),
     {

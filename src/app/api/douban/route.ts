@@ -10,14 +10,27 @@ export async function GET(req: Request) {
   if (guarded) return guarded;
 
   const url = new URL(req.url);
-  const type = url.searchParams.get('type') === 'tv' ? 'tv' : 'movie';
-  const tag = (url.searchParams.get('tag') || '热门').slice(0, 20);
+  const kind = url.searchParams.get('kind') === 'tv' ? 'tv' : 'movie';
+  const sortParam = url.searchParams.get('sort');
+  const sort = sortParam === 'S' || sortParam === 'R' || sortParam === 'U' ? sortParam : 'U';
+  const score = url.searchParams.get('score') || '0,10';
+  if (!/^(?:[0-9]|10),(?:[0-9]|10)$/.test(score)) {
+    return NextResponse.json({ error: '评分范围无效' }, { status: 400 });
+  }
+  const tags = (url.searchParams.get('tags') || '热门')
+    .split(',')
+    .map((tag) => tag.trim())
+    .filter(Boolean)
+    .slice(0, 6);
+  if (tags.length === 0 || tags.some((tag) => !/^[\u4e00-\u9fa5A-Za-z0-9]{1,20}$/.test(tag))) {
+    return NextResponse.json({ error: '筛选标签无效' }, { status: 400 });
+  }
   const pageStart = Math.max(0, parseInt(url.searchParams.get('pageStart') || '0', 10) || 0);
-  const pageSize = Math.min(50, Math.max(1, parseInt(url.searchParams.get('pageSize') || '25', 10) || 25));
+  const pageSize = Math.min(50, Math.max(1, parseInt(url.searchParams.get('pageSize') || '24', 10) || 24));
 
   try {
-    const items = await fetchDoubanRecommend(type, tag, pageStart, pageSize);
-    return NextResponse.json({ items });
+    const { items, total } = await fetchDoubanRecommend({ kind, tags, sort, score, yearRange: null, minScore: null, pageStart, pageSize });
+    return NextResponse.json({ items, total });
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : '豆瓣推荐获取失败' },

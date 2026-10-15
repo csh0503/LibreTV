@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { Header } from '@/components/header';
@@ -8,6 +8,8 @@ import { RecommendSection } from '@/components/douban-section';
 import { DetailModal } from '@/components/detail-modal';
 import { AggregatedCard, aggregateResults } from '@/components/video-card';
 import { useAppStore, resolveSource, isInDisabledSubscription, isSourceDisabled } from '@/lib/store';
+import { sourceIsAdult } from '@/lib/adult-sources';
+import { useLoadMore } from '@/components/use-load-more';
 import { api } from '@/lib/client-api';
 import type { SearchResultItem, SourceSearchOutcome } from '@/lib/types';
 import { SearchHistoryDropdown, useSearchHistory } from '@/components/search-history';
@@ -62,6 +64,11 @@ function HomeContent() {
     envSources.find((a) => a.key === key)?.name ??
     key;
 
+  const adultSourceCount = useMemo(
+    () => [...customAPIs, ...envSources].filter((s) => sourceIsAdult(s)).length,
+    [customAPIs, envSources]
+  );
+
   const selectedSources = useMemo(() => {
     // selectedKeys 可能含历史残留的重复 key：按 key 去重，避免同源重复搜索
     const seen = new Set<string>();
@@ -70,10 +77,11 @@ function HomeContent() {
       .filter((s): s is NonNullable<typeof s> => {
         if (!s || !validateSourceUrl(s.url) || seen.has(s.key)) return false;
         seen.add(s.key);
-        // 成人内容过滤开启时，带 isAdult 标记的源直接不参与搜索
-        if (yellowFilter && s.isAdult) return false;
+        // 成人内容过滤开启时，成人源（含这 8 个已知地址）不参与搜索
+        if (yellowFilter && sourceIsAdult(s)) return false;
         return true;
       })
+      .map((s) => (sourceIsAdult(s) ? { ...s, isAdult: true } : s))
       // 自动停用期内的源不参与搜索（到期自动恢复）
       .filter((s) => !isSourceDisabled({ sourceHealth }, s.key))
       // 所属订阅被整体停用的源同样跳过（无损：各源勾选状态保留，重新启用即恢复）
@@ -164,6 +172,11 @@ function HomeContent() {
   const [visibleCount, setVisibleCount] = useState(RESULT_PAGE_SIZE);
   const visibleGroups = useMemo(() => groups.slice(0, visibleCount), [groups, visibleCount]);
   useEffect(() => setVisibleCount(RESULT_PAGE_SIZE), [groups]);
+  const showMoreResults = useCallback(() => {
+    setVisibleCount((count) => count + RESULT_PAGE_SIZE);
+  }, []);
+  const hasMoreResults = groups.length > visibleCount;
+  const resultSentinel = useLoadMore(hasMoreResults, visibleCount, showMoreResults);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -281,25 +294,35 @@ function HomeContent() {
             )}
           </div>
 
-          {/* 快捷安全开关：成人资源保护模式 */}
+          {/* 成人内容开关：关 = 过滤（默认），开 = 启用成人源并允许成人分类 */}
           <div className="flex items-center gap-2 mt-3 text-xs">
             <button
               type="button"
               onClick={() => {
-                const nextVal = !yellowFilter;
-                useAppStore.getState().updateSettings({ yellowFilter: nextVal });
-                toast(nextVal ? '已开启成人内容过滤（成人源已隐藏）' : '已解锁成人资源模式（18+ 内容可见）', nextVal ? 'info' : 'warning');
+                const hide = !yellowFilter;
+                useAppStore.getState().updateSettings({ yellowFilter: hide });
+                if (hide) {
+                  toast(adultSourceCount > 0 ? `已隐藏成人内容，并停用 ${adultSourceCount} 个成人源` : '已隐藏成人内容', 'info');
+                } else {
+                  toast(
+                    adultSourceCount > 0 ? `已解锁，并启用 ${adultSourceCount} 个成人源` : '已解锁。当前没有标记为成人的点播源',
+                    'warning'
+                  );
+                }
               }}
               className={cn(
                 'flex items-center gap-1.5 px-3 py-1 rounded-full border transition-all text-xs font-medium',
                 yellowFilter
                   ? 'border-line text-muted bg-surface/50 hover:bg-chip hover:text-content'
-                  : 'border-red-500/40 text-red-500 bg-red-500/10 shadow-sm animate-pulse'
+                  : 'border-red-500/50 text-red-500 bg-red-500/10 shadow-[0_0_12px_rgba(239,68,68,0.35)]'
               )}
-              title={yellowFilter ? '点击解锁成人资源' : '点击关闭并隐藏成人资源'}
+              title={yellowFilter ? '解锁成人源、成人片名和成人分类' : '重新隐藏成人内容'}
+              aria-pressed={!yellowFilter}
             >
-              <span>{yellowFilter ? '🛡️ 成人保护已开启' : '🔞 18+ 模式已解锁'}</span>
-              <span className="text-[10px] opacity-70">({yellowFilter ? '成人源已屏蔽' : '已启用成人源'})</span>
+              <span>{yellowFilter ? '成人内容 · 关' : '成人内容 · 开'}</span>
+              {!yellowFilter && adultSourceCount > 0 && (
+                <span className="text-[10px] opacity-80">{adultSourceCount} 个源</span>
+              )}
             </button>
           </div>
         </section>
@@ -363,16 +386,7 @@ function HomeContent() {
                     />
                   ))}
                 </div>
-                {groups.length > visibleCount && (
-                  <div className="flex justify-center mt-4">
-                    <button
-                      className="btn-ghost btn-sm"
-                      onClick={() => setVisibleCount((v) => v + RESULT_PAGE_SIZE)}
-                    >
-                      加载更多（还有 {groups.length - visibleCount} 部）
-                    </button>
-                  </div>
-                )}
+                {hasMoreResults && <div ref={resultSentinel} className="h-8" />}
               </>
             ) : isSearching ? (
               <ResultsSkeleton />
@@ -394,6 +408,7 @@ function HomeContent() {
               setInput(title);
               runSearch(title);
             }}
+            onOpen={(item) => setDetailItem(item)}
           />
         )}
       </main>

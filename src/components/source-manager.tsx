@@ -20,6 +20,7 @@ import { loadCacheSettings, saveCacheSettings, getCacheSummary, clearVideoCache,
 import { EmptyState, Spinner } from './states';
 import { useSourceProbe } from './use-source-probe';
 import { allLiveSources, isSourceDisabled, keyBelongsToSubscription, resolveSource, subKeyPrefix, useAppStore } from '@/lib/store';
+import { isKnownAdultSource, sourceIsAdult } from '@/lib/adult-sources';
 import type { SourceConfig } from '@/lib/types';
 import { useToast } from './toast';
 import { formatRelativeTime, hostnameOf, validateSourceUrl, cn } from '@/lib/utils';
@@ -254,7 +255,7 @@ function VodSourcesPanel() {
       return;
     }
     // 成人过滤开启时成人源不可勾选，与行内复选框保持一致
-    const eligible = filtered.filter((s) => !(s.isAdult && store.yellowFilter)).map((s) => s.key);
+    const eligible = filtered.filter((s) => !(sourceIsAdult(s) && store.yellowFilter)).map((s) => s.key);
     const skipped = filtered.length - eligible.length;
     store.setSelectedKeys([...new Set([...store.selectedKeys, ...eligible])]);
     if (skipped > 0) toast(`已启用 ${eligible.length} 个；${skipped} 个成人源因过滤开启被跳过`, 'info');
@@ -438,7 +439,8 @@ function VodSourceRow({
   const yellowFilter = useAppStore((s) => s.yellowFilter);
   const toast = useToast().toast;
   const fromSubscription = api.key.startsWith('sub_');
-  const adultBlocked = !!api.isAdult && yellowFilter;
+  const adult = sourceIsAdult(api);
+  const adultBlocked = adult && yellowFilter;
 
   const remove = () => {
     const snapshot = useAppStore.getState().removeCustomApi(api.key);
@@ -484,7 +486,7 @@ function VodSourceRow({
         <div className="flex-1 min-w-0">
           <div className="text-sm font-medium text-content truncate">
             {api.name}
-            {api.isAdult && <span className="text-pink-400 text-xs ml-1">(18+)</span>}
+            {adult && <span className="text-pink-400 text-xs ml-1">(18+)</span>}
             {isEnv && (
               <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-chip text-faint align-middle">
                 部署者预置
@@ -1206,7 +1208,7 @@ function SourceForm({
       setName(initial?.name ?? '');
       setUrl(initial?.url ?? '');
       setDetail(initial?.detail ?? '');
-      setIsAdult(initial?.isAdult ?? false);
+      setIsAdult(initial?.isAdult === true || isKnownAdultSource(initial?.url));
     }
   }, [visible, initial]);
 
@@ -1223,7 +1225,7 @@ function SourceForm({
       toast('API 链接需以 http:// 或 https:// 开头', 'warning');
       return;
     }
-    onSubmit({ name: n, url: u, detail: detail.trim() || undefined, isAdult });
+    onSubmit({ name: n, url: u, detail: detail.trim() || undefined, isAdult: isAdult || isKnownAdultSource(u) });
   };
 
   return (
@@ -1253,10 +1255,11 @@ function SourceForm({
         <input
           type="checkbox"
           className="h-3.5 w-3.5 accent-pink-500"
-          checked={isAdult}
+          checked={isAdult || isKnownAdultSource(url)}
+          disabled={isKnownAdultSource(url)}
           onChange={(e) => setIsAdult(e.target.checked)}
         />
-        标记为成人内容源（受成人过滤控制）
+        {isKnownAdultSource(url) ? '这个地址是成人源，会受成人开关控制' : '标记为成人内容源（受成人过滤控制）'}
       </label>
       <div className="flex gap-2 justify-end">
         <button className="btn-ghost btn-sm" onClick={onCancel}>

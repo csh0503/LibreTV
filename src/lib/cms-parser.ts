@@ -17,33 +17,92 @@ export function cmsRequestHeaders(): Record<string, string> {
   return { ...UA_HEADERS };
 }
 
-/** 搜索响应 → 统一结果列表 */
-export function parseSearchList(
-  data: unknown,
-  source: { key: string; name: string; url: string; isAdult?: boolean }
-): SearchResultItem[] {
+function scalar(v: unknown): string | undefined {
+  if (typeof v === 'number' && Number.isFinite(v)) return String(v);
+  if (typeof v !== 'string') return undefined;
+  const s = v.trim();
+  return s || undefined;
+}
+
+/** 豆瓣分优先，没有再用源站评分；0 分视为没有 */
+function ratingOf(vod: Record<string, unknown>): string | undefined {
+  const raw = scalar(vod.vod_douban_score) ?? scalar(vod.vod_score);
+  if (!raw) return undefined;
+  const n = parseFloat(raw);
+  if (!Number.isFinite(n) || n <= 0) return undefined;
+  return String(n);
+}
+
+function readVodList(data: unknown): Record<string, unknown>[] {
   if (!data || typeof data !== 'object') throw new Error('API返回的数据格式无效');
   const list = (data as { list?: unknown }).list;
   // 部分源站无结果时返回 list: null（而非 []），视为空结果而非格式错误
   if (list !== null && list !== undefined && !Array.isArray(list)) {
     throw new Error('API返回的数据格式无效');
   }
-  return (Array.isArray(list) ? list : []).map((item) => {
-    const vod = item as Record<string, unknown>;
-    return {
-      sourceKey: source.key,
-      sourceName: source.name,
-      vodId: String(vod.vod_id ?? ''),
-      name: String(vod.vod_name ?? ''),
-      pic: typeof vod.vod_pic === 'string' ? vod.vod_pic : undefined,
-      typeName: typeof vod.type_name === 'string' ? vod.type_name : undefined,
-      year: typeof vod.vod_year === 'string' ? vod.vod_year : undefined,
-      area: typeof vod.vod_area === 'string' ? vod.vod_area : undefined,
-      remarks: typeof vod.vod_remarks === 'string' ? vod.vod_remarks : undefined,
-      sourceUrl: source.url,
-      isAdult: source.isAdult,
-    };
-  });
+  return (Array.isArray(list) ? list : []) as Record<string, unknown>[];
+}
+
+function mapVod(vod: Record<string, unknown>) {
+  const rating = ratingOf(vod);
+  return {
+    vodId: String(vod.vod_id ?? ''),
+    name: String(vod.vod_name ?? ''),
+    pic: scalar(vod.vod_pic),
+    typeName: scalar(vod.type_name),
+    year: scalar(vod.vod_year),
+    area: scalar(vod.vod_area),
+    remarks: scalar(vod.vod_remarks),
+    ...(rating ? { rating } : null),
+  };
+}
+
+/** 搜索响应 → 统一结果列表 */
+export function parseSearchList(
+  data: unknown,
+  source: { key: string; name: string; url: string; isAdult?: boolean }
+): SearchResultItem[] {
+  return readVodList(data).map((vod) => ({
+    ...mapVod(vod),
+    sourceKey: source.key,
+    sourceName: source.name,
+    sourceUrl: source.url,
+    isAdult: source.isAdult,
+  }));
+}
+
+/** ac=list 的分类表。非法 id 丢弃，最多 80 个。 */
+export function parseCmsClasses(data: unknown): { id: string; name: string }[] {
+  if (!data || typeof data !== 'object') return [];
+  const cls = (data as { class?: unknown }).class;
+  if (!Array.isArray(cls)) return [];
+  const out: { id: string; name: string }[] = [];
+  const seen = new Set<string>();
+  for (const item of cls) {
+    if (!item || typeof item !== 'object') continue;
+    const row = item as { type_id?: unknown; type_name?: unknown };
+    const id = row.type_id == null ? '' : String(row.type_id).trim();
+    const name = typeof row.type_name === 'string' ? row.type_name.trim() : '';
+    if (!/^\d{1,8}$/.test(id) || !name || seen.has(id)) continue;
+    seen.add(id);
+    out.push({ id, name });
+    if (out.length >= 80) break;
+  }
+  return out;
+}
+
+/** 分类浏览的一页影片，不带源身份 */
+export function parseBrowseVideos(data: unknown) {
+  return readVodList(data).map((vod) => mapVod(vod));
+}
+
+/** 采集站 pagecount。缺失或非法时视为只有 1 页，上限避免异常大数把翻页打穿。 */
+export function parsePageCount(data: unknown): number {
+  if (!data || typeof data !== 'object') return 1;
+  const raw = (data as { pagecount?: unknown }).pagecount;
+  const n = typeof raw === 'number' ? raw : parseInt(String(raw ?? '1'), 10);
+  if (!Number.isFinite(n) || n < 1) return 1;
+  return Math.min(Math.floor(n), 2000);
 }
 
 /**
@@ -157,14 +216,22 @@ const ADULT_KEYWORDS = [
   '网红主播', '色情片', '同性片', '福利视频', '无码高清', '有码高清', '91视频', '自拍偷拍', 'mini传媒', '福利片',
 ];
 
-export function isAdultContent(typeName: string | undefined): boolean {
-  if (!typeName) return false;
-  return ADULT_KEYWORDS.some((k) => typeName.includes(k));
+const ADULT_KEYWORDS_LOWER = ADULT_KEYWORDS.map((k) => k.toLowerCase());
+
+/** 分类名、片名、简介里任一处命中敏感词即视为成人内容 */
+export function isAdultContent(text: string | undefined): boolean {
+  if (!text) return false;
+  const hay = text.toLowerCase();
+  return ADULT_KEYWORDS_LOWER.some((k) => hay.includes(k));
 }
 
-export function filterAdultResults<T extends { typeName?: string }>(items: T[], enabled: boolean): T[] {
+const ADULT_TEXT_FIELDS = ['typeName', 'name', 'title', 'remarks'] as const;
+
+export function filterAdultResults<
+  T extends { typeName?: string; name?: string; title?: string; remarks?: string },
+>(items: T[], enabled: boolean): T[] {
   if (!enabled) return items;
-  return items.filter((item) => !isAdultContent(item.typeName));
+  return items.filter((item) => !ADULT_TEXT_FIELDS.some((field) => isAdultContent(item[field])));
 }
 
 /**

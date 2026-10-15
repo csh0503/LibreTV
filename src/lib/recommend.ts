@@ -1,0 +1,217 @@
+import type { DoubanItem } from './types';
+import { isAdultContent } from './cms-parser';
+
+/**
+ * 首页推荐大厅的筛选如何变成豆瓣请求。
+ * rexxar 的 selected_categories 在实测中会被忽略，tags 用逗号拼「题材,地区,年份」才会同时生效。
+ * 年代区间（如 2015-2018）先用豆瓣的「2010年代」缩小结果，再在客户端按年份裁一刀。
+ */
+
+/** 推荐大厅每一页向豆瓣要的条数。翻页直到接口没有更多，不在这里截断总页数。 */
+export const HALL_PAGE_SIZE = 20;
+
+export type HallChannel = 'anime' | 'movie' | 'tv' | 'show' | 'doc' | 'adult';
+export type HallSort = 'hot' | 'rate' | 'new';
+export type HallScore = 'all' | '9' | '8' | '7';
+export type HallStatus = 'all' | 'airing' | 'ended';
+
+export interface HallSelection {
+  channel: HallChannel;
+  genre: string;
+  area: string;
+  year: string;
+  sort: HallSort;
+  score: HallScore;
+  status: HallStatus;
+}
+
+export interface DoubanRequest {
+  kind: 'movie' | 'tv';
+  tags: string[];
+  sort: 'U' | 'S' | 'R';
+  score: string;
+  yearRange: [number, number] | null;
+  minScore: number | null;
+}
+
+const AREA_GROUPS: Record<string, string[]> = {
+  华语: ['华语', '中国', '大陆', '香港', '台湾'],
+  欧美: ['欧美', '美国', '英国', '法国', '德国', '意大利', '西班牙', '加拿大', '澳大利亚', '瑞典', '丹麦', '爱尔兰', '俄罗斯'],
+  中国大陆: ['中国大陆', '大陆', '内地'],
+  中国香港: ['中国香港', '香港'],
+  中国台湾: ['中国台湾', '台湾'],
+};
+
+export function yearSelection(year: string): { tag: string | null; range: [number, number] | null } {
+  if (year === '全部') return { tag: null, range: null };
+  if (/^(19|20)\d{2}$/.test(year)) {
+    const y = Number(year);
+    return { tag: year, range: [y, y] };
+  }
+  if (year === '2015-2018') return { tag: '2010年代', range: [2015, 2018] };
+  if (year === '2010-2014') return { tag: '2010年代', range: [2010, 2014] };
+  if (year === '2000年代') return { tag: '2000年代', range: [2000, 2009] };
+  if (year === '90年代') return { tag: '90年代', range: [1990, 1999] };
+  if (year === '更早') return { tag: '80年代', range: [1900, 1989] };
+  return { tag: null, range: null };
+}
+
+export function doubanSortCode(sort: HallSort): 'U' | 'S' | 'R' {
+  if (sort === 'rate') return 'S';
+  if (sort === 'new') return 'R';
+  return 'U';
+}
+
+export function scoreRange(score: HallScore): { param: string; min: number | null } {
+  if (score === '9') return { param: '9,10', min: 9 };
+  if (score === '8') return { param: '8,10', min: 8 };
+  if (score === '7') return { param: '7,10', min: 7 };
+  return { param: '0,10', min: null };
+}
+
+/** 成人频道不走豆瓣。电影不强制加「电影」标签，路径本身就是 /movie。 */
+export function buildDoubanRequest(sel: HallSelection): DoubanRequest | null {
+  if (sel.channel === 'adult') return null;
+  const kind = sel.channel === 'movie' || sel.channel === 'doc' ? 'movie' : 'tv';
+  const base =
+    sel.channel === 'anime' ? '动画' :
+    sel.channel === 'tv' ? '电视剧' :
+    sel.channel === 'show' ? '综艺' :
+    sel.channel === 'doc' ? '纪录片' :
+    null;
+  const tags: string[] = [];
+  if (base) tags.push(base);
+  if (sel.genre !== '全部') tags.push(sel.genre);
+  if (sel.area !== '全部') tags.push(sel.area);
+  const year = yearSelection(sel.year);
+  if (year.tag) tags.push(year.tag);
+  if (tags.length === 0) tags.push('热门');
+  const score = scoreRange(sel.score);
+  return {
+    kind,
+    tags,
+    sort: doubanSortCode(sel.sort),
+    score: score.param,
+    yearRange: year.range,
+    minScore: score.min,
+  };
+}
+
+export function areaMatches(filter: string, itemArea: string): boolean {
+  if (filter === '全部') return true;
+  const keys = AREA_GROUPS[filter] ?? [filter];
+  return keys.some((key) => itemArea.includes(key));
+}
+
+export function deriveStatus(
+  input: { episodesInfo?: string; year?: string; fromCalendar?: boolean },
+  nowYear: number
+): 'airing' | 'ended' | undefined {
+  if (input.fromCalendar) return 'airing';
+  const text = input.episodesInfo ?? '';
+  if (/更新|连载/.test(text)) return 'airing';
+  if (/完结|已完结|全集|全\d+\s*集/.test(text)) return 'ended';
+  const year = parseInt(input.year ?? '', 10);
+  // 今年的片子没有更新说明时不猜：可能刚上，也可能还在播
+  if (Number.isFinite(year) && year > 0 && year <= nowYear - 1) return 'ended';
+  return undefined;
+}
+
+/** 豆瓣 rexxar /movie|tv/recommend 的单条 items */
+export function rexxarToItem(raw: unknown, isTv: boolean, nowYear: number): DoubanItem | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const row = raw as Record<string, unknown>;
+  const title = typeof row.title === 'string' ? row.title.trim() : '';
+  const id = row.id == null ? '' : String(row.id).trim();
+  const pic = row.pic as { large?: string; normal?: string } | undefined;
+  const cover = (typeof pic?.large === 'string' && pic.large) || (typeof pic?.normal === 'string' && pic.normal) || '';
+  if (!title || !id || !cover) return undefined;
+
+  const subtitle = typeof row.card_subtitle === 'string' ? row.card_subtitle : '';
+  const parts = subtitle.split('/').map((part) => part.trim());
+  const yearFromSub = parts[0] && /^\d{4}$/.test(parts[0]) ? parts[0] : undefined;
+  const yearField = typeof row.year === 'string' && /^\d{4}$/.test(row.year) ? row.year : undefined;
+  const year = yearField || yearFromSub;
+  const area = parts[1] || undefined;
+  const genres = parts[2] || undefined;
+  const episodes = typeof row.episodes_info === 'string' ? row.episodes_info.trim() : '';
+  const ratingValue = (row.rating as { value?: unknown } | undefined)?.value;
+  const rating =
+    typeof ratingValue === 'number' && ratingValue > 0 ? String(ratingValue) : undefined;
+
+  return {
+    id,
+    title,
+    cover,
+    rating,
+    isTv,
+    year,
+    area,
+    genres,
+    remarks: episodes || undefined,
+    // 电影没有连载概念，不打完结角标
+    status: isTv ? deriveStatus({ episodesInfo: episodes, year }, nowYear) : undefined,
+  };
+}
+
+export interface HallFilter {
+  genre: string;
+  area: string;
+  yearRange: [number, number] | null;
+  status: HallStatus;
+  /** 电影、纪录片不按连载状态筛 */
+  applyStatus: boolean;
+  minScore: number | null;
+  hideAdult: boolean;
+}
+
+function inYearRange(year: string | undefined, range: [number, number]): boolean {
+  const y = parseInt(year ?? '', 10);
+  if (!Number.isFinite(y)) return false;
+  return y >= range[0] && y <= range[1];
+}
+
+export function filterHallItems(items: DoubanItem[], filter: HallFilter): DoubanItem[] {
+  return items.filter((item) => {
+    if (filter.hideAdult && (isAdultContent(item.title) || isAdultContent(item.genres) || isAdultContent(item.remarks))) {
+      return false;
+    }
+    if (filter.yearRange && !inYearRange(item.year, filter.yearRange)) return false;
+    if (filter.area !== '全部' && item.area && !areaMatches(filter.area, item.area)) return false;
+    if (filter.genre !== '全部' && item.genres && !item.genres.includes(filter.genre)) return false;
+    if (filter.minScore != null) {
+      const score = parseFloat(item.rating ?? '');
+      if (!Number.isFinite(score) || score < filter.minScore) return false;
+    }
+    if (filter.applyStatus && filter.status === 'airing' && item.status !== 'airing') return false;
+    if (filter.applyStatus && filter.status === 'ended' && item.status !== 'ended') return false;
+    return true;
+  });
+}
+
+/** 本周放送插到豆瓣结果前面，同名去掉。缺少年份的条目视为今年正在播。 */
+export function mergeAiringCalendar(douban: DoubanItem[], calendar: DoubanItem[], nowYear: number): DoubanItem[] {
+  if (calendar.length === 0) return douban;
+  const seen = new Set(douban.map((item) => item.title.trim()));
+  const extra = calendar
+    .filter((item) => !seen.has(item.title.trim()))
+    .map((item) => ({
+      ...item,
+      status: 'airing' as const,
+      area: item.area || '日本',
+      year: item.year || String(nowYear),
+      isTv: true,
+    }));
+  return [...extra, ...douban];
+}
+
+export function sortHallItems(items: DoubanItem[], sort: HallSort): DoubanItem[] {
+  if (sort === 'hot') return items;
+  const copy = [...items];
+  if (sort === 'rate') {
+    copy.sort((a, b) => (parseFloat(b.rating || '0') || 0) - (parseFloat(a.rating || '0') || 0));
+    return copy;
+  }
+  copy.sort((a, b) => (parseInt(b.year || '0', 10) || 0) - (parseInt(a.year || '0', 10) || 0));
+  return copy;
+}
