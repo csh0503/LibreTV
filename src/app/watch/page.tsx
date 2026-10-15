@@ -31,6 +31,7 @@ import {
   db,
   favoriteIdOf,
 } from '@/lib/db';
+import { whenProfileReady } from '@/lib/profile-session';
 import { cn } from '@/lib/utils';
 
 /**
@@ -104,6 +105,7 @@ function WatchContent() {
 
   // 进度恢复优先级：URL position 参数 > IndexedDB 记录
   const getRestorePosition = useCallback(async () => {
+    await whenProfileReady();
     const urlPos = parseInt(searchParams.get('position') || '0', 10) || 0;
     if (urlPos > 0) return urlPos;
     if (!vodId) return 0;
@@ -212,7 +214,7 @@ function WatchContent() {
           <div className="ml-auto flex items-center gap-2">
             <FavoriteButton
               entry={{
-                id: favoriteIdOf({ sourceKey, vodId: vodId || currentUrl, title: videoTitle }),
+                localId: favoriteIdOf({ sourceKey, vodId: vodId || currentUrl, title: videoTitle }),
                 title: videoTitle,
                 pic: detailQuery.data?.videoInfo?.cover,
                 sourceKey,

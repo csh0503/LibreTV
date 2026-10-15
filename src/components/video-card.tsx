@@ -7,7 +7,7 @@ import { cn } from '@/lib/utils';
 import { SmartImage } from './smart-image';
 import { titleMatchesQuery } from '@/lib/title-aliases';
 import { FavoriteButton } from './favorite-button';
-import type { FavoriteEntry } from '@/lib/db';
+import type { FavoriteDraft } from '@/lib/db';
 
 // —— 跨源同名聚合 ——
 
@@ -279,7 +279,7 @@ export function DoubanCard({
     rating?: string;
     meta?: string;
     badge?: { text: string; tone: 'ok' | 'warn' };
-    favorite?: Omit<FavoriteEntry, 'addedAt'>;
+    favorite?: FavoriteDraft;
   };
   onClick: () => void;
 }) {

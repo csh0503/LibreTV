@@ -146,7 +146,7 @@ export function DetailModal({ item, onClose }: { item: SearchResultItem | null; 
           </div>
           <FavoriteButton
             entry={{
-              id: favoriteIdOf({ sourceKey: item.sourceKey, vodId: item.vodId, title: item.name }),
+              localId: favoriteIdOf({ sourceKey: item.sourceKey, vodId: item.vodId, title: item.name }),
               title: item.name,
               pic: item.pic,
               sourceKey: item.sourceKey,

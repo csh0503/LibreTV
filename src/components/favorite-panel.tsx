@@ -6,6 +6,7 @@ import { Drawer } from './drawer';
 import { EmptyState } from './states';
 import { SmartImage } from './smart-image';
 import { db, toggleFavorite } from '@/lib/db';
+import { useProfile } from '@/lib/use-profile';
 import { useAppStore } from '@/lib/store';
 
 /** 点播收藏。直播频道的收藏仍在直播页，不放这里。 */
@@ -14,7 +15,14 @@ export function FavoritePanel({ open, onClose }: { open: boolean; onClose: () =>
   const yellowFilter = useAppStore((s) => s.yellowFilter);
   const imageProxyMode = useAppStore((s) => s.imageProxyMode);
   const customImageProxy = useAppStore((s) => s.customImageProxy);
-  const rows = useLiveQuery(() => db.favorites.orderBy('addedAt').reverse().toArray(), [open]);
+  const profileId = useProfile().id;
+  const rows = useLiveQuery(
+    () =>
+      profileId
+        ? db.favorites.where('profileId').equals(profileId).sortBy('addedAt').then((items) => items.reverse())
+        : [],
+    [profileId, open]
+  );
   const visible = (rows ?? []).filter((row) => !(yellowFilter && row.isAdult));
 
   return (
@@ -56,7 +64,7 @@ export function FavoritePanel({ open, onClose }: { open: boolean; onClose: () =>
               <button
                 type="button"
                 className="text-xs text-faint hover:text-content shrink-0"
-                onClick={() => void toggleFavorite(row)}
+                onClick={() => void toggleFavorite({ ...row, localId: row.localId })}
               >
                 取消
               </button>

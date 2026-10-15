@@ -325,7 +325,7 @@ function toCard(item: DoubanItem) {
     rating: item.rating,
     meta: meta || undefined,
     favorite: {
-      id: favoriteIdOf({ title: item.title }),
+      localId: favoriteIdOf({ title: item.title }),
       title: item.title,
       pic: item.cover,
       year: item.year,

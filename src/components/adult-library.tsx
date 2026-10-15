@@ -234,7 +234,7 @@ function toCard(item: VodListItem, source?: { key: string; name: string; url: st
     rating: item.rating,
     meta: meta || undefined,
     favorite: {
-      id: favoriteIdOf({ sourceKey: source?.key, vodId: item.vodId, title: item.name }),
+      localId: favoriteIdOf({ sourceKey: source?.key, vodId: item.vodId, title: item.name }),
       title: item.name,
       pic: item.pic,
       sourceKey: source?.key,

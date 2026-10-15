@@ -4,6 +4,7 @@ import { normalizeTitle } from './cms-parser';
 // 仅类型引入：store.ts 运行时会引用本模块，反向只取类型不会形成运行时循环
 import type { LiveProbeEntry } from './store';
 import { PERSIST_KEY, flushPendingPersist } from './persist-storage';
+import { getActiveProfileId, whenProfileReady } from './profile-session';
 
 /**
  * IndexedDB 持久化（替代旧版 localStorage 数据库）：
@@ -15,8 +16,9 @@ import { PERSIST_KEY, flushPendingPersist } from './persist-storage';
  */
 
 export interface HistoryEntry {
-  /** 主键：`${sourceKey}_${vodId}` */
+  /** 主键：`${profileId}::${sourceKey}_${vodId}` */
   id: string;
+  profileId: string;
   sourceKey: string;
   sourceUrl?: string;
   vodId: string;
@@ -30,13 +32,17 @@ export interface HistoryEntry {
 }
 
 export interface ProgressEntry {
-  key: string; // `${sourceKey}_${vodId}_${episodeIndex}`
+  key: string; // `${profileId}::${sourceKey}_${vodId}_${episodeIndex}`
+  profileId: string;
   position: number;
   duration: number;
   updatedAt: number;
 }
 
 export interface SearchHistoryEntry {
+  /** `${profileId}::${text}` */
+  id: string;
+  profileId: string;
   text: string;
   timestamp: number;
 }
@@ -71,9 +77,22 @@ export interface DownloadTaskEntry {
   updatedAt: number;
 }
 
+/** 本机设定档。个人资料在 prefs 里，换档时整份换上。 */
+export interface UserProfile {
+  id: string;
+  name: string;
+  pinHash?: string;
+  createdAt: number;
+  prefs?: Record<string, unknown>;
+}
+
 /** 点播收藏。有源和影片 id 时按它们做主键，推荐卡片只有片名时按标题。 */
 export interface FavoriteEntry {
+  /** `${profileId}::` + 片源或标题主键 */
   id: string;
+  profileId: string;
+  /** 不含设定档前缀，收藏按钮用它判断是不是同一部 */
+  localId: string;
   title: string;
   pic?: string;
   sourceKey?: string;
@@ -84,14 +103,19 @@ export interface FavoriteEntry {
   addedAt: number;
 }
 
+/** 界面上收藏一部片子时要带的字段，主键由当前设定档补上 */
+export type FavoriteDraft = Omit<FavoriteEntry, 'addedAt' | 'id' | 'profileId'>;
+
 export const db = new Dexie('libretv') as Dexie & {
   history: EntityTable<HistoryEntry, 'id'>;
   progress: EntityTable<ProgressEntry, 'key'>;
-  searchHistory: EntityTable<SearchHistoryEntry, 'text'>;
+  searchHistory: EntityTable<{ text: string; timestamp: number }, 'text'>;
+  savedSearches: EntityTable<SearchHistoryEntry, 'id'>;
   liveProbe: EntityTable<LiveProbeEntry & { url: string }, 'url'>;
   segmentMeta: EntityTable<SegmentMetaEntry, 'key'>;
   downloads: EntityTable<DownloadTaskEntry, 'id'>;
   favorites: EntityTable<FavoriteEntry, 'id'>;
+  profiles: EntityTable<UserProfile, 'id'>;
 };
 
 db.version(1).stores({
@@ -115,6 +139,22 @@ db.version(4).stores({
   favorites: 'id, addedAt',
 });
 
+// v5：设定档。历史/收藏/进度的主键仍是字符串，只加 profileId 索引；搜索记录改存 savedSearches。
+db.version(5).stores({
+  profiles: 'id, createdAt',
+  history: 'id, profileId, timestamp',
+  favorites: 'id, profileId, addedAt',
+  progress: 'key, profileId, updatedAt',
+  savedSearches: 'id, profileId, timestamp',
+});
+
+async function profileId(): Promise<string> {
+  await whenProfileReady();
+  const id = getActiveProfileId();
+  if (!id) throw new Error('没有当前设定档');
+  return id;
+}
+
 export const MAX_FAVORITES = 300;
 
 export function favoriteIdOf(input: { sourceKey?: string; vodId?: string; title: string }): string {
@@ -122,18 +162,19 @@ export function favoriteIdOf(input: { sourceKey?: string; vodId?: string; title:
   return `t_${normalizeTitle(input.title) || 'untitled'}`;
 }
 
-/** 已收藏则取消，返回收藏后的状态 */
-export async function toggleFavorite(entry: Omit<FavoriteEntry, 'addedAt'>): Promise<boolean> {
-  const existing = await db.favorites.get(entry.id);
+/** 已收藏则取消，返回收藏后的状态。只动当前设定档。 */
+export async function toggleFavorite(entry: FavoriteDraft): Promise<boolean> {
+  const pid = await profileId();
+  const id = `${pid}::${entry.localId}`;
+  const existing = await db.favorites.get(id);
   if (existing) {
-    await db.favorites.delete(entry.id);
+    await db.favorites.delete(id);
     return false;
   }
-  await db.favorites.put({ ...entry, addedAt: Date.now() });
-  const count = await db.favorites.count();
-  if (count > MAX_FAVORITES) {
-    const oldest = await db.favorites.orderBy('addedAt').limit(count - MAX_FAVORITES).toArray();
-    await db.favorites.bulkDelete(oldest.map((row) => row.id));
+  await db.favorites.put({ ...entry, id, profileId: pid, localId: entry.localId, addedAt: Date.now() });
+  const mine = await db.favorites.where('profileId').equals(pid).sortBy('addedAt');
+  if (mine.length > MAX_FAVORITES) {
+    await db.favorites.bulkDelete(mine.slice(0, mine.length - MAX_FAVORITES).map((row) => row.id));
   }
   return true;
 }
@@ -141,23 +182,23 @@ export async function toggleFavorite(entry: Omit<FavoriteEntry, 'addedAt'>): Pro
 export const MAX_HISTORY = 100;
 export const MAX_SEARCH_HISTORY = 10;
 
-export async function upsertHistory(entry: Omit<HistoryEntry, 'id'>): Promise<void> {
-  const id = `${entry.sourceKey}_${entry.vodId}`;
+export async function upsertHistory(entry: Omit<HistoryEntry, 'id' | 'profileId'>): Promise<void> {
+  const pid = await profileId();
+  const id = `${pid}::${entry.sourceKey}_${entry.vodId}`;
   const existing = await db.history.get(id);
   const merged: HistoryEntry = {
     ...existing,
     ...entry,
     id,
+    profileId: pid,
     playbackPosition: entry.playbackPosition > 10 ? entry.playbackPosition : existing?.playbackPosition ?? 0,
     duration: entry.duration || existing?.duration || 0,
     timestamp: Date.now(),
   };
   await db.history.put(merged);
-  // 淘汰最旧记录
-  const count = await db.history.count();
-  if (count > MAX_HISTORY) {
-    const oldest = await db.history.orderBy('timestamp').limit(count - MAX_HISTORY).toArray();
-    await db.history.bulkDelete(oldest.map((o) => o.id));
+  const mine = await db.history.where('profileId').equals(pid).sortBy('timestamp');
+  if (mine.length > MAX_HISTORY) {
+    await db.history.bulkDelete(mine.slice(0, mine.length - MAX_HISTORY).map((row) => row.id));
   }
 }
 
@@ -167,7 +208,8 @@ export async function updateHistoryProgress(
   position: number,
   duration: number
 ): Promise<void> {
-  const id = `${sourceKey}_${vodId}`;
+  const pid = await profileId();
+  const id = `${pid}::${sourceKey}_${vodId}`;
   const existing = await db.history.get(id);
   if (!existing) return;
   if (Math.abs(existing.playbackPosition - position) < 2 && Math.abs(existing.duration - duration) < 2) return;
@@ -179,22 +221,29 @@ export async function updateHistoryProgress(
 }
 
 export async function removeHistory(sourceKey: string, vodId: string): Promise<void> {
-  await db.history.delete(`${sourceKey}_${vodId}`);
+  const pid = await profileId();
+  await db.history.delete(`${pid}::${sourceKey}_${vodId}`);
 }
 
 export async function clearAllHistory(): Promise<void> {
-  // 一并清进度表：否则从历史重新打开时可能取到已清空的旧进度
-  await Promise.all([db.history.clear(), db.progress.clear()]);
+  const pid = await profileId();
+  const [history, progress] = await Promise.all([
+    db.history.where('profileId').equals(pid).primaryKeys(),
+    db.progress.where('profileId').equals(pid).primaryKeys(),
+  ]);
+  await Promise.all([db.history.bulkDelete(history), db.progress.bulkDelete(progress)]);
 }
 
 export function progressKeyOf(sourceKey: string, vodId: string, episodeIndex: number): string {
-  return `${sourceKey}_${vodId}_${episodeIndex}`;
+  return `${getActiveProfileId()}::${sourceKey}_${vodId}_${episodeIndex}`;
 }
 
 export async function saveProgress(sourceKey: string, vodId: string, episodeIndex: number, position: number, duration: number): Promise<void> {
   if (!duration || position < 1) return;
+  const pid = await profileId();
   await db.progress.put({
-    key: progressKeyOf(sourceKey, vodId, episodeIndex),
+    key: `${pid}::${sourceKey}_${vodId}_${episodeIndex}`,
+    profileId: pid,
     position,
     duration,
     updatedAt: Date.now(),
@@ -202,32 +251,43 @@ export async function saveProgress(sourceKey: string, vodId: string, episodeInde
 }
 
 export async function clearProgress(sourceKey: string, vodId: string, episodeIndex: number): Promise<void> {
-  await db.progress.delete(progressKeyOf(sourceKey, vodId, episodeIndex));
+  const pid = await profileId();
+  await db.progress.delete(`${pid}::${sourceKey}_${vodId}_${episodeIndex}`);
+}
+
+export async function listSearchHistory(): Promise<SearchHistoryEntry[]> {
+  const pid = await profileId();
+  const rows = await db.savedSearches.where('profileId').equals(pid).sortBy('timestamp');
+  return rows.reverse().slice(0, MAX_SEARCH_HISTORY);
 }
 
 export async function addSearchHistory(text: string): Promise<void> {
   const t = text.trim().slice(0, 50);
   if (!t) return;
-  await db.searchHistory.put({ text: t, timestamp: Date.now() });
-  const count = await db.searchHistory.count();
-  if (count > MAX_SEARCH_HISTORY) {
-    const oldest = await db.searchHistory.orderBy('timestamp').limit(count - MAX_SEARCH_HISTORY).toArray();
-    await db.searchHistory.bulkDelete(oldest.map((o) => o.text));
+  const pid = await profileId();
+  await db.savedSearches.put({ id: `${pid}::${t}`, profileId: pid, text: t, timestamp: Date.now() });
+  const mine = await db.savedSearches.where('profileId').equals(pid).sortBy('timestamp');
+  if (mine.length > MAX_SEARCH_HISTORY) {
+    await db.savedSearches.bulkDelete(mine.slice(0, mine.length - MAX_SEARCH_HISTORY).map((row) => row.id));
   }
 }
 
 export async function removeSearchHistory(text: string): Promise<void> {
-  await db.searchHistory.delete(text);
+  const pid = await profileId();
+  await db.savedSearches.delete(`${pid}::${text}`);
 }
 
 export async function clearSearchHistory(): Promise<void> {
-  await db.searchHistory.clear();
+  const pid = await profileId();
+  const keys = await db.savedSearches.where('profileId').equals(pid).primaryKeys();
+  await db.savedSearches.bulkDelete(keys);
 }
 
 /** 撤销「清空搜索记录」：按原时间戳回填，保持原有顺序 */
 export async function restoreSearchHistory(entries: SearchHistoryEntry[]): Promise<void> {
   if (entries.length === 0) return;
-  await db.searchHistory.bulkPut(entries);
+  const pid = await profileId();
+  await db.savedSearches.bulkPut(entries.map((entry) => ({ ...entry, profileId: pid, id: `${pid}::${entry.text}` })));
 }
 
 // —— 直播测活缓存（TTL 过滤由调用方负责，本层只管存取） ——

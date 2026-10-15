@@ -13,12 +13,12 @@ import {
   clearAllHistory,
   removeHistory,
   upsertHistory,
-  MAX_HISTORY,
   type HistoryEntry,
 } from '@/lib/db';
 import { buildWatchUrl, cn, formatRelativeTime, formatTime } from '@/lib/utils';
 import { useToast } from './toast';
 import { resolveSource, useAppStore } from '@/lib/store';
+import { useProfile } from '@/lib/use-profile';
 
 /**
  * 观看历史面板（IndexedDB 实时查询）。
@@ -31,9 +31,13 @@ const VISIBLE_LIMIT = 50;
 
 export function HistoryPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
   // 全量读取（上限即 DB 淘汰上限）：默认只渲染最近若干条，搜索时覆盖更早的记录
+  const profileId = useProfile().id;
   const history = useLiveQuery(
-    () => db.history.orderBy('timestamp').reverse().limit(MAX_HISTORY).toArray(),
-    [open]
+    () =>
+      profileId
+        ? db.history.where('profileId').equals(profileId).sortBy('timestamp').then((rows) => rows.reverse())
+        : [],
+    [profileId, open]
   );
   const { toast } = useToast();
   const [confirmClear, setConfirmClear] = useState(false);

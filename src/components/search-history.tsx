@@ -2,13 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { addSearchHistory, clearSearchHistory, db, removeSearchHistory, restoreSearchHistory } from '@/lib/db';
+import { addSearchHistory, clearSearchHistory, listSearchHistory, removeSearchHistory, restoreSearchHistory } from '@/lib/db';
+import { useProfile } from '@/lib/use-profile';
 import { cn } from '@/lib/utils';
 import { useToast } from './toast';
 import { Icon } from './icon';
-
-/** 下拉最多展示条数，与 db 层 MAX_SEARCH_HISTORY 保持一致 */
-const HISTORY_LIMIT = 10;
 
 /**
  * 「最近搜索」下拉的交互逻辑：聚焦展开、输入时按关键字过滤（浏览器地址栏式交互）。
@@ -21,9 +19,11 @@ export function useSearchHistory(input: string) {
   const [activeIndex, setActiveIndex] = useState(-1);
   const containerRef = useRef<HTMLDivElement>(null);
 
+  const profileId = useProfile().id;
   const history = useQuery({
-    queryKey: ['searchHistory'],
-    queryFn: () => db.searchHistory.orderBy('timestamp').reverse().limit(HISTORY_LIMIT).toArray(),
+    queryKey: ['searchHistory', profileId],
+    queryFn: () => listSearchHistory(),
+    enabled: Boolean(profileId),
   });
 
   const matches = useMemo(() => {

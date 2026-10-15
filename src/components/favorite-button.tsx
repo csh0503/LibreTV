@@ -1,7 +1,8 @@
 'use client';
 
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, toggleFavorite, type FavoriteEntry } from '@/lib/db';
+import { db, toggleFavorite, type FavoriteDraft } from '@/lib/db';
+import { useProfile } from '@/lib/use-profile';
 import { cn } from '@/lib/utils';
 import { Icon } from './icon';
 import { useToast } from './toast';
@@ -11,10 +12,14 @@ export function FavoriteButton({
   entry,
   className,
 }: {
-  entry: Omit<FavoriteEntry, 'addedAt'>;
+  entry: FavoriteDraft;
   className?: string;
 }) {
-  const saved = useLiveQuery(() => db.favorites.get(entry.id), [entry.id]);
+  const profileId = useProfile().id;
+  const saved = useLiveQuery(
+    () => (profileId ? db.favorites.get(`${profileId}::${entry.localId}`) : undefined),
+    [profileId, entry.localId]
+  );
   const { toast } = useToast();
 
   return (
