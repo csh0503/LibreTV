@@ -45,15 +45,27 @@ export function onUnauthorized(handler: (event: CustomEvent) => void): () => voi
   return () => window.removeEventListener(UNAUTHORIZED_EVENT, wrapped);
 }
 
-/** 401/503 统一处理：分发全局事件打开登录框并抛 ApiError（普通与流式请求共用） */
-function throwForAuthStatus(res: Response): void {
+/**
+ * 401 打开登录框。只有明确说没设 PASSWORD 的 503 才换成「需要配置密码」。
+ * 设定档同步失败也是 503，不能把已经登录的人弹回那个提示。
+ */
+async function throwForAuthStatus(res: Response): Promise<void> {
   if (res.status === 401) {
     window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT));
     throw new ApiError('需要登录', 401);
   }
   if (res.status === 503) {
-    window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT, { detail: 'setup' }));
-    throw new ApiError('服务器未配置密码', 503);
+    let msg = '';
+    try {
+      const data = (await res.clone().json()) as { error?: string };
+      msg = data?.error || '';
+    } catch {
+      // 没有 JSON 正文时不当成缺密码
+    }
+    if (msg.includes('PASSWORD')) {
+      window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT, { detail: 'setup' }));
+      throw new ApiError(msg, 503);
+    }
   }
 }
 
@@ -94,7 +106,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     if (err instanceof DOMException && err.name === 'AbortError') throw err;
     throw new ApiError('网络请求失败，请检查网络连接', 0);
   }
-  throwForAuthStatus(res);
+  await throwForAuthStatus(res);
   if (!res.ok) {
     let msg = `请求失败 (${res.status})`;
     try {
@@ -287,7 +299,7 @@ export const api = {
       body: JSON.stringify({ urls }),
       signal,
     });
-    throwForAuthStatus(res);
+    await throwForAuthStatus(res);
     if (!res.ok || !res.body) throw new ApiError(`请求失败 (${res.status})`, res.status);
 
     await consumeNdjson<LiveProbeResult>(res, onResult);
@@ -314,7 +326,7 @@ async function searchStream(
     body: JSON.stringify({ wd, sources, filterAdult }),
     signal,
   });
-    throwForAuthStatus(res);
+    await throwForAuthStatus(res);
     if (!res.ok || !res.body) throw new ApiError(`请求失败 (${res.status})`, res.status);
 
     // done 事件缺失（流被截断）时退化为空结果，不让整次搜索报错
