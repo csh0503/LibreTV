@@ -70,13 +70,15 @@ function HomeContent() {
       .filter((s): s is NonNullable<typeof s> => {
         if (!s || !validateSourceUrl(s.url) || seen.has(s.key)) return false;
         seen.add(s.key);
+        // 成人内容过滤开启时，带 isAdult 标记的源直接不参与搜索
+        if (yellowFilter && s.isAdult) return false;
         return true;
       })
       // 自动停用期内的源不参与搜索（到期自动恢复）
       .filter((s) => !isSourceDisabled({ sourceHealth }, s.key))
       // 所属订阅被整体停用的源同样跳过（无损：各源勾选状态保留，重新启用即恢复）
       .filter((s) => !isInDisabledSubscription({ subscriptions }, s.key));
-  }, [customAPIs, envSources, selectedKeys, sourceHealth, subscriptions]);
+  }, [customAPIs, envSources, selectedKeys, sourceHealth, subscriptions, yellowFilter]);
   const disabledSources = useMemo(
     () => selectedKeys.filter((key) => isSourceDisabled({ sourceHealth }, key)),
     [selectedKeys, sourceHealth]
@@ -277,6 +279,28 @@ function HomeContent() {
                 onClearAll={searchHistory.clearAll}
               />
             )}
+          </div>
+
+          {/* 快捷安全开关：成人资源保护模式 */}
+          <div className="flex items-center gap-2 mt-3 text-xs">
+            <button
+              type="button"
+              onClick={() => {
+                const nextVal = !yellowFilter;
+                useAppStore.getState().updateSettings({ yellowFilter: nextVal });
+                toast(nextVal ? '已开启成人内容过滤（成人源已隐藏）' : '已解锁成人资源模式（18+ 内容可见）', nextVal ? 'info' : 'warning');
+              }}
+              className={cn(
+                'flex items-center gap-1.5 px-3 py-1 rounded-full border transition-all text-xs font-medium',
+                yellowFilter
+                  ? 'border-line text-muted bg-surface/50 hover:bg-chip hover:text-content'
+                  : 'border-red-500/40 text-red-500 bg-red-500/10 shadow-sm animate-pulse'
+              )}
+              title={yellowFilter ? '点击解锁成人资源' : '点击关闭并隐藏成人资源'}
+            >
+              <span>{yellowFilter ? '🛡️ 成人保护已开启' : '🔞 18+ 模式已解锁'}</span>
+              <span className="text-[10px] opacity-70">({yellowFilter ? '成人源已屏蔽' : '已启用成人源'})</span>
+            </button>
           </div>
         </section>
 
