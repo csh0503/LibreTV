@@ -179,7 +179,8 @@ export function filterHallItems(items: DoubanItem[], filter: HallFilter): Douban
     }
     if (filter.yearRange && !inYearRange(item.year, filter.yearRange)) return false;
     if (filter.area !== '全部' && item.area && !areaMatches(filter.area, item.area)) return false;
-    if (filter.genre !== '全部' && item.genres && !item.genres.includes(filter.genre)) return false;
+    // 题材不再按副标题抠字。豆瓣标签「热血」返回的片子副标题常写成「动作 奇幻」，
+    // 按芯片文字再滤一遍会把整页清空，页面就停在骨架上。
     if (filter.minScore != null) {
       const score = parseFloat(item.rating ?? '');
       if (!Number.isFinite(score) || score < filter.minScore) return false;

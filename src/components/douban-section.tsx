@@ -19,6 +19,7 @@ import {
   type HallStatus,
 } from '@/lib/recommend';
 import { DoubanCard } from './video-card';
+import { favoriteIdOf } from '@/lib/db';
 import { AdultLibrary } from './adult-library';
 import { useLoadMore } from './use-load-more';
 
@@ -91,6 +92,7 @@ export function RecommendSection({
     },
     enabled: doubanEnabled && request !== null && !weekdayMode,
     placeholderData: keepPreviousData,
+    retry: 1,
   });
   const {
     data: doubanData,
@@ -165,11 +167,13 @@ export function RecommendSection({
   }, [hasNextPage, isFetching, fetchNextPage]);
   const sentinel = useLoadMore(!weekdayMode && !!hasNextPage && !isFetching, doubanData?.pages.length ?? 0, loadMore);
 
+  const loadedPages = doubanData?.pages.length ?? 0;
   useEffect(() => {
-    if (weekdayMode || items.length > 0) return;
-    if (!hasNextPage || isFetching) return;
+    // 年份区间会裁掉一整页。最多再补 2 页，避免某个标签把 500 条全部翻完、骨架一直不消失。
+    if (weekdayMode || items.length > 0 || isError) return;
+    if (!hasNextPage || isFetching || loadedPages >= 3) return;
     void fetchNextPage();
-  }, [weekdayMode, items.length, hasNextPage, isFetching, fetchNextPage]);
+  }, [weekdayMode, items.length, hasNextPage, isFetching, isError, loadedPages, fetchNextPage]);
 
   if (!doubanEnabled) return null;
 
@@ -270,7 +274,7 @@ export function RecommendSection({
 
           {isError && !weekdayMode ? (
             <p className="text-center text-sm text-faint py-12">推荐内容加载失败，请检查网络</p>
-          ) : (weekdayMode ? bangumiQuery.isLoading : isLoading || (items.length === 0 && (isFetching || hasNextPage))) ? (
+          ) : (weekdayMode ? bangumiQuery.isLoading : isLoading) ? (
             <GridSkeleton />
           ) : items.length === 0 ? (
             <div className="text-center py-12 space-y-2">
@@ -306,6 +310,12 @@ function toCard(item: DoubanItem) {
     cover: item.cover,
     rating: item.rating,
     meta: meta || undefined,
+    favorite: {
+      id: favoriteIdOf({ title: item.title }),
+      title: item.title,
+      pic: item.cover,
+      year: item.year,
+    },
     badge:
       item.status === 'ended'
         ? { text: '完结', tone: 'ok' as const }

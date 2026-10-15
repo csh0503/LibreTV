@@ -18,6 +18,7 @@ const PlayerShell = dynamic(() => import('@/components/player-shell').then((m) =
 import { EmptyState, LoadingState, Spinner } from '@/components/states';
 import { SwitchSourceModal } from '@/components/switch-source';
 import { enqueueDownload } from '@/components/download-manager';
+import { FavoriteButton } from '@/components/favorite-button';
 import { Icon } from '@/components/icon';
 import { useAuth } from '@/components/auth';
 import { resolveSource, useAppStore } from '@/lib/store';
@@ -28,6 +29,7 @@ import {
   updateHistoryProgress,
   upsertHistory,
   db,
+  favoriteIdOf,
 } from '@/lib/db';
 import { cn } from '@/lib/utils';
 
@@ -208,6 +210,17 @@ function WatchContent() {
             </p>
           </div>
           <div className="ml-auto flex items-center gap-2">
+            <FavoriteButton
+              entry={{
+                id: favoriteIdOf({ sourceKey, vodId: vodId || currentUrl, title: videoTitle }),
+                title: videoTitle,
+                pic: detailQuery.data?.videoInfo?.cover,
+                sourceKey,
+                sourceUrl: source.url,
+                vodId: vodId || currentUrl,
+                isAdult: source.isAdult,
+              }}
+            />
             <button
               className="btn-ghost btn-sm"
               onClick={() => {

@@ -99,6 +99,14 @@ describe('filterHallItems', () => {
     expect(areaMatches('中国台湾', '中国大陆')).toBe(false);
   });
 
+  it('副标题没写「热血」也保留，题材已经交给豆瓣标签', () => {
+    const kept = filterHallItems(
+      [{ id: '1', title: '咒术回战', cover: 'c', genres: '动作 动画 奇幻', year: '2026' }],
+      { ...filter, genre: '热血', yearRange: null, hideAdult: false }
+    );
+    expect(kept.map((item) => item.id)).toEqual(['1']);
+  });
+
   it('本周放送去重后排在前面，并标成今年连载', () => {
     const calendar: DoubanItem[] = [
       { id: 'b', title: '新科幻', cover: 'c' },

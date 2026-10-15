@@ -8,6 +8,7 @@ import { useAppStore } from '@/lib/store';
 import { cn } from '@/lib/utils';
 import type { SearchResultItem, VodListItem } from '@/lib/types';
 import { DoubanCard } from './video-card';
+import { favoriteIdOf } from '@/lib/db';
 import { areaMatches, deriveStatus, yearSelection, type HallSort, type HallStatus } from '@/lib/recommend';
 import { useLoadMore } from './use-load-more';
 
@@ -69,6 +70,7 @@ export function AdultLibrary({ onOpen }: { onOpen: (item: SearchResultItem) => v
       return last.page + 1;
     },
     enabled: Boolean(active?.url),
+    retry: 1,
   });
   const {
     data: browseData,
@@ -112,11 +114,12 @@ export function AdultLibrary({ onOpen }: { onOpen: (item: SearchResultItem) => v
   }, [hasNextPage, isFetching, fetchNextPage]);
   const sentinel = useLoadMore(sources.length > 0 && !!hasNextPage && !isFetching, browseData?.pages.length ?? 0, loadMore);
 
+  const loadedPages = browseData?.pages.length ?? 0;
   useEffect(() => {
-    if (sources.length === 0 || items.length > 0) return;
-    if (!hasNextPage || isFetching) return;
+    if (sources.length === 0 || items.length > 0 || isError) return;
+    if (!hasNextPage || isFetching || loadedPages >= 3) return;
     void fetchNextPage();
-  }, [sources.length, items.length, hasNextPage, isFetching, fetchNextPage]);
+  }, [sources.length, items.length, hasNextPage, isFetching, isError, loadedPages, fetchNextPage]);
 
   if (sources.length === 0) {
     return (
@@ -188,7 +191,7 @@ export function AdultLibrary({ onOpen }: { onOpen: (item: SearchResultItem) => v
 
       {isError ? (
         <p className="text-center text-sm text-faint py-12">这个成人源的分类暂时拉不下来</p>
-      ) : isLoading || (items.length === 0 && (isFetching || hasNextPage)) ? (
+      ) : isLoading ? (
         <GridSkeleton />
       ) : items.length === 0 ? (
         <p className="text-center text-sm text-muted py-12">这个分类下没有符合筛选的片子</p>
@@ -198,7 +201,7 @@ export function AdultLibrary({ onOpen }: { onOpen: (item: SearchResultItem) => v
             {items.map((item) => (
               <DoubanCard
                 key={`${active?.key}_${item.vodId}_${item.name}`}
-                item={toCard(item)}
+                item={toCard(item, active)}
                 onClick={() => active && onOpen(toPlayable(active, item))}
               />
             ))}
@@ -214,7 +217,7 @@ export function AdultLibrary({ onOpen }: { onOpen: (item: SearchResultItem) => v
   );
 }
 
-function toCard(item: VodListItem) {
+function toCard(item: VodListItem, source?: { key: string; name: string; url: string }) {
   const nowYear = new Date().getFullYear();
   const play = deriveStatus({ episodesInfo: item.remarks, year: item.year }, nowYear);
   const meta = [item.year, item.area].filter(Boolean).join(' · ');
@@ -223,6 +226,16 @@ function toCard(item: VodListItem) {
     cover: item.pic || '',
     rating: item.rating,
     meta: meta || undefined,
+    favorite: {
+      id: favoriteIdOf({ sourceKey: source?.key, vodId: item.vodId, title: item.name }),
+      title: item.name,
+      pic: item.pic,
+      sourceKey: source?.key,
+      sourceUrl: source?.url,
+      vodId: item.vodId,
+      year: item.year,
+      isAdult: true,
+    },
     badge:
       play === 'ended'
         ? { text: '完结', tone: 'ok' as const }

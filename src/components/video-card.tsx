@@ -5,6 +5,8 @@ import type { SearchResultItem } from '@/lib/types';
 import { useAppStore } from '@/lib/store';
 import { cn } from '@/lib/utils';
 import { SmartImage } from './smart-image';
+import { FavoriteButton } from './favorite-button';
+import type { FavoriteEntry } from '@/lib/db';
 
 // —— 跨源同名聚合 ——
 
@@ -273,6 +275,7 @@ export function DoubanCard({
     rating?: string;
     meta?: string;
     badge?: { text: string; tone: 'ok' | 'warn' };
+    favorite?: Omit<FavoriteEntry, 'addedAt'>;
   };
   onClick: () => void;
 }) {
@@ -311,6 +314,12 @@ export function DoubanCard({
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 4v16m10-16v16M3 6a1 1 0 011-1h1a1 1 0 011 1v12a1 1 0 01-1 1H4a1 1 0 01-1-1V6zm4 0a1 1 0 011-1h1a1 1 0 011 1v12a1 1 0 01-1 1h-1a1 1 0 01-1-1V6zm8 0a1 1 0 011-1h1a1 1 0 011 1v12a1 1 0 01-1 1h-1a1 1 0 01-1-1V6zm4 0a1 1 0 011-1h1a1 1 0 011 1v12a1 1 0 01-1 1h-1a1 1 0 01-1-1V6z" />
             </svg>
           </div>
+        )}
+        {item.favorite && (
+          <FavoriteButton
+            entry={item.favorite}
+            className="absolute top-1.5 left-1.5 z-10 bg-black/55 text-white hover:bg-black/70"
+          />
         )}
         {item.rating && (
           <span className={cn('absolute top-1.5 right-1.5 tag bg-black/70 text-rating font-medium')}>

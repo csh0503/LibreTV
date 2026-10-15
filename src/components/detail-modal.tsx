@@ -14,6 +14,8 @@ import { copyToClipboard } from '@/lib/clipboard';
 import { EmptyState, ErrorState, LoadingState } from './states';
 import { useFocusTrap } from './use-focus-trap';
 import { Icon } from './icon';
+import { FavoriteButton } from './favorite-button';
+import { favoriteIdOf } from '@/lib/db';
 
 /**
  * 详情弹窗：剧集列表 + 排序 + 复制链接。
@@ -142,6 +144,18 @@ export function DetailModal({ item, onClose }: { item: SearchResultItem | null; 
             <h2 className="text-lg font-semibold text-content break-words">{item.name}</h2>
             <span className="text-sm text-faint">{item.sourceName}</span>
           </div>
+          <FavoriteButton
+            entry={{
+              id: favoriteIdOf({ sourceKey: item.sourceKey, vodId: item.vodId, title: item.name }),
+              title: item.name,
+              pic: item.pic,
+              sourceKey: item.sourceKey,
+              sourceUrl: item.sourceUrl,
+              vodId: item.vodId,
+              year: item.year,
+              isAdult: item.isAdult,
+            }}
+          />
           <button
             className="p-1.5 rounded-md text-muted hover:text-content hover:bg-hover shrink-0"
             onClick={onClose}

@@ -1,5 +1,6 @@
 import Dexie, { type EntityTable } from 'dexie';
 import type { SourceConfig } from './types';
+import { normalizeTitle } from './cms-parser';
 // 仅类型引入：store.ts 运行时会引用本模块，反向只取类型不会形成运行时循环
 import type { LiveProbeEntry } from './store';
 import { PERSIST_KEY, flushPendingPersist } from './persist-storage';
@@ -70,6 +71,19 @@ export interface DownloadTaskEntry {
   updatedAt: number;
 }
 
+/** 点播收藏。有源和影片 id 时按它们做主键，推荐卡片只有片名时按标题。 */
+export interface FavoriteEntry {
+  id: string;
+  title: string;
+  pic?: string;
+  sourceKey?: string;
+  sourceUrl?: string;
+  vodId?: string;
+  year?: string;
+  isAdult?: boolean;
+  addedAt: number;
+}
+
 export const db = new Dexie('libretv') as Dexie & {
   history: EntityTable<HistoryEntry, 'id'>;
   progress: EntityTable<ProgressEntry, 'key'>;
@@ -77,6 +91,7 @@ export const db = new Dexie('libretv') as Dexie & {
   liveProbe: EntityTable<LiveProbeEntry & { url: string }, 'url'>;
   segmentMeta: EntityTable<SegmentMetaEntry, 'key'>;
   downloads: EntityTable<DownloadTaskEntry, 'id'>;
+  favorites: EntityTable<FavoriteEntry, 'id'>;
 };
 
 db.version(1).stores({
@@ -95,6 +110,33 @@ db.version(3).stores({
   segmentMeta: 'key, episodeKey, lastAccess',
   downloads: 'id, createdAt',
 });
+
+db.version(4).stores({
+  favorites: 'id, addedAt',
+});
+
+export const MAX_FAVORITES = 300;
+
+export function favoriteIdOf(input: { sourceKey?: string; vodId?: string; title: string }): string {
+  if (input.sourceKey && input.vodId) return `${input.sourceKey}_${input.vodId}`;
+  return `t_${normalizeTitle(input.title) || 'untitled'}`;
+}
+
+/** 已收藏则取消，返回收藏后的状态 */
+export async function toggleFavorite(entry: Omit<FavoriteEntry, 'addedAt'>): Promise<boolean> {
+  const existing = await db.favorites.get(entry.id);
+  if (existing) {
+    await db.favorites.delete(entry.id);
+    return false;
+  }
+  await db.favorites.put({ ...entry, addedAt: Date.now() });
+  const count = await db.favorites.count();
+  if (count > MAX_FAVORITES) {
+    const oldest = await db.favorites.orderBy('addedAt').limit(count - MAX_FAVORITES).toArray();
+    await db.favorites.bulkDelete(oldest.map((row) => row.id));
+  }
+  return true;
+}
 
 export const MAX_HISTORY = 100;
 export const MAX_SEARCH_HISTORY = 10;

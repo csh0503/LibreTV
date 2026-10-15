@@ -6,6 +6,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { ThemeToggle } from './theme';
 import { SourceManagerDrawer } from './source-manager';
 import { HistoryPanel } from './history-panel';
+import { FavoritePanel } from './favorite-panel';
 import { requestShowDownloadManager } from './download-manager';
 import { Icon } from './icon';
 import { SearchHistoryDropdown, useSearchHistory } from './search-history';
@@ -17,6 +18,7 @@ export function Header({ showSearch = false }: { showSearch?: boolean }) {
   const pathname = usePathname();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [favoriteOpen, setFavoriteOpen] = useState(false);
   const [query, setQuery] = useState('');
   // 与首页搜索框共用同一套「最近搜索」下拉逻辑
   const searchHistory = useSearchHistory(query);
@@ -104,6 +106,9 @@ export function Header({ showSearch = false }: { showSearch?: boolean }) {
               关于
             </HeaderLink>
             <ThemeToggle />
+            <IconButton label="收藏" onClick={() => setFavoriteOpen(true)}>
+              <Icon name="star" />
+            </IconButton>
             <IconButton label="观看历史" onClick={() => setHistoryOpen(true)}>
               <Icon name="clock" />
             </IconButton>
@@ -119,6 +124,7 @@ export function Header({ showSearch = false }: { showSearch?: boolean }) {
 
       <SourceManagerDrawer open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <HistoryPanel open={historyOpen} onClose={() => setHistoryOpen(false)} />
+      <FavoritePanel open={favoriteOpen} onClose={() => setFavoriteOpen(false)} />
     </>
   );
 }
