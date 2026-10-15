@@ -16,9 +16,10 @@ function blobKey(code: string): string {
 
 function backend(): 'kv' | 'blob' | 'file' {
   if (process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN) return 'kv';
-  if (process.env.BLOB_READ_WRITE_TOKEN) return 'blob';
+  // 新的 Blob 连接默认只下发 BLOB_STORE_ID，函数里用 OIDC 读写，不必再勾长期令牌。
+  if (process.env.BLOB_READ_WRITE_TOKEN || process.env.BLOB_STORE_ID) return 'blob';
   if (process.env.VERCEL) {
-    throw new Error('要在 Vercel 项目里连接 KV 或 Blob 存储，换手机才能同步设定档。接好后重新部署一次。');
+    throw new Error('要在 Vercel 项目里连接 Blob 存储，换手机才能同步设定档。接好后重新部署一次。');
   }
   return 'file';
 }
