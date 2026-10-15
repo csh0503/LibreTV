@@ -130,14 +130,18 @@ export const api = {
 
   logout: () => request<{ success: boolean }>('/api/auth', { method: 'DELETE' }),
 
-  profileSyncGet: (code: string) =>
-    request<ProfileBundle>(`/api/profile-sync?code=${encodeURIComponent(code)}`),
+  profileCatalog: () =>
+    request<{ profiles: { id: string; name: string; hasPin: boolean; pinHash?: string; updatedAt: number }[] }>(
+      '/api/profile-sync'
+    ),
 
-  profileSyncPut: (code: string, bundle: ProfileBundle) =>
+  profileSyncGet: (id: string) => request<ProfileBundle>(`/api/profile-sync?id=${encodeURIComponent(id)}`),
+
+  profileSyncPut: (input: { id: string; name: string; pinHash?: string; bundle: ProfileBundle }) =>
     request<{ ok: boolean }>('/api/profile-sync', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code, bundle }),
+      body: JSON.stringify(input),
     }),
 
   /**

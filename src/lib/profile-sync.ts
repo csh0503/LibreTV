@@ -9,7 +9,6 @@ import {
   setProfileSnapshot,
   withoutProfileDirty,
 } from './profile-session';
-import { normalizeSyncCode } from './sync-code';
 import { useAppStore } from './store';
 
 let timer: ReturnType<typeof setTimeout> | undefined;
@@ -142,13 +141,18 @@ async function applyBundle(profileId: string, bundle: ProfileBundle): Promise<vo
   });
 }
 
+export async function pushProfile(profileId: string): Promise<void> {
+  const profile = await db.profiles.get(profileId);
+  if (!profile) return;
+  const bundle = await buildBundle(profile.id, profile.name);
+  await api.profileSyncPut({ id: profile.id, name: profile.name, pinHash: profile.pinHash, bundle });
+  await db.profiles.update(profile.id, { cloudUpdatedAt: bundle.updatedAt, pendingPush: false });
+}
+
 export async function pushActiveProfile(): Promise<void> {
   const profileId = getActiveProfileId();
-  const profile = profileId ? await db.profiles.get(profileId) : undefined;
-  if (!profile?.syncSecret) return;
-  const bundle = await buildBundle(profile.id, profile.name);
-  await api.profileSyncPut(profile.syncSecret, bundle);
-  await db.profiles.update(profile.id, { cloudUpdatedAt: bundle.updatedAt, pendingPush: false });
+  if (!profileId) return;
+  await pushProfile(profileId);
 }
 
 export async function reconcileProfile(): Promise<void> {
@@ -157,10 +161,10 @@ export async function reconcileProfile(): Promise<void> {
   try {
     const profileId = getActiveProfileId();
     const profile = profileId ? await db.profiles.get(profileId) : undefined;
-    if (!profile?.syncSecret) return;
+    if (!profile) return;
     let remote: ProfileBundle | null = null;
     try {
-      remote = await api.profileSyncGet(profile.syncSecret);
+      remote = await api.profileSyncGet(profile.id);
     } catch (err) {
       if (!isNotFound(err)) throw err;
     }
@@ -175,28 +179,33 @@ export async function reconcileProfile(): Promise<void> {
   }
 }
 
-export async function loginWithSyncCode(code: string): Promise<void> {
-  const secret = normalizeSyncCode(code);
-  if (secret.length < 16) throw new Error('同步码无效');
-  const bundle = await api.profileSyncGet(secret);
-  const existing = (await db.profiles.toArray()).find((item) => normalizeSyncCode(item.syncSecret || '') === secret);
-  if (existing) {
-    await switchProfile(existing.id);
-    await applyBundle(existing.id, bundle);
+/** 选中云端设定档：本机没有就先建同 id 的档，再拉下资料。 */
+export async function openCloudProfile(id: string, pin?: string): Promise<void> {
+  const catalog = await api.profileCatalog();
+  const remote = catalog.profiles.find((item) => item.id === id);
+  let local = await db.profiles.get(id);
+  if (!local) {
+    local = {
+      id,
+      name: remote?.name || '设定档',
+      createdAt: Date.now(),
+      pinHash: remote?.pinHash,
+      cloudUpdatedAt: 0,
+    };
+    await db.profiles.add(local);
+  }
+  await switchProfile(id, pin);
+  let bundle: ProfileBundle | null = null;
+  try {
+    bundle = await api.profileSyncGet(id);
+  } catch (err) {
+    if (!isNotFound(err)) throw err;
+  }
+  if (bundle && bundle.updatedAt > (local.cloudUpdatedAt ?? 0)) {
+    await applyBundle(id, bundle);
     return;
   }
-  const id = crypto.randomUUID();
-  await db.profiles.add({
-    id,
-    name: bundle.name || '同步的设定档',
-    createdAt: Date.now(),
-    syncSecret: secret,
-    cloudUpdatedAt: bundle.updatedAt,
-    prefs: bundle.prefs,
-  });
-  // 先换档，再套云端资料，避免把这份资料写进上一个设定档
-  await switchProfile(id);
-  await applyBundle(id, bundle);
+  await pushProfile(id);
 }
 
 export function startProfileSync(): void {

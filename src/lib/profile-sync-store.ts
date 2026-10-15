@@ -1,17 +1,16 @@
-import { createHash } from 'crypto';
 import { mkdir, readFile, writeFile } from 'fs/promises';
 import path from 'path';
 import { get, put } from '@vercel/blob';
-import { normalizeSyncCode } from './sync-code';
+
 
 /**
  * 设定档云端副本。优先用 Vercel KV 或 Blob（换设备才不会丢），
  * 本地开发没有这两样时写到 .data，Vercel 上没接存储则明确报错。
  */
 
-function blobKey(code: string): string {
-  const normalized = normalizeSyncCode(code);
-  return createHash('sha256').update(normalized).digest('hex');
+function assertProfileId(id: string): string {
+  if (!/^[0-9a-f-]{36}$/i.test(id)) throw new Error('设定档无效');
+  return id;
 }
 
 function backend(): 'kv' | 'blob' | 'file' {
@@ -38,45 +37,49 @@ async function kvCommand(command: unknown[]): Promise<unknown> {
   return data.result;
 }
 
-function filePath(hash: string): string {
-  return path.join(process.cwd(), '.data', 'profile-sync', `${hash}.json`);
+function filePath(key: string): string {
+  return path.join(process.cwd(), '.data', 'profile-sync', key);
 }
 
-export async function readProfileBlob(code: string): Promise<string | null> {
-  const hash = blobKey(code);
+export async function readStoredJson(key: string): Promise<string | null> {
   const kind = backend();
   if (kind === 'kv') {
-    const result = await kvCommand(['GET', `profile:${hash}`]);
+    const result = await kvCommand(['GET', `profile:${key}`]);
     return typeof result === 'string' ? result : null;
   }
   if (kind === 'blob') {
-    const result = await get(`profile-sync/${hash}.json`, { access: 'private', useCache: false });
+    const result = await get(`profile-sync/${key}`, { access: 'private', useCache: false });
     if (!result || result.statusCode !== 200 || !result.stream) return null;
     return new Response(result.stream).text();
   }
   try {
-    return await readFile(filePath(hash), 'utf8');
+    return await readFile(filePath(key), 'utf8');
   } catch {
     return null;
   }
 }
 
-export async function writeProfileBlob(code: string, json: string): Promise<void> {
-  const hash = blobKey(code);
+export async function writeStoredJson(key: string, json: string): Promise<void> {
   const kind = backend();
   if (kind === 'kv') {
-    await kvCommand(['SET', `profile:${hash}`, json]);
+    await kvCommand(['SET', `profile:${key}`, json]);
     return;
   }
   if (kind === 'blob') {
-    await put(`profile-sync/${hash}.json`, json, {
+    await put(`profile-sync/${key}`, json, {
       access: 'private',
       allowOverwrite: true,
       contentType: 'application/json',
     });
     return;
   }
-  const target = filePath(hash);
+  const target = filePath(key);
   await mkdir(path.dirname(target), { recursive: true });
   await writeFile(target, json, 'utf8');
 }
+
+export function profileDataKey(id: string): string {
+  return `profiles/${assertProfileId(id)}.json`;
+}
+
+export const PROFILE_CATALOG_KEY = 'catalog.json';

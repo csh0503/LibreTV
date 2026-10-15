@@ -1,11 +1,11 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { createProfile, listProfiles, switchProfile } from '@/lib/profile';
-import { loginWithSyncCode } from '@/lib/profile-sync';
-import { useProfile } from '@/lib/use-profile';
+import { createProfile, listProfiles } from '@/lib/profile';
+import { api } from '@/lib/client-api';
+import { openCloudProfile, pushProfile } from '@/lib/profile-sync';
 import type { UserProfile } from '@/lib/db';
-import { cn } from '@/lib/utils';
+
 
 const COLORS = ['#e11d48', '#0ea5e9', '#16a34a', '#d97706', '#7c3aed', '#db2777', '#0891b2'];
 
@@ -17,7 +17,6 @@ function colorFor(name: string): string {
 
 /** 登录后先选设定档，选完才进入首页。刷新或重新登录会再出现一次。 */
 export function ProfileGate() {
-  const current = useProfile();
   const [open, setOpen] = useState(true);
   const [profiles, setProfiles] = useState<UserProfile[]>([]);
   const [unlockId, setUnlockId] = useState('');
@@ -26,11 +25,37 @@ export function ProfileGate() {
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState('');
   const [pin, setPin] = useState('');
-  const [syncCode, setSyncCode] = useState('');
-  const [syncing, setSyncing] = useState(false);
-
   const reload = () => {
-    void listProfiles().then(setProfiles).catch(() => setError('设定档还没准备好'));
+    void (async () => {
+      const local = await listProfiles();
+      let cloud: { id: string; name: string; pinHash?: string; updatedAt: number }[] = [];
+      try {
+        cloud = (await api.profileCatalog()).profiles;
+      } catch {
+        // 云端暂时不可用时仍显示本机设定档
+      }
+      for (const item of local) {
+        if (!cloud.some((remote) => remote.id === item.id)) {
+          try {
+            await pushProfile(item.id);
+          } catch {
+            // 上传失败不挡住选档
+          }
+        }
+      }
+      const byId = new Map(local.map((item) => [item.id, item]));
+      for (const remote of cloud) {
+        const existing = byId.get(remote.id);
+        byId.set(remote.id, {
+          id: remote.id,
+          name: remote.name || existing?.name || '设定档',
+          pinHash: remote.pinHash || existing?.pinHash,
+          createdAt: existing?.createdAt ?? remote.updatedAt,
+          cloudUpdatedAt: remote.updatedAt,
+        });
+      }
+      setProfiles([...byId.values()]);
+    })().catch(() => setError('设定档还没准备好'));
   };
 
   useEffect(() => {
@@ -40,7 +65,7 @@ export function ProfileGate() {
   const enter = async (profile: UserProfile, password?: string) => {
     setError('');
     try {
-      if (profile.id !== current.id || password) await switchProfile(profile.id, password);
+      await openCloudProfile(profile.id, password);
       setOpen(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : '切换失败');
@@ -135,31 +160,6 @@ export function ProfileGate() {
         </form>
       )}
 
-      <form
-        className="mt-8 w-full max-w-xs"
-        onSubmit={(event) => {
-          event.preventDefault();
-          setSyncing(true);
-          setError('');
-          void loginWithSyncCode(syncCode)
-            .then(() => setOpen(false))
-            .catch((err) => setError(err instanceof Error ? err.message : '同步码无效'))
-            .finally(() => setSyncing(false));
-        }}
-      >
-        <input
-          className={cn('input w-full', 'text-center')}
-          placeholder="或粘贴另一台设备的同步码"
-          value={syncCode}
-          onChange={(event) => setSyncCode(event.target.value)}
-          aria-label="同步码"
-        />
-        {syncCode.trim() && (
-          <button type="submit" className="btn-ghost w-full mt-2" disabled={syncing}>
-            {syncing ? '正在拉取…' : '用同步码进入'}
-          </button>
-        )}
-      </form>
       {error && <p className="mt-4 text-sm text-danger">{error}</p>}
     </div>
   );

@@ -5,8 +5,6 @@ import { Drawer } from './drawer';
 import { useToast } from './toast';
 import { useProfile } from '@/lib/use-profile';
 import { createProfile, deleteProfile, listProfiles, switchProfile } from '@/lib/profile';
-import { loginWithSyncCode, reconcileProfile } from '@/lib/profile-sync';
-import { formatSyncCode } from '@/lib/sync-code';
 import type { UserProfile } from '@/lib/db';
 import { cn } from '@/lib/utils';
 
@@ -19,7 +17,6 @@ export function ProfileDrawer({ open, onClose }: { open: boolean; onClose: () =>
   const [pin, setPin] = useState('');
   const [unlockId, setUnlockId] = useState('');
   const [unlockPin, setUnlockPin] = useState('');
-  const [syncCode, setSyncCode] = useState('');
 
   const reload = () => {
     void listProfiles().then(setProfiles).catch(() => {});
@@ -55,7 +52,7 @@ export function ProfileDrawer({ open, onClose }: { open: boolean; onClose: () =>
   return (
     <Drawer open={open} onClose={onClose} title="设定档" width="max-w-md">
       <p className="text-xs text-faint mb-3">
-        每个设定档有自己的观看历史、收藏、播放进度、搜索记录、直播收藏和成人开关。同步码可以在新手机、新浏览器把这份资料拉下来。
+        每个设定档有自己的观看历史、收藏和偏好。在任何设备登录这个网站后，选同一个头像就会同步。
       </p>
       <ul className="space-y-2 mb-4">
         {profiles.map((profile) => {
@@ -116,66 +113,6 @@ export function ProfileDrawer({ open, onClose }: { open: boolean; onClose: () =>
           );
         })}
       </ul>
-      {current.id && (
-        <div className="mb-4 space-y-2 border-t border-line pt-3">
-          <div className="text-xs text-muted">当前设定档的同步码</div>
-          <div className="flex gap-2">
-            <code className="flex-1 text-xs break-all rounded-md bg-chip px-2 py-1.5 text-content">
-              {formatSyncCode(profiles.find((item) => item.id === current.id)?.syncSecret || '') || '生成中…'}
-            </code>
-            <button
-              type="button"
-              className="btn-ghost btn-sm"
-              onClick={() => {
-                const secret = profiles.find((item) => item.id === current.id)?.syncSecret || '';
-                if (!secret) return;
-                void navigator.clipboard.writeText(formatSyncCode(secret)).then(
-                  () => toast('同步码已复制', 'success'),
-                  () => toast('复制失败', 'error')
-                );
-              }}
-            >
-              复制
-            </button>
-          </div>
-          <button
-            type="button"
-            className="text-xs text-accent underline"
-            onClick={() => {
-              void reconcileProfile()
-                .then(() => toast('已和云端对齐', 'success'))
-                .catch((err) => toast(err instanceof Error ? err.message : '同步失败', 'error'));
-            }}
-          >
-            立即同步
-          </button>
-        </div>
-      )}
-      <form
-        className="space-y-2 mb-4"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void loginWithSyncCode(syncCode)
-            .then(() => {
-              setSyncCode('');
-              reload();
-              toast('已从同步码恢复设定档', 'success');
-            })
-            .catch((err) => toast(err instanceof Error ? err.message : '恢复失败', 'error'));
-        }}
-      >
-        <div className="text-xs text-muted">在这台设备登录已有设定档</div>
-        <input
-          className="input w-full"
-          placeholder="粘贴另一台设备的同步码"
-          value={syncCode}
-          onChange={(event) => setSyncCode(event.target.value)}
-          aria-label="同步码"
-        />
-        <button type="submit" className="btn-primary btn-sm" disabled={syncCode.trim().length < 8}>
-          登录并拉下资料
-        </button>
-      </form>
       <form
         className="space-y-2 border-t border-line pt-3"
         onSubmit={(event) => {
