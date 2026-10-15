@@ -6,6 +6,8 @@ import {
   resetProfileReady,
   setProfileSnapshot,
 } from './profile-session';
+import { createSyncSecret } from './sync-code';
+import { markProfileDirty } from './profile-session';
 import { useAppStore, type LiveRecentEntry } from './store';
 
 /** 跟着设定档走的个人资料。点播源、订阅、封面代理仍是这台设备共用的。 */
@@ -142,6 +144,7 @@ function startPrefsSync(): void {
         liveFavorites: state.liveFavorites,
         liveRecent: state.liveRecent,
       };
+      markProfileDirty();
       void savePrefs(id, prefs);
     }, 200);
   });
@@ -155,8 +158,12 @@ async function initProfiles(): Promise<void> {
     profile = all[0];
   }
   if (!profile) {
-    profile = { id: crypto.randomUUID(), name: '默认', createdAt: Date.now() };
+    profile = { id: crypto.randomUUID(), name: '默认', createdAt: Date.now(), syncSecret: createSyncSecret() };
     await db.profiles.add(profile);
+  }
+  if (!profile.syncSecret) {
+    profile = { ...profile, syncSecret: createSyncSecret() };
+    await db.profiles.put(profile);
   }
   await migrateLegacyRows(profile.id);
   setProfileSnapshot({ id: profile.id, name: profile.name });
@@ -203,6 +210,7 @@ export async function createProfile(name: string, pin?: string): Promise<void> {
     name: trimmed || '未命名',
     createdAt: Date.now(),
     pinHash: pin ? await hashPin(id, pin) : undefined,
+    syncSecret: createSyncSecret(),
     prefs: { ...defaultPrefs() },
   };
   await db.profiles.add(profile);
@@ -210,6 +218,7 @@ export async function createProfile(name: string, pin?: string): Promise<void> {
   setProfileSnapshot({ id, name: profile.name });
   applyPrefs(defaultPrefs());
   syncing = false;
+  markProfileDirty();
 }
 
 export async function switchProfile(id: string, pin?: string): Promise<void> {

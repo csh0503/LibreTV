@@ -50,3 +50,26 @@ export function whenProfileReady(): Promise<void> {
 export function resetProfileReady(): void {
   ready = null;
 }
+
+let quiet = 0;
+const dirtyListeners = new Set<() => void>();
+
+/** 套用云端资料时不要再触发上传 */
+export async function withoutProfileDirty<T>(fn: () => Promise<T>): Promise<T> {
+  quiet += 1;
+  try {
+    return await fn();
+  } finally {
+    quiet -= 1;
+  }
+}
+
+export function markProfileDirty(): void {
+  if (quiet > 0) return;
+  dirtyListeners.forEach((listener) => listener());
+}
+
+export function onProfileDirty(listener: () => void): () => void {
+  dirtyListeners.add(listener);
+  return () => dirtyListeners.delete(listener);
+}

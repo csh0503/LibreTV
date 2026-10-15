@@ -1,6 +1,7 @@
 'use client';
 
 import type { SearchResponse, SearchStreamEvent, SourceSearchOutcome, VideoDetail, DoubanResponse, BangumiCalendarResponse, AuthStatusResponse, SourceConfig, SearchResultItem, LivePlaylistResponse, LiveEpgResponse, SourceListPayload, BrowseResponse } from './types';
+import type { ProfileBundle } from './profile-bundle';
 
 /**
  * 客户端 API 封装。401 时触发全局事件打开登录框，
@@ -116,6 +117,16 @@ export const api = {
     }),
 
   logout: () => request<{ success: boolean }>('/api/auth', { method: 'DELETE' }),
+
+  profileSyncGet: (code: string) =>
+    request<ProfileBundle>(`/api/profile-sync?code=${encodeURIComponent(code)}`),
+
+  profileSyncPut: (code: string, bundle: ProfileBundle) =>
+    request<{ ok: boolean }>('/api/profile-sync', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, bundle }),
+    }),
 
   /**
    * 聚合搜索。传入 onSource 时走 /api/search?stream=1 的 NDJSON 流：

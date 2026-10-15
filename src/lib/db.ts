@@ -4,7 +4,7 @@ import { normalizeTitle } from './cms-parser';
 // 仅类型引入：store.ts 运行时会引用本模块，反向只取类型不会形成运行时循环
 import type { LiveProbeEntry } from './store';
 import { PERSIST_KEY, flushPendingPersist } from './persist-storage';
-import { getActiveProfileId, whenProfileReady } from './profile-session';
+import { getActiveProfileId, markProfileDirty, whenProfileReady } from './profile-session';
 
 /**
  * IndexedDB 持久化（替代旧版 localStorage 数据库）：
@@ -84,6 +84,12 @@ export interface UserProfile {
   pinHash?: string;
   createdAt: number;
   prefs?: Record<string, unknown>;
+  /** 换设备时输入的同步码。知道这串就能在新浏览器拉下这份资料。 */
+  syncSecret?: string;
+  /** 上次成功与云端对齐的时间 */
+  cloudUpdatedAt?: number;
+  /** 本地有还没上传的改动 */
+  pendingPush?: boolean;
 }
 
 /** 点播收藏。有源和影片 id 时按它们做主键，推荐卡片只有片名时按标题。 */
@@ -169,6 +175,7 @@ export async function toggleFavorite(entry: FavoriteDraft): Promise<boolean> {
   const existing = await db.favorites.get(id);
   if (existing) {
     await db.favorites.delete(id);
+    markProfileDirty();
     return false;
   }
   await db.favorites.put({ ...entry, id, profileId: pid, localId: entry.localId, addedAt: Date.now() });
@@ -176,6 +183,7 @@ export async function toggleFavorite(entry: FavoriteDraft): Promise<boolean> {
   if (mine.length > MAX_FAVORITES) {
     await db.favorites.bulkDelete(mine.slice(0, mine.length - MAX_FAVORITES).map((row) => row.id));
   }
+  markProfileDirty();
   return true;
 }
 
@@ -200,6 +208,7 @@ export async function upsertHistory(entry: Omit<HistoryEntry, 'id' | 'profileId'
   if (mine.length > MAX_HISTORY) {
     await db.history.bulkDelete(mine.slice(0, mine.length - MAX_HISTORY).map((row) => row.id));
   }
+  markProfileDirty();
 }
 
 export async function updateHistoryProgress(
@@ -218,11 +227,13 @@ export async function updateHistoryProgress(
     duration,
     timestamp: Date.now(),
   });
+  markProfileDirty();
 }
 
 export async function removeHistory(sourceKey: string, vodId: string): Promise<void> {
   const pid = await profileId();
   await db.history.delete(`${pid}::${sourceKey}_${vodId}`);
+  markProfileDirty();
 }
 
 export async function clearAllHistory(): Promise<void> {
@@ -232,6 +243,7 @@ export async function clearAllHistory(): Promise<void> {
     db.progress.where('profileId').equals(pid).primaryKeys(),
   ]);
   await Promise.all([db.history.bulkDelete(history), db.progress.bulkDelete(progress)]);
+  markProfileDirty();
 }
 
 export function progressKeyOf(sourceKey: string, vodId: string, episodeIndex: number): string {
@@ -248,11 +260,13 @@ export async function saveProgress(sourceKey: string, vodId: string, episodeInde
     duration,
     updatedAt: Date.now(),
   });
+  markProfileDirty();
 }
 
 export async function clearProgress(sourceKey: string, vodId: string, episodeIndex: number): Promise<void> {
   const pid = await profileId();
   await db.progress.delete(`${pid}::${sourceKey}_${vodId}_${episodeIndex}`);
+  markProfileDirty();
 }
 
 export async function listSearchHistory(): Promise<SearchHistoryEntry[]> {
@@ -270,17 +284,20 @@ export async function addSearchHistory(text: string): Promise<void> {
   if (mine.length > MAX_SEARCH_HISTORY) {
     await db.savedSearches.bulkDelete(mine.slice(0, mine.length - MAX_SEARCH_HISTORY).map((row) => row.id));
   }
+  markProfileDirty();
 }
 
 export async function removeSearchHistory(text: string): Promise<void> {
   const pid = await profileId();
   await db.savedSearches.delete(`${pid}::${text}`);
+  markProfileDirty();
 }
 
 export async function clearSearchHistory(): Promise<void> {
   const pid = await profileId();
   const keys = await db.savedSearches.where('profileId').equals(pid).primaryKeys();
   await db.savedSearches.bulkDelete(keys);
+  markProfileDirty();
 }
 
 /** 撤销「清空搜索记录」：按原时间戳回填，保持原有顺序 */
@@ -288,6 +305,7 @@ export async function restoreSearchHistory(entries: SearchHistoryEntry[]): Promi
   if (entries.length === 0) return;
   const pid = await profileId();
   await db.savedSearches.bulkPut(entries.map((entry) => ({ ...entry, profileId: pid, id: `${pid}::${entry.text}` })));
+  markProfileDirty();
 }
 
 // —— 直播测活缓存（TTL 过滤由调用方负责，本层只管存取） ——
