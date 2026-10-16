@@ -11,6 +11,7 @@ import {
   HeroBillboard,
   MyListRow,
   TopTenRow,
+  UpcomingRow,
 } from '@/components/home-rows';
 import { DetailModal } from '@/components/detail-modal';
 import { AggregatedCard, aggregateResults } from '@/components/video-card';
@@ -440,6 +441,13 @@ function HomeContent() {
               }}
             />
             <TopTenRow
+              onPick={(title) => {
+                setInput(title);
+                runSearch(title);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+            />
+            <UpcomingRow
               onPick={(title) => {
                 setInput(title);
                 runSearch(title);

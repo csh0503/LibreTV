@@ -205,12 +205,15 @@ export async function fetchBangumiCatalog(opts: {
   const rows = Array.isArray(json.data) ? json.data : [];
   const nowYear = new Date().getFullYear();
 
+  const todayStr = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
   const items: DoubanItem[] = [];
   for (const row of rows) {
     const title = (row.name_cn || '').trim();
     const cover = row.images?.large || row.images?.common || row.images?.medium;
     const votes = row.rating?.total ?? 0;
     if (!row.id || !title || !cover || votes < 50) continue;
+    // 还没开播（或没有开播日期）的条目片源站不可能有，直接不进片库，交给「即将播出」
+    if (!row.date || row.date > todayStr) continue;
 
     const year = row.date && /^\d{4}/.test(row.date) ? row.date.slice(0, 4) : undefined;
     const epCount = row.total_episodes || row.eps || 0;

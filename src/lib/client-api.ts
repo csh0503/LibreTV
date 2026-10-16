@@ -209,6 +209,10 @@ export const api = {
     return request<DoubanResponse>(`/api/hot-list?${sp.toString()}`, { signal });
   },
 
+  /** 即将播出：接下来 7 天的未播出内容 */
+  upcoming: (signal?: AbortSignal) =>
+    request<{ items: import('./upcoming').UpcomingItem[] }>('/api/upcoming', { signal }),
+
   /** 换源：按标题跨源搜索并取详情，附带接口耗时（测速）；支持 signal 以便关闭弹窗时中止在途请求 */
   detailSpeed: async (id: string, source: SourceConfig, signal?: AbortSignal) => {
     const start = performance.now();

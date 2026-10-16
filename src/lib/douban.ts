@@ -229,6 +229,9 @@ async function fetchTmdbDiscoverCatalog(query: DoubanFetchQuery): Promise<Douban
     params.set(isTv ? 'first_air_date_year' : 'primary_release_year', yearFilter);
   }
   if (minScore > 0) params.set('vote_average.gte', String(minScore));
+  // 只要已经播出 / 上映的，未播出的交给「即将播出」
+  const todayStr = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
+  params.set(isTv ? 'first_air_date.lte' : 'primary_release_date.lte', todayStr);
 
   const isBearer = apiKey.length > 40 && apiKey.includes('.');
   if (!isBearer) params.set('api_key', apiKey);

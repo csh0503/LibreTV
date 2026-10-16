@@ -18,6 +18,7 @@ import {
 } from '@/lib/db';
 import { describeContinueWatching } from '@/lib/home-features';
 import type { HotListId } from '@/lib/douban-weekly';
+import type { UpcomingItem, UpcomingKind } from '@/lib/upcoming';
 import { resolveSource, useAppStore } from '@/lib/store';
 import { rememberDoubanItem } from '@/lib/taste-store';
 import { canonicalTitle } from '@/lib/title-aliases';
@@ -1131,5 +1132,139 @@ function TopTenCard({
         />
       </div>
     </div>
+  );
+}
+
+const UPCOMING_TABS: { id: 'all' | UpcomingKind; label: string }[] = [
+  { id: 'all', label: '全部' },
+  { id: 'anime', label: '🌸 动漫' },
+  { id: 'tv', label: '📺 剧集' },
+  { id: 'movie', label: '🍿 电影' },
+];
+
+const WEEKDAY_CN = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+
+/** 「今天 23:00」「明天」「周五 01:30」 */
+export function formatAiringLabel(airingAt: number, timeKnown: boolean, now = Date.now()): string {
+  const d = new Date(airingAt);
+  const startOfToday = new Date(now);
+  startOfToday.setHours(0, 0, 0, 0);
+  const dayDiff = Math.floor((d.getTime() - startOfToday.getTime()) / 86_400_000);
+  const day =
+    dayDiff <= 0 ? '今天' : dayDiff === 1 ? '明天' : dayDiff === 2 ? '后天' : WEEKDAY_CN[d.getDay()];
+  if (!timeKnown) return `${day} · ${d.getMonth() + 1}/${d.getDate()}`;
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${day} ${hh}:${mm}`;
+}
+
+/**
+ * 首页「即将播出」：接下来 7 天还没播出的内容。
+ * 首播/首映：点击加入片单（现在还搜不到）；连载中的新集：点击先看已经播出的集数。
+ */
+export function UpcomingRow({ onPick }: { onPick: (title: string) => void }) {
+  const doubanEnabled = useAppStore((s) => s.doubanEnabled);
+  const yellowFilter = useAppStore((s) => s.yellowFilter);
+  const profileId = useProfile().id;
+  const { toast } = useToast();
+  const [tab, setTab] = useState<'all' | UpcomingKind>('all');
+
+  const query = useQuery({
+    queryKey: ['upcoming'],
+    queryFn: ({ signal }) => api.upcoming(signal),
+    enabled: doubanEnabled,
+    staleTime: 30 * 60_000,
+    retry: 1,
+  });
+
+  const all = useMemo(
+    () =>
+      (query.data?.items ?? []).filter(
+        (i) => (!i.timeKnown || i.airingAt > Date.now()) && (!yellowFilter || !isAdultContent(i.title)),
+      ),
+    [query.data, yellowFilter],
+  );
+  const counts = useMemo(() => {
+    const c: Record<string, number> = { all: all.length, anime: 0, tv: 0, movie: 0 };
+    for (const i of all) c[i.kind] += 1;
+    return c;
+  }, [all]);
+  const visible = useMemo(
+    () => (tab === 'all' ? all : all.filter((i) => i.kind === tab)).slice(0, 30),
+    [all, tab],
+  );
+
+  if (!doubanEnabled) return null;
+  if (!query.isLoading && all.length === 0) return null;
+
+  const handleClick = async (item: UpcomingItem) => {
+    const when = formatAiringLabel(item.airingAt, item.timeKnown);
+    if (!item.premiere) {
+      toast(`《${item.title}》第 ${item.episode ?? '?'} 集将于${when}播出，先看已经播出的集数`, 'info');
+      onPick(item.title);
+      return;
+    }
+    const localId = favoriteIdOf({ title: item.title });
+    const saved = profileId ? await db.favorites.get(`${profileId}::${localId}`) : undefined;
+    if (!saved) await toggleFavorite({ localId, title: item.title, pic: item.cover });
+    toast(
+      `《${item.title}》${item.kind === 'movie' ? '上映' : '首播'}于${when}，${saved ? '已在' : '已加入'}我的片单，播出后片源站收录即可观看`,
+      'success',
+    );
+  };
+
+  return (
+    <ShelfRow
+      title="即将播出"
+      badge="未来 7 天"
+      headerExtra={
+        <div className="flex items-center gap-1 overflow-x-auto scrollbar-none min-w-0">
+          {UPCOMING_TABS.map((t) =>
+            t.id !== 'all' && counts[t.id] === 0 ? null : (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => setTab(t.id)}
+                className={cn(
+                  'px-2.5 py-1 rounded-full text-xs transition-colors cursor-pointer shrink-0',
+                  tab === t.id
+                    ? 'bg-accent text-on-accent font-medium shadow-sm'
+                    : 'bg-chip text-muted hover:text-content hover:bg-hover',
+                )}
+              >
+                {t.label}
+                {counts[t.id] > 0 && <span className="ml-1 opacity-70">{counts[t.id]}</span>}
+              </button>
+            ),
+          )}
+        </div>
+      }
+    >
+      {query.isLoading && all.length === 0
+        ? Array.from({ length: 7 }).map((_, idx) => (
+            <div key={idx} className="w-[7.25rem] sm:w-32 shrink-0 aspect-[2/3] rounded-xl bg-chip animate-pulse" />
+          ))
+        : visible.map((item) => (
+            <div key={item.id} className="w-[7.25rem] sm:w-32 shrink-0">
+              <DoubanCard
+                item={{
+                  title: item.title,
+                  cover: item.cover,
+                  rating: item.rating,
+                  meta: [formatAiringLabel(item.airingAt, item.timeKnown), item.area].filter(Boolean).join(' · '),
+                  favorite: {
+                    localId: favoriteIdOf({ title: item.title }),
+                    title: item.title,
+                    pic: item.cover,
+                  },
+                  badge: item.premiere
+                    ? { text: item.kind === 'movie' ? '即将上映' : '首播', tone: 'ok' }
+                    : { text: `第${item.episode ?? '?'}集`, tone: 'warn' },
+                }}
+                onClick={() => void handleClick(item)}
+              />
+            </div>
+          ))}
+    </ShelfRow>
   );
 }
