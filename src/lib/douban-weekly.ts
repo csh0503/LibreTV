@@ -1135,3 +1135,64 @@ export async function fetchHotListWithMeta(id: HotListId): Promise<{ items: Doub
   return result;
 }
 
+
+/** 体检页一行：某个上游这次取到几条、花了多久、有没有报错 */
+export interface UpstreamProbe {
+  group: string;
+  name: string;
+  ok: boolean;
+  count: number;
+  ms: number;
+  error?: string;
+  /** 前几个片名，看取到的是不是对的东西 */
+  sample: string[];
+}
+
+export async function timeProbe(
+  group: string,
+  name: string,
+  run: () => Promise<DoubanItem[]>,
+): Promise<UpstreamProbe> {
+  const started = Date.now();
+  try {
+    const items = await run();
+    return {
+      group,
+      name,
+      ok: items.length > 0,
+      count: items.length,
+      ms: Date.now() - started,
+      ...(items.length === 0 ? { error: '返回 0 条' } : {}),
+      sample: items.slice(0, 4).map((i) => i.title),
+    };
+  } catch (err) {
+    return {
+      group,
+      name,
+      ok: false,
+      count: 0,
+      ms: Date.now() - started,
+      error: err instanceof Error ? err.message.slice(0, 160) : '请求失败',
+      sample: [],
+    };
+  }
+}
+
+/** 热榜用到的每个原始上游（不走缓存、不融合），给数据源体检页用 */
+export function probeHotListUpstreams(): Promise<UpstreamProbe>[] {
+  const douban = (Object.keys(DOUBAN_COLLECTION_MAP) as HotListId[]).map((id) =>
+    timeProbe('豆瓣榜单', DOUBAN_COLLECTION_MAP[id]!.label, () =>
+      fetchDoubanCollection(DOUBAN_COLLECTION_MAP[id]!.collection, DOUBAN_COLLECTION_MAP[id]!.isTv, DOUBAN_COLLECTION_MAP[id]!.label),
+    ),
+  );
+  const bili = (Object.keys(BILI_SEASON_TYPE_MAP) as HotListId[]).map((id) =>
+    timeProbe('B站热播榜', BILI_SEASON_TYPE_MAP[id]!.label, () => fetchBiliRankRaw(BILI_SEASON_TYPE_MAP[id]!)),
+  );
+  return [
+    ...douban,
+    ...bili,
+    timeProbe('其他热榜', '百度热播剧', () => fetchBaiduTeleplayList()),
+    timeProbe('其他热榜', 'Bangumi 在播（全周按热度）', () => fetchBangumiHotAiring(24)),
+    timeProbe('其他热榜', 'TMDB 当日趋势', () => fetchTmdbTrending('all')),
+  ];
+}

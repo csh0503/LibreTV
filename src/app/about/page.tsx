@@ -29,6 +29,15 @@ export default function AboutPage() {
         </section>
 
         <section>
+          <h2 className="text-base font-semibold text-content mb-2.5">数据源体检</h2>
+          <p className="text-sm text-muted leading-relaxed">
+            首页的热榜、片库、找片源依赖豆瓣、B站、百度、Bangumi、TMDB 等上游。
+            <a href="/diagnostics" className="text-accent hover:underline">打开体检页</a>
+            可以看到它们现在通不通、取到多少、多快。
+          </p>
+        </section>
+
+        <section>
           <h2 className="text-base font-semibold text-content mb-2.5">隐私与数据</h2>
           <p className="text-sm text-muted leading-relaxed">
             你的搜索历史、观看进度等数据仅保存在本设备浏览器中（IndexedDB），不会上传到服务器。

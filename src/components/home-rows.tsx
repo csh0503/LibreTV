@@ -1102,6 +1102,9 @@ function RankingExplainer({ meta }: { meta?: { updatedAt: number; ttl: number; s
               </span>
             ))}
           </div>
+          <a href="/diagnostics" className="inline-block mt-2 text-accent hover:underline">
+            打开数据源体检 →
+          </a>
         </div>
       )}
     </div>

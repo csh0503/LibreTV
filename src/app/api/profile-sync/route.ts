@@ -5,6 +5,7 @@ import {
   deleteStoredJson,
   profileDataKey,
   readStoredJson,
+  syncStorageKind,
   writeStoredJson,
 } from '@/lib/profile-sync-store';
 
@@ -20,14 +21,15 @@ interface CatalogEntry {
 }
 
 /**
- * 「谁在看」名单在本实例内存里留 30 秒：每台设备开着页面都会定期来看名单，
- * 存储按读取次数计费。本实例写入后立刻更新缓存；别的实例最多晚 30 秒看到。
+ * 「谁在看」名单在本实例内存里短暂缓存（Redis 5 秒、Blob 30 秒）：每台设备开着页面都会定期来看名单，
+ * 存储按读取次数计费。本实例写入后立刻更新缓存；别的实例最多晚一个缓存周期看到。
  */
-const CATALOG_TTL_MS = 30_000;
+/** Redis 读取便宜，缓存短一点让别的设备更快看到；Blob 按次计费贵，缓存长一点 */
+const catalogTtlMs = () => (syncStorageKind() === 'redis' ? 5_000 : 30_000);
 let catalogCache: { at: number; profiles: CatalogEntry[] } | undefined;
 
 async function readCatalog(): Promise<CatalogEntry[]> {
-  if (catalogCache && Date.now() - catalogCache.at < CATALOG_TTL_MS) return catalogCache.profiles;
+  if (catalogCache && Date.now() - catalogCache.at < catalogTtlMs()) return catalogCache.profiles;
   const json = await readStoredJson(PROFILE_CATALOG_KEY);
   const data = json ? (JSON.parse(json) as { profiles?: CatalogEntry[] }) : {};
   const profiles = Array.isArray(data.profiles) ? data.profiles : [];

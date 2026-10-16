@@ -2,9 +2,9 @@ import type { DoubanItem } from './types';
 import { judgeStatus, looksUnreleased } from './title-status';
 import { fetchUpstream, getCache, setCache } from './fetch-utils';
 import { rexxarToItem, type DoubanRequest } from './recommend';
-import { fetchBangumiCatalog } from './bangumi';
+import { fetchBangumiCalendar, fetchBangumiCatalog } from './bangumi';
 import { canonicalTitle } from './title-aliases';
-import { getTmdbApiKey, TMDB_CODE_TO_AREA, TMDB_ID_TO_GENRE } from './douban-weekly';
+import { getTmdbApiKey, timeProbe, TMDB_CODE_TO_AREA, TMDB_ID_TO_GENRE, type UpstreamProbe } from './douban-weekly';
 import { dropUnreleased, fetchUnreleasedIndex } from './unreleased';
 
 /**
@@ -431,3 +431,44 @@ export async function fetchDoubanRecommend(query: DoubanFetchQuery): Promise<{ i
   return payload;
 }
 
+
+/**
+ * 片库每个来源单独取一页（不融合、不缓存），给数据源体检页用；
+ * 重点看「动漫 · 连载中」时各来源是不是真的只返回在播的。
+ */
+export function probeCatalogUpstreams(): Promise<UpstreamProbe>[] {
+  const base: DoubanFetchQuery = {
+    kind: 'tv',
+    tags: ['动画'],
+    sort: 'U',
+    score: '0,10',
+    yearRange: null,
+    minScore: null,
+    pageStart: 0,
+    pageSize: 20,
+  };
+  const airing: DoubanFetchQuery = { ...base, status: 'airing' };
+  const ended: DoubanFetchQuery = { ...base, status: 'ended' };
+  const labelStatus = (items: DoubanItem[]) =>
+    items.map((i) => ({ ...i, title: `${i.title}${i.status === 'airing' ? '（连载）' : i.status === 'ended' ? '（完结）' : ''}` }));
+  const nowYear = new Date().getFullYear();
+  return [
+    timeProbe('片库 · 动漫', '豆瓣 · 热门动画', async () => {
+      const url = `${REXXAR_API}/tv/recommend?start=0&count=20&tags=${encodeURIComponent('动画')}&sort=U&score_range=0,10&uncollect=false`;
+      const json = (await readJson(url, 'https://movie.douban.com/explore')) as { items?: unknown[] } | undefined;
+      if (!json?.items) throw new Error('豆瓣没有返回数据（可能被拒绝）');
+      return labelStatus(
+        json.items.map((row) => rexxarToItem(row, true, nowYear)).filter((i): i is DoubanItem => i !== undefined),
+      );
+    }),
+    timeProbe('片库 · 动漫', 'B站片库 · 连载中', async () => labelStatus(await fetchBiliSeasonIndex(airing))),
+    timeProbe('片库 · 动漫', 'B站片库 · 已完结', async () => labelStatus(await fetchBiliSeasonIndex(ended))),
+    timeProbe('片库 · 动漫', 'TMDB · 连载中', async () => labelStatus(await fetchTmdbDiscoverCatalog(airing))),
+    timeProbe('片库 · 动漫', 'Bangumi · 连载中', async () =>
+      labelStatus(await fetchBangumiCatalog({ tags: ['动画'], sort: 'U', score: '0,10', pageStart: 0, pageSize: 20, status: 'airing' })),
+    ),
+    timeProbe('片库 · 动漫', 'Bangumi 本周放送表', async () =>
+      Object.values(await fetchBangumiCalendar()).flat(),
+    ),
+  ];
+}

@@ -213,6 +213,14 @@ export const api = {
   bangumiCalendar: (signal?: AbortSignal) => request<BangumiCalendarResponse>('/api/bangumi/calendar', { signal }),
 
   /** 影视热榜（60s API 免 key）：豆瓣周榜五个类目 + 百度热播剧 */
+  /** 数据源体检：现场请求每个上游一次 */
+  diagnostics: (signal?: AbortSignal) =>
+    request<{
+      at: number;
+      storage: string;
+      results: { group: string; name: string; ok: boolean; count: number; ms: number; error?: string; sample: string[] }[];
+    }>('/api/diagnostics', { signal }),
+
   hotList: (id: string, signal?: AbortSignal) => {
     const sp = new URLSearchParams({ id });
     return request<DoubanResponse>(`/api/hot-list?${sp.toString()}`, { signal });

@@ -15,17 +15,22 @@ import { useAppStore } from './store';
 
 let timer: ReturnType<typeof setTimeout> | undefined;
 let lazyTimer: ReturnType<typeof setTimeout> | undefined;
-/** 待上传的只有播放进度：定时轮询和切回页面时先不传，等 5 分钟的那次或离开页面时再传 */
+/** 待上传的只有播放进度：定时轮询和切回页面时先不传，等延后上传的那次或离开页面时再传 */
 let lazyOnly = false;
 let syncing = false;
 /**
- * 云端存储（Vercel Blob / KV）按请求次数计费，免费额度每月约一万次读、两千次写：
- * 收藏等操作 2 秒内上传；播放进度最多 5 分钟传一次，离开页面时补传；
- * 页面开着时每 2 分钟看一眼别的设备有没有新东西，切回页面时立刻看一次。
+ * 云端存储按请求次数计费，节奏按服务端实际用的存储定（/api/status 的 syncStorage）：
+ * - Redis（免费每月约 50 万次）：每 30 秒看一眼别的设备，播放进度最多 1 分钟传一次；
+ * - Blob（免费每月约 1 万次读、2 千次写）：每 2 分钟看一眼，进度最多 5 分钟传一次。
+ * 收藏等操作 1 秒内上传；切回页面时立刻看一次，离开页面时补传攒着的进度。
+ * 还不知道是哪种存储时按保守的 Blob 节奏。
  */
-const PUSH_DEBOUNCE_MS = 2000;
-const LAZY_PUSH_MS = 5 * 60_000;
-const POLL_MS = 2 * 60_000;
+const PUSH_DEBOUNCE_MS = 1000;
+const CADENCE = {
+  redis: { poll: 30_000, lazy: 60_000 },
+  conservative: { poll: 2 * 60_000, lazy: 5 * 60_000 },
+} as const;
+let cadence: { poll: number; lazy: number } = CADENCE.conservative;
 let lastDevice = '';
 
 function stripLocalIds<T extends { id: string; profileId: string }>(row: T): Omit<T, 'id' | 'profileId'> {
@@ -520,7 +525,7 @@ export function startProfileSync(): void {
         lazyTimer = setTimeout(() => {
           lazyTimer = undefined;
           void reconcileProfile().catch(() => {});
-        }, LAZY_PUSH_MS);
+        }, cadence.lazy);
       }
       return;
     }
@@ -551,10 +556,19 @@ export function startProfileSync(): void {
     else flushPending();
   });
   window.addEventListener('pagehide', flushPending);
-  // 页面开着时定期把别的设备新收藏、新观看记录拉下来。
-  window.setInterval(() => {
-    if (document.visibilityState !== 'visible') return;
-    void reconcileProfile().catch(() => {});
-  }, POLL_MS);
+  // 页面开着时定期把别的设备新收藏、新观看记录拉下来（间隔随存储类型变化，所以用 setTimeout 接力）
+  const poll = () => {
+    window.setTimeout(() => {
+      if (document.visibilityState === 'visible') void reconcileProfile().catch(() => {});
+      poll();
+    }, cadence.poll);
+  };
+  poll();
+  void api
+    .status()
+    .then((s) => {
+      if (s.syncStorage === 'redis' || s.syncStorage === 'file') cadence = CADENCE.redis;
+    })
+    .catch(() => {});
   void reconcileProfile().catch(() => {});
 }

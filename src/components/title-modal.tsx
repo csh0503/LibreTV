@@ -17,6 +17,7 @@ import { Spinner } from './states';
 import { useToast } from './toast';
 import { useFocusTrap } from './use-focus-trap';
 import { useAliasFallback, useSourceSearch } from './use-source-search';
+import { rankSources } from '@/lib/source-rank';
 
 /** 一组里最多直接列出几个源，其余折叠成「+N」 */
 const SOURCES_PER_GROUP = 6;
@@ -151,7 +152,13 @@ function TitleModalBody({
   };
 
   const noSourcesConfigured = selectedSources.length === 0;
-  const best = shown[0]?.items[0];
+  // 每组里的源按「最近没出错 → 集数多 → 响应快」排，「播放」用排第一的
+  const sourceHealth = useAppStore((st) => st.sourceHealth);
+  const ranked = useMemo(
+    () => shown.map((g) => ({ ...g, items: rankSources(g.items, sourceHealth) })),
+    [shown, sourceHealth],
+  );
+  const best = ranked[0]?.items[0];
 
   const primary = (() => {
     if (history && resumeView) return { label: `继续播放 · ${resumeView.posterLabel}`, onClick: resume };
@@ -312,8 +319,8 @@ function TitleModalBody({
               <p className="text-sm text-muted">点击右上角「设置」添加并勾选点播源后，这里会列出能看的片源。</p>
             ) : shown.length > 0 ? (
               <ul className="space-y-2">
-                {shown.slice(0, MAX_GROUPS).map((g) => (
-                  <SourceGroupRow key={g.key} group={g} onOpenSource={onOpenSource} />
+                {ranked.slice(0, MAX_GROUPS).map((g, gi) => (
+                  <SourceGroupRow key={g.key} group={g} onOpenSource={onOpenSource} recommended={gi === 0} />
                 ))}
               </ul>
             ) : nothingFound ? (
@@ -350,9 +357,12 @@ function TitleModalBody({
 function SourceGroupRow({
   group,
   onOpenSource,
+  recommended,
 }: {
   group: AggregatedGroup;
   onOpenSource: (item: SearchResultItem) => void;
+  /** 这一组的第一个源就是「播放」会用的那个 */
+  recommended?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const shown = expanded ? group.items : group.items.slice(0, SOURCES_PER_GROUP);
@@ -366,14 +376,18 @@ function SourceGroupRow({
         {group.remarks && <span className="text-xs text-muted">{group.remarks}</span>}
       </div>
       <div className="flex flex-wrap gap-1.5">
-        {shown.map((item) => (
+        {shown.map((item, i) => (
           <button
             key={`${item.sourceKey}_${item.vodId}`}
             type="button"
             onClick={() => onOpenSource(item)}
             title={item.remarks ? `${item.sourceName} · ${item.remarks}` : item.sourceName}
-            className="px-2.5 py-1 rounded-lg text-xs bg-surface border border-line text-muted hover:text-content hover:border-accent/60 transition-colors"
+            className={cn(
+              'px-2.5 py-1 rounded-lg text-xs bg-surface border text-muted hover:text-content hover:border-accent/60 transition-colors',
+              recommended && i === 0 ? 'border-accent/60 text-content' : 'border-line',
+            )}
           >
+            {recommended && i === 0 && <span className="mr-1 text-accent font-medium">推荐</span>}
             {item.sourceName}
             {item.remarks && <span className="ml-1 text-faint">{item.remarks}</span>}
           </button>
