@@ -70,7 +70,18 @@ export type TitlePick = Pick<DoubanItem, 'title'> &
   Partial<
     Pick<
       DoubanItem,
-      'cover' | 'backdrop' | 'year' | 'rating' | 'area' | 'genres' | 'isTv' | 'status' | 'remarks' | 'subtitle' | 'sourceLabel'
+      | 'id'
+      | 'cover'
+      | 'backdrop'
+      | 'year'
+      | 'rating'
+      | 'area'
+      | 'genres'
+      | 'isTv'
+      | 'status'
+      | 'remarks'
+      | 'subtitle'
+      | 'sourceLabel'
     >
   >;
 

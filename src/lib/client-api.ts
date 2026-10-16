@@ -216,6 +216,18 @@ export const api = {
   },
 
   /** 即将播出：接下来 7 天的未播出内容 */
+  /** 作品的其他中文名（港台译名转简体等），找片源时当备用搜索词 */
+  identity: (query: { title: string; year?: string; kind?: 'movie' | 'tv'; tmdb?: string }, signal?: AbortSignal) => {
+    const sp = new URLSearchParams({ title: query.title });
+    if (query.year) sp.set('year', query.year);
+    if (query.kind) sp.set('kind', query.kind);
+    if (query.tmdb) sp.set('tmdb', query.tmdb);
+    return request<{ identity: { tmdbId: number; kind: 'movie' | 'tv'; names: string[] } | null }>(
+      `/api/identity?${sp.toString()}`,
+      { signal },
+    );
+  },
+
   upcoming: (signal?: AbortSignal) =>
     request<{ items: import('./upcoming').UpcomingItem[] }>('/api/upcoming', { signal }),
 

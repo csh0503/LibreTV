@@ -1,8 +1,10 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { api } from '@/lib/client-api';
 import { db, favoriteIdOf, toggleFavorite } from '@/lib/db';
 import { describeContinueWatching } from '@/lib/home-features';
 import { resolveSource, useAppStore } from '@/lib/store';
@@ -21,11 +23,14 @@ import { useSourceSearch } from './use-source-search';
 const SOURCES_PER_GROUP = 6;
 /** 最多列出几组（各季 / 剧场版） */
 const MAX_GROUPS = 6;
+/** 原名搜不到时，最多再按几个别名（港台译名等）查 */
+const MAX_ALIAS_TRIES = 3;
 
 /**
  * 作品详情弹窗（Netflix 式「更多信息」）：首页任何一张卡片点开都先到这里。
  * 上半部分是作品本身（来自豆瓣 / TMDB / B站 / Bangumi 的元数据），下半部分是可看性：
- * 打开时才并发查所有点播源，列出这部作品（含各季）在哪些源能看；没有就说「暂无片源」并可加入片单。
+ * 打开时才并发查所有点播源，列出这部作品（含各季）在哪些源能看；原名查不到时再用它的其他中文名
+ * （TMDB 的港台译名、别名，转简体）依次查，都没有才说「暂无片源」并可加入片单。
  */
 export function TitleModal({
   pick,
@@ -81,7 +86,44 @@ function TitleModalBody({
   const groups = useMemo(() => aggregateResults(list, pick.title), [list, pick.title]);
   const matched = useMemo(() => matchingGroups(groups, pick.title), [groups, pick.title]);
   const othersCount = groups.length - matched.length;
-  const sourceTotal = useMemo(() => new Set(matched.flatMap((g) => g.items.map((i) => i.sourceKey))).size, [matched]);
+
+  // 原名全部源都没有 → 查这部作品的其他中文名，逐个再搜
+  const primaryMissing = settled && matched.length === 0 && selectedSources.length > 0;
+  const kind = pick.isTv === true ? 'tv' : pick.isTv === false ? 'movie' : undefined;
+  const tmdb = pick.id?.startsWith('tmdb_') ? pick.id.slice(5) : undefined;
+  const identityQuery = useQuery({
+    queryKey: ['identity', pick.title, pick.year, kind, tmdb],
+    queryFn: ({ signal }) => api.identity({ title: pick.title, year: pick.year, kind, tmdb }, signal),
+    enabled: primaryMissing,
+    staleTime: 24 * 3600_000,
+    retry: 0,
+  });
+  const aliasNames = useMemo(
+    () => (identityQuery.data?.identity?.names ?? []).slice(0, MAX_ALIAS_TRIES),
+    [identityQuery.data],
+  );
+  const [aliasIdx, setAliasIdx] = useState(0);
+  const alias = primaryMissing ? (aliasNames[aliasIdx] ?? '') : '';
+  const aliasSearch = useSourceSearch(alias, Boolean(alias));
+  const aliasGroups = useMemo(
+    () => (alias ? matchingGroups(aggregateResults(aliasSearch.list, alias), alias) : []),
+    [alias, aliasSearch.list],
+  );
+  const aliasExhausted = aliasIdx + 1 >= aliasNames.length;
+  useEffect(() => {
+    if (alias && aliasSearch.settled && aliasGroups.length === 0 && !aliasExhausted) setAliasIdx((i) => i + 1);
+  }, [alias, aliasSearch.settled, aliasGroups.length, aliasExhausted]);
+
+  /** 实际展示的片源：原名优先，没有就用别名找到的 */
+  const shown = matched.length > 0 ? matched : aliasGroups;
+  const foundVia = matched.length === 0 && aliasGroups.length > 0 ? alias : undefined;
+  const lookingUpAliases =
+    primaryMissing &&
+    aliasGroups.length === 0 &&
+    (identityQuery.isLoading || (Boolean(alias) && (!aliasSearch.settled || !aliasExhausted)));
+  /** 原名、别名都查完了还是没有 */
+  const nothingFound = primaryMissing && !lookingUpAliases && aliasGroups.length === 0;
+  const sourceTotal = useMemo(() => new Set(shown.flatMap((g) => g.items.map((i) => i.sourceKey))).size, [shown]);
 
   const localId = favoriteIdOf({ title: pick.title });
   const saved = useLiveQuery(
@@ -137,13 +179,13 @@ function TitleModalBody({
   };
 
   const noSourcesConfigured = selectedSources.length === 0;
-  const best = matched[0]?.items[0];
+  const best = shown[0]?.items[0];
 
   const primary = (() => {
     if (history && resumeView) return { label: `继续播放 · ${resumeView.posterLabel}`, onClick: resume };
     if (best) return { label: '播放', onClick: () => onOpenSource(best) };
     if (noSourcesConfigured) return { label: '先添加点播源', disabled: true };
-    if (!settled) return { label: '查找片源中…', disabled: true, busy: true };
+    if (!settled || lookingUpAliases) return { label: '查找片源中…', disabled: true, busy: true };
     return { label: '暂无片源', disabled: true };
   })();
 
@@ -274,16 +316,20 @@ function TitleModalBody({
                     ? '尚未勾选点播源'
                     : isSearching
                       ? `正在查找 ${streamedOutcomes.length}/${selectedSources.length} 个点播源…`
-                      : settled
-                        ? matched.length > 0
-                          ? `${sourceTotal} 个点播源可看`
-                          : `已查询 ${selectedSources.length - failures.length} 个点播源`
-                        : ''}
+                      : shown.length > 0
+                        ? `${sourceTotal} 个点播源可看${foundVia ? ` · 按别名《${foundVia}》找到` : ''}`
+                        : lookingUpAliases
+                          ? alias
+                            ? `原名没找到，正在按别名《${alias}》查找…`
+                            : '原名没找到，正在查这部作品的其他译名…'
+                          : settled
+                            ? `已查询 ${selectedSources.length - failures.length} 个点播源`
+                            : ''}
                 </span>
               </h3>
               <button
                 type="button"
-                onClick={() => onShowResults(pick.title)}
+                onClick={() => onShowResults(foundVia ?? pick.title)}
                 className="text-xs text-accent hover:underline"
               >
                 全部搜索结果{othersCount > 0 ? `（另有 ${othersCount} 部相近）` : ''}
@@ -292,16 +338,16 @@ function TitleModalBody({
 
             {noSourcesConfigured ? (
               <p className="text-sm text-muted">点击右上角「设置」添加并勾选点播源后，这里会列出能看的片源。</p>
-            ) : matched.length > 0 ? (
+            ) : shown.length > 0 ? (
               <ul className="space-y-2">
-                {matched.slice(0, MAX_GROUPS).map((g) => (
+                {shown.slice(0, MAX_GROUPS).map((g) => (
                   <SourceGroupRow key={g.key} group={g} onOpenSource={onOpenSource} />
                 ))}
               </ul>
-            ) : settled ? (
+            ) : nothingFound ? (
               <div className="rounded-xl border border-dashed border-line px-4 py-4 text-sm text-muted leading-relaxed">
                 <p className="font-medium text-content mb-1">暂无片源</p>
-                点播源都还没有收录《{pick.title}》。采集站通常会在播出后陆续收录，
+                点播源都还没有收录《{pick.title}》{aliasNames.length > 0 ? `（也按《${aliasNames.join('》《')}》查过）` : ''}。采集站通常会在播出后陆续收录，
                 {saved ? '它已经在你的片单里，' : '可以先加入片单，'}之后在「我的片单」里点开会重新查找。
               </div>
             ) : (
