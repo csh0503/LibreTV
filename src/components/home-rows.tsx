@@ -909,25 +909,22 @@ export function MyListRow({
 }
 
 const TOP_TEN_TABS: { id: HotListId; label: string; channel: 'tv' | 'movie' | 'show' | 'anime' | 'doc' }[] = [
-  { id: 'realtime_all', label: '🔥 全网实时', channel: 'tv' },
-  { id: 'douban_tv_realtime', label: '📺 实时热剧', channel: 'tv' },
-  { id: 'douban_movie_realtime', label: '🍿 实时电影', channel: 'movie' },
-  { id: 'bili_guochuang', label: '🐉 B站国创', channel: 'anime' },
-  { id: 'bili_bangumi', label: '🌸 B站番剧', channel: 'anime' },
-  { id: 'douban_tv_domestic', label: '🇨🇳 国产剧', channel: 'tv' },
-  { id: 'douban_tv_korean', label: '🇰🇷 韩剧', channel: 'tv' },
-  { id: 'douban_tv_american', label: '🇺🇸 欧美剧', channel: 'tv' },
+  { id: 'realtime_all', label: '🔥 综合总榜', channel: 'tv' },
+  { id: 'douban_tv_realtime', label: '📺 热门剧集', channel: 'tv' },
+  { id: 'douban_movie_realtime', label: '🍿 热门电影', channel: 'movie' },
+  { id: 'bili_bangumi', label: '🌸 日漫新番', channel: 'anime' },
+  { id: 'bili_guochuang', label: '🐉 国漫热播', channel: 'anime' },
+  { id: 'douban_tv_domestic', label: '🇨🇳 国产热剧', channel: 'tv' },
+  { id: 'douban_tv_korean', label: '🇰🇷 日韩热剧', channel: 'tv' },
+  { id: 'douban_tv_american', label: '🇺🇸 欧美热剧', channel: 'tv' },
   { id: 'douban_show_hot', label: '🎪 热门综艺', channel: 'show' },
-  { id: 'bili_doc', label: '🌍 B站纪录片', channel: 'doc' },
-  { id: 'baidu_teleplay', label: '⚡ 百度热播', channel: 'tv' },
+  { id: 'bili_doc', label: '🌍 纪录片榜', channel: 'doc' },
   { id: 'tmdb_trending', label: '🌐 全球趋势', channel: 'tv' },
-  { id: 'douban_tv_chinese', label: '🏆 华语口碑榜', channel: 'tv' },
-  { id: 'douban_movie_weekly', label: '🏆 电影口碑榜', channel: 'movie' },
 ];
 
 /**
  * 首页「实时风向 · TOP 10」（Netflix 风格带大数字 1~10 的多源实时热榜排）：
- * 融合豆瓣直连实时榜、B站 PGC 国创/番剧/纪录片榜、百度热播与全球趋势。
+ * 按影视大类划分，每个分类内部由 RRF 倒数排名融合 + 跨平台共现加权算法综合选出。
  */
 export function TopTenRow({ onPick }: { onPick: (title: string) => void }) {
   const doubanEnabled = useAppStore((s) => s.doubanEnabled);
@@ -970,7 +967,7 @@ export function TopTenRow({ onPick }: { onPick: (title: string) => void }) {
   return (
     <ShelfRow
       title="实时风向 · TOP 10"
-      badge="多源实时"
+      badge="多源综合排名"
       headerExtra={
         <div className="flex items-center gap-1.5 min-w-0 max-w-full">
           {(canTabLeft || canTabRight) && (
@@ -1060,11 +1057,13 @@ function TopTenCard({
   onClick: () => void;
   onFavorite: () => void;
 }) {
-  const metaText =
-    [item.year, item.area, item.genres?.split(/\s+/)[0]].filter(Boolean).join(' · ') ||
-    item.subtitle ||
-    item.sourceLabel ||
-    `实时第 ${rank} 名`;
+  const isMultiSource = Boolean(item.sourceLabel && item.sourceLabel.includes('源共推'));
+  const metaText = isMultiSource
+    ? item.sourceLabel!
+    : [item.year, item.area, item.genres?.split(/\s+/)[0]].filter(Boolean).join(' · ') ||
+      item.subtitle ||
+      item.sourceLabel ||
+      `实时第 ${rank} 名`;
 
   const badge = item.remarks
     ? {

@@ -196,4 +196,63 @@ describe('doubanCollectionToItem & biliRankToItem & tmdbTrendingToItem', () => {
     // 海贼王与航海王、灵笼第一季与第二季均按系列主名视为同一部，不重复出现
     expect(merged.map((m) => m.title)).toEqual(['海贼王', '灵笼 第二季']);
   });
+
+  it('fuseMultiSourceRankings：多源 RRF + 跨平台共识加权，把多平台共现作品排到榜首并合成最佳元数据', async () => {
+    const { fuseMultiSourceRankings } = await import('./douban-weekly');
+    const { fuseCatalogItems } = await import('./douban');
+
+    const ranked = fuseMultiSourceRankings([
+      {
+        name: 'Bangumi',
+        weight: 1.1,
+        items: [
+          { id: 'b1', title: '独门冷番A', cover: 'c1', rating: '7.8', status: 'airing' },
+          { id: 'b2', title: '咒术回战', cover: 'c2', rating: '8.6', status: 'ended' },
+        ],
+      },
+      {
+        name: 'B站番剧',
+        weight: 1.1,
+        items: [
+          { id: 'bl1', title: '独门冷番B', cover: 'c3', rating: '7.5', status: 'airing' },
+          {
+            id: 'bl2',
+            title: '咒术回战 第三季',
+            cover: 'c4',
+            backdrop: 'https://img/jjk-wide.jpg',
+            remarks: '更新至第3话',
+            status: 'airing',
+          },
+        ],
+      },
+      {
+        name: '豆瓣新番',
+        weight: 1.0,
+        items: [
+          { id: 'd1', title: '咒术回战 第三季', cover: 'c5', year: '2026', area: '日本', status: 'airing' },
+        ],
+      },
+    ]);
+
+    // 《咒术回战》虽然在前两个榜都是第 2 名，但因 3 源共现，综合得分远超单平台第 1 名，跃居总榜第 1
+    expect(ranked[0].title).toBe('咒术回战 第三季');
+    expect(ranked[0].backdrop).toBe('https://img/jjk-wide.jpg');
+    expect(ranked[0].rating).toBe('8.6');
+    expect(ranked[0].year).toBe('2026');
+    expect(ranked[0].sourceLabel).toContain('3源共推');
+
+    // 片库融合测试：B站片库的 ended 权威状态自动修正豆瓣滞后的 airing 状态
+    const catalog = fuseCatalogItems(
+      [
+        [{ id: 'db_1', title: '迷宫饭', cover: 'c1', rating: '9.1', remarks: '更新至14集', status: 'airing' }],
+        [{ id: 'bili_1', title: '迷宫饭', cover: 'c2', remarks: '全24话', status: 'ended' }],
+      ],
+      10
+    );
+    expect(catalog).toHaveLength(1);
+    expect(catalog[0].status).toBe('ended');
+    expect(catalog[0].remarks).toBe('全24话');
+    expect(catalog[0].rating).toBe('9.1');
+  });
 });
+

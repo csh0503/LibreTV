@@ -1,6 +1,7 @@
 import type { DoubanItem } from './types';
 import { fetchUpstream, getCache, setCache } from './fetch-utils';
 import { canonicalTitle } from './title-aliases';
+import { fetchBangumiHotAiring } from './bangumi';
 
 /**
  * 全网实时影视热榜聚合（多源合一 + 自动降级）：
@@ -479,6 +480,137 @@ export function interleaveAndDedupeLists(lists: DoubanItem[][], limit = 24): Dou
   return result;
 }
 
+export interface RankedSourceInput {
+  name: string;
+  items: DoubanItem[];
+  weight?: number;
+}
+
+/**
+ * 多源综合排名算法（Reciprocal Rank Fusion 倒数排名融合 + 跨平台共现加权 + 元数据择优合成）：
+ * 1. 各平台第 r 名（0-based）贡献基础分：weight / (K + r + 1)（K = 10）；
+ * 2. 跨平台共识加成：同一作品每多出现在 1 个不同平台的热榜上，额外获得 +0.06 共识奖励；
+ * 3. 在播与高分微调：连载中 +0.008，8.0 分以上按评分微幅加权；
+ * 4. 元数据择优合并：自动挑选最新季度标题、16:9 横图 backdrop、权威评分与连载状态，并生成「多源共推」标签。
+ */
+export function fuseMultiSourceRankings(
+  sources: RankedSourceInput[],
+  opts: {
+    limit?: number;
+    maxEpisodes?: number;
+    filterEvergreen?: boolean;
+    dropEndedCatalog?: boolean;
+  } = {}
+): DoubanItem[] {
+  const limit = opts.limit ?? 24;
+  const K = 10;
+
+  interface CandidateEntry {
+    item: DoubanItem;
+    rrfScore: number;
+    bestTitleScore: number;
+    sourceNames: string[];
+    firstSeenRank: number;
+  }
+
+  const map = new Map<string, CandidateEntry>();
+
+  for (const src of sources) {
+    const weight = src.weight ?? 1;
+    const curated = curateRealtimeList(src.items, {
+      filterEvergreen: opts.filterEvergreen ?? true,
+      dropEndedCatalog: opts.dropEndedCatalog,
+      maxEpisodes: opts.maxEpisodes ?? 120,
+    });
+
+    curated.forEach((item, rank) => {
+      const stem = extractSeriesStem(item.title) || canonicalTitle(item.title);
+      if (!stem) return;
+
+      const rrfDelta = weight / (K + rank + 1);
+      const seasonNum = extractSeasonNumber(item.title);
+      const airingBonus = item.status === 'airing' ? 100 : 0;
+      const yearNum = parseInt(item.year ?? '0', 10) || 0;
+      const titleScore = airingBonus + seasonNum * 10 + (yearNum >= 2025 ? 5 : 0);
+
+      const existing = map.get(stem);
+      if (!existing) {
+        map.set(stem, {
+          item: { ...item },
+          rrfScore: rrfDelta,
+          bestTitleScore: titleScore,
+          sourceNames: [src.name],
+          firstSeenRank: rank,
+        });
+      } else {
+        existing.rrfScore += rrfDelta;
+        if (!existing.sourceNames.includes(src.name)) {
+          existing.sourceNames.push(src.name);
+        }
+        if (rank < existing.firstSeenRank) {
+          existing.firstSeenRank = rank;
+        }
+        const prev = existing.item;
+        const preferNewTitle = titleScore > existing.bestTitleScore;
+        if (preferNewTitle) {
+          existing.bestTitleScore = titleScore;
+        }
+        existing.item = {
+          ...prev,
+          title: preferNewTitle ? item.title : prev.title,
+          cover: prev.cover || item.cover,
+          backdrop: prev.backdrop || item.backdrop,
+          rating: prev.rating || item.rating,
+          year: (preferNewTitle ? item.year : prev.year) || prev.year || item.year,
+          area: prev.area || item.area,
+          genres: prev.genres || item.genres,
+          remarks:
+            prev.status === 'airing' && prev.remarks
+              ? prev.remarks
+              : item.status === 'airing' && item.remarks
+                ? item.remarks
+                : prev.remarks || item.remarks,
+          status:
+            prev.status === 'airing' || item.status === 'airing'
+              ? 'airing'
+              : prev.status || item.status,
+          subtitle: prev.subtitle || item.subtitle,
+        };
+      }
+    });
+  }
+
+  const ranked = [...map.values()].map((entry) => {
+    const consensusBonus = Math.max(0, entry.sourceNames.length - 1) * 0.06;
+    const airingTieBreaker = entry.item.status === 'airing' ? 0.008 : 0;
+    const ratingVal = parseFloat(entry.item.rating ?? '0');
+    const ratingBonus = Number.isFinite(ratingVal) && ratingVal >= 7.5 ? (ratingVal - 7.5) * 0.003 : 0;
+    const finalScore = entry.rrfScore + consensusBonus + airingTieBreaker + ratingBonus;
+
+    const sourceLabel =
+      entry.sourceNames.length >= 2
+        ? `${entry.sourceNames.slice(0, 2).join(' · ')} ${entry.sourceNames.length}源共推`
+        : entry.item.sourceLabel || entry.sourceNames[0];
+
+    return {
+      item: {
+        ...entry.item,
+        sourceLabel,
+      },
+      finalScore,
+      firstSeenRank: entry.firstSeenRank,
+    };
+  });
+
+  return ranked
+    .sort((a, b) => {
+      if (Math.abs(b.finalScore - a.finalScore) > 1e-6) return b.finalScore - a.finalScore;
+      return a.firstSeenRank - b.firstSeenRank;
+    })
+    .slice(0, limit)
+    .map((r) => r.item);
+}
+
 function assertArray<T>(value: unknown, what: string): T[] {
   if (!Array.isArray(value)) throw new Error(`${what}数据异常`);
   return value as T[];
@@ -530,7 +662,7 @@ async function fetchDoubanCollection(
   return items;
 }
 
-async function fetchBiliRank(opts: {
+async function fetchBiliRankRaw(opts: {
   seasonType: number;
   isTv: boolean;
   label: string;
@@ -559,53 +691,64 @@ async function fetchBiliRank(opts: {
     .map((row) => biliRankToItem(row, opts))
     .filter((item): item is DoubanItem => item !== undefined);
 
-  // 日番榜（seasonType=1）剔除已完结的陈年老番与柯南/小新等超长篇，并补充豆瓣当季热门新番
-  if (opts.seasonType === 1) {
-    const freshBili = curateRealtimeList(rawItems, {
-      filterEvergreen: true,
-      dropEndedCatalog: true,
-      maxEpisodes: 90,
-    });
-    try {
-      const doubanAnime = await fetchDoubanCollection('tv_animation', true, '当季新番', 20);
-      const merged = interleaveAndDedupeLists([freshBili, doubanAnime], 24);
-      if (merged.length >= 6) return merged;
-    } catch {
-      // 豆瓣补充失败时退回过滤后的 B站列表
-    }
-    const fallbackCurated = curateRealtimeList(rawItems, { filterEvergreen: true, maxEpisodes: 90 });
-    if (fallbackCurated.length > 0) return fallbackCurated;
-  }
-
-  // 国创榜（seasonType=4）允许年番（如凡人修仙传 ≤260 话），但折叠多季（如灵笼第一季/第二季）与中配版
   const curated = curateRealtimeList(rawItems, {
+    filterEvergreen: true,
+    dropEndedCatalog: opts.seasonType === 1,
+    maxEpisodes: opts.seasonType === 4 ? 260 : 95,
+  });
+  if (curated.length > 0) return curated;
+
+  const fallback = curateRealtimeList(rawItems, {
     filterEvergreen: true,
     maxEpisodes: opts.seasonType === 4 ? 260 : 120,
   });
-  if (curated.length === 0) throw new Error('B站热播榜为空');
-  return curated;
+  if (fallback.length === 0) throw new Error('B站热播榜为空');
+  return fallback;
 }
 
-async function fetchTmdbTrending(): Promise<DoubanItem[]> {
+async function fetchBaiduTeleplayList(): Promise<DoubanItem[]> {
+  const raw = (await fetchSixtyJson('/v2/baidu/teleplay')) as SixtyResponse<BaiduTeleplayRaw[]>;
+  const items = assertArray<BaiduTeleplayRaw>(raw.data, '百度热播剧榜')
+    .map((entry, i) => baiduTeleplayToItem(entry, i))
+    .filter((item): item is DoubanItem => item !== undefined);
+  return curateRealtimeList(items, { filterEvergreen: true });
+}
+
+async function fetchDoubanWithFallback(id: HotListId): Promise<DoubanItem[]> {
+  const cfg = DOUBAN_COLLECTION_MAP[id];
+  if (!cfg) throw new Error('未知豆瓣集合');
+  const fallbackCategory = DOUBAN_WEEKLY_CATEGORY[id];
+  try {
+    return await fetchDoubanCollection(cfg.collection, cfg.isTv, cfg.label);
+  } catch (primaryErr) {
+    if (!fallbackCategory) throw primaryErr;
+    const raw = (await fetchSixtyJson(`/v2/douban/weekly/${fallbackCategory}`)) as SixtyResponse<DoubanWeeklyRaw[]>;
+    const isTv = id !== 'douban_movie_weekly';
+    return assertArray<DoubanWeeklyRaw>(raw.data, '豆瓣周榜')
+      .map((entry) => doubanWeeklyToItem(entry, isTv))
+      .filter((item): item is DoubanItem => item !== undefined);
+  }
+}
+
+async function fetchTmdbTrending(mediaType: 'all' | 'tv' | 'movie' = 'all'): Promise<DoubanItem[]> {
   const apiKey = (process.env.TMDB_API_KEY || process.env.NEXT_PUBLIC_TMDB_API_KEY || '').trim();
   if (!apiKey) {
-    // 未配置 TMDB_API_KEY 时平滑回退到全球口碑剧集 + 实时热门电影组合
     const [globalTv, realtimeMovie] = await Promise.allSettled([
-      fetchHotList('douban_tv_global'),
-      fetchHotList('douban_movie_realtime'),
+      fetchDoubanWithFallback('douban_tv_global'),
+      fetchDoubanWithFallback('douban_movie_realtime'),
     ]);
-    const lists: DoubanItem[][] = [];
-    if (globalTv.status === 'fulfilled') lists.push(globalTv.value);
-    if (realtimeMovie.status === 'fulfilled') lists.push(realtimeMovie.value);
-    const merged = interleaveAndDedupeLists(lists, 24);
+    const sources: RankedSourceInput[] = [];
+    if (globalTv.status === 'fulfilled') sources.push({ name: '豆瓣全球口碑', items: globalTv.value, weight: 1.0 });
+    if (realtimeMovie.status === 'fulfilled') sources.push({ name: '豆瓣实时电影', items: realtimeMovie.value, weight: 1.0 });
+    const merged = fuseMultiSourceRankings(sources, { limit: 24 });
     if (merged.length === 0) throw new Error('全球趋势榜获取失败');
     return merged;
   }
 
   const isBearer = apiKey.length > 40 && apiKey.includes('.');
   const url = isBearer
-    ? 'https://api.themoviedb.org/3/trending/all/day?language=zh-CN'
-    : `https://api.themoviedb.org/3/trending/all/day?language=zh-CN&api_key=${encodeURIComponent(apiKey)}`;
+    ? `https://api.themoviedb.org/3/trending/${mediaType}/day?language=zh-CN`
+    : `https://api.themoviedb.org/3/trending/${mediaType}/day?language=zh-CN&api_key=${encodeURIComponent(apiKey)}`;
   const headers: Record<string, string> = { 'User-Agent': UA, Accept: 'application/json' };
   if (isBearer) headers.Authorization = `Bearer ${apiKey}`;
 
@@ -620,6 +763,32 @@ async function fetchTmdbTrending(): Promise<DoubanItem[]> {
   return curateRealtimeList(items, { filterEvergreen: true });
 }
 
+/** 并发拉取多源榜单并用 RRF + 跨源共现算法融合排名 */
+async function collectAndFuse(
+  tasks: { name: string; weight: number; run: () => Promise<DoubanItem[]> }[],
+  opts: { maxEpisodes?: number; dropEndedCatalog?: boolean } = {}
+): Promise<DoubanItem[]> {
+  const settled = await Promise.allSettled(tasks.map((t) => t.run()));
+  const sources: RankedSourceInput[] = [];
+  settled.forEach((res, idx) => {
+    if (res.status === 'fulfilled' && res.value.length > 0) {
+      sources.push({
+        name: tasks[idx].name,
+        weight: tasks[idx].weight,
+        items: res.value,
+      });
+    }
+  });
+  const fused = fuseMultiSourceRankings(sources, {
+    limit: 24,
+    filterEvergreen: true,
+    maxEpisodes: opts.maxEpisodes ?? 120,
+    dropEndedCatalog: opts.dropEndedCatalog,
+  });
+  if (fused.length === 0) throw new Error('多源榜单聚合失败');
+  return fused;
+}
+
 export async function fetchHotList(id: HotListId): Promise<DoubanItem[]> {
   const cacheKey = `hot-list:${id}`;
   const cached = getCache<DoubanItem[]>(cacheKey);
@@ -627,46 +796,163 @@ export async function fetchHotList(id: HotListId): Promise<DoubanItem[]> {
 
   let items: DoubanItem[];
   let ttl = REALTIME_CACHE_TTL;
+  const hasTmdbKey = Boolean((process.env.TMDB_API_KEY || process.env.NEXT_PUBLIC_TMDB_API_KEY || '').trim());
 
-  if (id === 'realtime_all') {
-    const settled = await Promise.allSettled([
-      fetchHotList('douban_tv_realtime'),
-      fetchHotList('bili_guochuang'),
-      fetchHotList('douban_movie_realtime'),
-      fetchHotList('bili_bangumi'),
-      fetchHotList('baidu_teleplay'),
-    ]);
-    const lists = settled
-      .filter((r): r is PromiseFulfilledResult<DoubanItem[]> => r.status === 'fulfilled')
-      .map((r) => r.value);
-    items = curateRealtimeList(interleaveAndDedupeLists(lists, 24), {
-      filterEvergreen: true,
-      maxEpisodes: 260,
-    });
-    if (items.length === 0) throw new Error('全网实时热榜聚合失败');
-  } else if (BILI_SEASON_TYPE_MAP[id]) {
-    items = await fetchBiliRank(BILI_SEASON_TYPE_MAP[id]!);
-  } else if (id === 'tmdb_trending') {
-    items = await fetchTmdbTrending();
-  } else if (DOUBAN_COLLECTION_MAP[id]) {
-    const cfg = DOUBAN_COLLECTION_MAP[id]!;
-    const fallbackCategory = DOUBAN_WEEKLY_CATEGORY[id];
-    if (fallbackCategory) ttl = WEEKLY_CACHE_TTL;
-    try {
-      items = await fetchDoubanCollection(cfg.collection, cfg.isTv, cfg.label);
-    } catch (primaryErr) {
-      if (!fallbackCategory) throw primaryErr;
-      const raw = (await fetchSixtyJson(`/v2/douban/weekly/${fallbackCategory}`)) as SixtyResponse<DoubanWeeklyRaw[]>;
-      const isTv = id !== 'douban_movie_weekly';
-      items = assertArray<DoubanWeeklyRaw>(raw.data, '豆瓣周榜')
-        .map((entry) => doubanWeeklyToItem(entry, isTv))
-        .filter((item): item is DoubanItem => item !== undefined);
+  switch (id) {
+    // 1. 全网综合总榜：剧集 + 电影 + 日番 + 国漫 + 百度热播 + Bangumi (+ TMDB)
+    case 'realtime_all': {
+      items = await collectAndFuse(
+        [
+          { name: '豆瓣实时剧', weight: 1.1, run: () => fetchDoubanWithFallback('douban_tv_realtime') },
+          { name: 'B站番剧', weight: 1.0, run: () => fetchBiliRankRaw(BILI_SEASON_TYPE_MAP.bili_bangumi!) },
+          { name: '豆瓣实时影', weight: 1.0, run: () => fetchDoubanWithFallback('douban_movie_realtime') },
+          { name: 'B站国创', weight: 1.0, run: () => fetchBiliRankRaw(BILI_SEASON_TYPE_MAP.bili_guochuang!) },
+          { name: '百度热播', weight: 0.95, run: () => fetchBaiduTeleplayList() },
+          { name: 'Bangumi', weight: 0.9, run: () => fetchBangumiHotAiring(16) },
+          ...(hasTmdbKey ? [{ name: 'TMDB趋势', weight: 1.0, run: () => fetchTmdbTrending('all') }] : []),
+        ],
+        { maxEpisodes: 260 }
+      );
+      break;
     }
-  } else {
-    const raw = (await fetchSixtyJson('/v2/baidu/teleplay')) as SixtyResponse<BaiduTeleplayRaw[]>;
-    items = assertArray<BaiduTeleplayRaw>(raw.data, '百度热播剧榜')
-      .map((entry, i) => baiduTeleplayToItem(entry, i))
-      .filter((item): item is DoubanItem => item !== undefined);
+
+    // 2. 剧集分类综合榜：豆瓣实时热剧 + 百度/猫眼热播剧 + B站剧集 + 华语口碑剧 + 全球口碑剧 (+ TMDB)
+    case 'douban_tv_realtime': {
+      items = await collectAndFuse([
+        { name: '豆瓣热剧', weight: 1.2, run: () => fetchDoubanWithFallback('douban_tv_realtime') },
+        { name: '百度热播', weight: 1.05, run: () => fetchBaiduTeleplayList() },
+        { name: '华语口碑', weight: 0.95, run: () => fetchDoubanWithFallback('douban_tv_chinese') },
+        { name: '全球口碑', weight: 0.9, run: () => fetchDoubanWithFallback('douban_tv_global') },
+        { name: 'B站剧集', weight: 0.85, run: () => fetchBiliRankRaw(BILI_SEASON_TYPE_MAP.bili_tv!) },
+        ...(hasTmdbKey ? [{ name: 'TMDB剧集', weight: 0.95, run: () => fetchTmdbTrending('tv') }] : []),
+      ]);
+      break;
+    }
+
+    // 3. 电影分类综合榜：豆瓣实时热门电影 + B站热播电影 + 豆瓣一周口碑电影 (+ TMDB)
+    case 'douban_movie_realtime': {
+      items = await collectAndFuse([
+        { name: '豆瓣实时影', weight: 1.2, run: () => fetchDoubanWithFallback('douban_movie_realtime') },
+        { name: '一周口碑影', weight: 1.05, run: () => fetchDoubanWithFallback('douban_movie_weekly') },
+        { name: 'B站电影', weight: 0.95, run: () => fetchBiliRankRaw(BILI_SEASON_TYPE_MAP.bili_movie!) },
+        ...(hasTmdbKey ? [{ name: 'TMDB电影', weight: 1.0, run: () => fetchTmdbTrending('movie') }] : []),
+      ]);
+      break;
+    }
+
+    // 4. 日漫新番分类综合榜：Bangumi 当季实时放送榜 + B站番剧榜 + 豆瓣当季新番榜
+    case 'bili_bangumi':
+    case 'douban_anime_hot': {
+      items = await collectAndFuse(
+        [
+          { name: 'Bangumi', weight: 1.15, run: () => fetchBangumiHotAiring(24) },
+          { name: 'B站番剧', weight: 1.1, run: () => fetchBiliRankRaw(BILI_SEASON_TYPE_MAP.bili_bangumi!) },
+          { name: '豆瓣新番', weight: 1.0, run: () => fetchDoubanWithFallback('douban_anime_hot') },
+        ],
+        { maxEpisodes: 95 }
+      );
+      break;
+    }
+
+    // 5. 国漫分类综合榜：B站国创热播榜 + 豆瓣热门动画（筛华语）
+    case 'bili_guochuang': {
+      items = await collectAndFuse(
+        [
+          { name: 'B站国创', weight: 1.25, run: () => fetchBiliRankRaw(BILI_SEASON_TYPE_MAP.bili_guochuang!) },
+          {
+            name: '豆瓣国漫',
+            weight: 0.95,
+            run: async () => {
+              const all = await fetchDoubanWithFallback('douban_anime_hot');
+              return all.filter((i) => !i.area || /中国|大陆|华语/.test(i.area));
+            },
+          },
+        ],
+        { maxEpisodes: 260 }
+      );
+      break;
+    }
+
+    // 6. 国产剧分类综合榜：豆瓣国产剧 + 百度实时热播剧 + 华语口碑剧集
+    case 'douban_tv_domestic': {
+      items = await collectAndFuse([
+        { name: '豆瓣陆剧', weight: 1.2, run: () => fetchDoubanWithFallback('douban_tv_domestic') },
+        { name: '百度热播', weight: 1.05, run: () => fetchBaiduTeleplayList() },
+        { name: '华语口碑', weight: 1.0, run: () => fetchDoubanWithFallback('douban_tv_chinese') },
+        { name: 'B站剧集', weight: 0.85, run: () => fetchBiliRankRaw(BILI_SEASON_TYPE_MAP.bili_tv!) },
+      ]);
+      break;
+    }
+
+    // 7. 日韩剧分类综合榜：豆瓣韩剧 + 豆瓣日剧 + 全球口碑剧集
+    case 'douban_tv_korean': {
+      items = await collectAndFuse([
+        { name: '豆瓣韩剧', weight: 1.15, run: () => fetchDoubanWithFallback('douban_tv_korean') },
+        { name: '豆瓣日剧', weight: 1.05, run: () => fetchDoubanWithFallback('douban_tv_japanese') },
+        {
+          name: '全球口碑',
+          weight: 0.95,
+          run: async () => {
+            const list = await fetchDoubanWithFallback('douban_tv_global');
+            return list.filter((i) => !i.area || /韩国|日本/.test(i.area));
+          },
+        },
+      ]);
+      break;
+    }
+
+    // 8. 欧美剧分类综合榜：豆瓣欧美剧 + 全球口碑剧集 (+ TMDB)
+    case 'douban_tv_american': {
+      items = await collectAndFuse([
+        { name: '豆瓣美剧', weight: 1.2, run: () => fetchDoubanWithFallback('douban_tv_american') },
+        {
+          name: '全球口碑',
+          weight: 1.05,
+          run: async () => {
+            const list = await fetchDoubanWithFallback('douban_tv_global');
+            return list.filter((i) => !i.area || !/韩国|日本|中国/.test(i.area));
+          },
+        },
+        ...(hasTmdbKey ? [{ name: 'TMDB欧美', weight: 1.0, run: () => fetchTmdbTrending('tv') }] : []),
+      ]);
+      break;
+    }
+
+    // 9. 综艺分类综合榜：豆瓣热门综艺 + 国内口碑综艺 + 海外口碑综艺
+    case 'douban_show_hot': {
+      items = await collectAndFuse([
+        { name: '热门综艺', weight: 1.2, run: () => fetchDoubanWithFallback('douban_show_hot') },
+        { name: '国内口碑', weight: 1.05, run: () => fetchDoubanWithFallback('douban_show_chinese') },
+        { name: '海外口碑', weight: 0.9, run: () => fetchDoubanWithFallback('douban_show_global') },
+      ]);
+      break;
+    }
+
+    // 10. 纪录片分类综合榜：B站纪录片热播榜 + 豆瓣高分纪录片
+    case 'bili_doc': {
+      items = await collectAndFuse([
+        { name: 'B站纪录片', weight: 1.2, run: () => fetchBiliRankRaw(BILI_SEASON_TYPE_MAP.bili_doc!) },
+      ]);
+      break;
+    }
+
+    // 11. 全球趋势榜：TMDB + 豆瓣全球剧集 + 豆瓣实时电影
+    case 'tmdb_trending': {
+      items = await fetchTmdbTrending('all');
+      break;
+    }
+
+    default: {
+      if (BILI_SEASON_TYPE_MAP[id]) {
+        items = await fetchBiliRankRaw(BILI_SEASON_TYPE_MAP[id]!);
+      } else if (DOUBAN_COLLECTION_MAP[id]) {
+        if (DOUBAN_WEEKLY_CATEGORY[id]) ttl = WEEKLY_CACHE_TTL;
+        items = await fetchDoubanWithFallback(id);
+      } else {
+        items = await fetchBaiduTeleplayList();
+      }
+      break;
+    }
   }
 
   if (items.length === 0) throw new Error('榜单数据为空');
@@ -674,3 +960,4 @@ export async function fetchHotList(id: HotListId): Promise<DoubanItem[]> {
   setCache(cacheKey, items, ttl);
   return items;
 }
+
