@@ -17,9 +17,13 @@ export const LENGTH_TOLERANCE_SECONDS = 15;
 export interface SkipSegment {
   start: number;
   end: number;
-  /** AniSkip 只有总时长差 15~90 秒的版本：位置大概对，只显示按钮，不自动跳 */
+  /** 版本对不上（总时长差 15~90 秒）或来源不给总时长：位置大概对，只显示按钮，不自动跳 */
   approx?: boolean;
+  /** 时间点来自哪 */
+  via?: SkipVia;
 }
+
+export type SkipVia = 'bilibili' | 'aniskip' | 'theintrodb';
 
 /** 这一集为什么没有片头 / 片尾：AniSkip 上没人提交，或只有总时长差太多的版本 */
 export type SkipMissing = 'none' | 'other-version';
@@ -30,7 +34,8 @@ export interface SkipTimes {
   missing?: { intro?: SkipMissing; outro?: SkipMissing };
 }
 
-interface BgmHit {
+export interface BgmHit {
+  id?: number;
   name?: string;
   name_cn?: string;
   date?: string;
@@ -49,7 +54,7 @@ export function pickBangumiHit(hits: BgmHit[], title: string, year?: string): Bg
   return named.find((h) => year && h.date?.startsWith(year)) ?? named[0];
 }
 
-interface AniListMedia {
+export interface AniListMedia {
   idMal?: number | null;
   title?: { native?: string | null; romaji?: string | null };
   startDate?: { year?: number | null };
@@ -116,7 +121,7 @@ export function pickSkipTimes(results: AniSkipResult[], length?: number): SkipTi
     if (diff > APPROX_TOLERANCE_SECONDS) continue;
     if (!best[kind] || diff < best[kind]!.diff) {
       best[kind] = {
-        seg: { start: Math.max(0, start), end, ...(diff > LENGTH_TOLERANCE_SECONDS ? { approx: true } : {}) },
+        seg: { start: Math.max(0, start), end, via: 'aniskip', ...(diff > LENGTH_TOLERANCE_SECONDS ? { approx: true } : {}) },
         diff,
       };
     }
@@ -130,10 +135,24 @@ export function pickSkipTimes(results: AniSkipResult[], length?: number): SkipTi
   return out;
 }
 
-/** 中文片名 → MyAnimeList 编号；查不到返回 null（缓存一天），暂时查不了返回 undefined */
-export async function resolveMalId(title: string, year?: string): Promise<number | null | undefined> {
-  const key = `skip:mal:v2:${title}|${year ?? ''}`;
-  const cached = getCache<number | null>(key);
+/** 一部动漫在各处的编号 */
+export interface AnimeIds {
+  bangumi: number;
+  mal?: number;
+  /** B站番剧的 media_id（md 号） */
+  biliMedia?: string;
+  /** TMDB：tv/123、tv/123/season/2、movie/456 */
+  tmdb?: string;
+}
+
+/**
+ * 中文片名 → 这部动漫的各处编号：Bangumi 按中文名搜到条目，再查 bangumi-data 对照表拿 MyAnimeList / B站 / TMDB 编号；
+ * 对照表里没有 MAL 编号时，才用 AniList 按日文原名搜（要季数对得上）。
+ * 查不到返回 null（缓存一天），暂时查不了返回 undefined。
+ */
+export async function resolveAnimeIds(title: string, year?: string): Promise<AnimeIds | null | undefined> {
+  const key = `skip:ids:v1:${title}|${year ?? ''}`;
+  const cached = getCache<AnimeIds | null>(key);
   if (cached !== undefined) return cached;
   try {
     const bgm = await fetchUpstream('https://api.bgm.tv/v0/search/subjects?limit=8', {
@@ -144,28 +163,82 @@ export async function resolveMalId(title: string, year?: string): Promise<number
     });
     if (!bgm.ok) return undefined;
     const hit = pickBangumiHit(((await bgm.json()) as { data?: BgmHit[] }).data ?? [], title, year);
-    if (!hit?.name) {
+    if (!hit?.name || !hit.id) {
       setCache(key, null, MISS_TTL);
       return null;
     }
-    const ani = await fetchUpstream('https://graphql.anilist.co', {
-      method: 'POST',
-      timeoutMs: 6000,
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({
-        query: `query ($s: String) { Page(perPage: 6) { media(search: $s, type: ANIME) { idMal title { native romaji } startDate { year } } } }`,
-        variables: { s: hit.name },
-      }),
-    });
-    if (!ani.ok) return undefined;
-    const media = ((await ani.json()) as { data?: { Page?: { media?: AniListMedia[] } } }).data?.Page?.media ?? [];
-    const picked = pickAniListMedia(media, hit.name, hit.date?.slice(0, 4) ?? year);
-    const id = picked?.idMal ?? null;
-    setCache(key, id, id ? ID_TTL : MISS_TTL);
-    return id;
+    const table = await loadBangumiData();
+    const mapped = table.get(String(hit.id));
+    const ids: AnimeIds = { bangumi: hit.id, ...mapped };
+    if (!ids.mal) {
+      const ani = await fetchUpstream('https://graphql.anilist.co', {
+        method: 'POST',
+        timeoutMs: 6000,
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+          query: `query ($s: String) { Page(perPage: 6) { media(search: $s, type: ANIME) { idMal title { native romaji } startDate { year } } } }`,
+          variables: { s: hit.name },
+        }),
+      });
+      if (ani.ok) {
+        const media = ((await ani.json()) as { data?: { Page?: { media?: AniListMedia[] } } }).data?.Page?.media ?? [];
+        ids.mal = pickAniListMedia(media, hit.name, hit.date?.slice(0, 4) ?? year)?.idMal ?? undefined;
+      }
+    }
+    // 对照表这次没下载成功：结果只缓存一小时，免得一周都缺 B站 / TMDB 编号
+    setCache(key, ids, table.size > 0 ? ID_TTL : 3600_000);
+    return ids;
   } catch {
     return undefined;
   }
+}
+
+/** bangumi-data（开源对照表，约 9 千部动画）：Bangumi 编号 → MAL / B站 / TMDB 编号 */
+const BANGUMI_DATA_URLS = [
+  'https://cdn.jsdelivr.net/npm/bangumi-data@0.3/dist/data.json',
+  'https://unpkg.com/bangumi-data@0.3/dist/data.json',
+];
+let bangumiDataLoading: Promise<Map<string, Omit<AnimeIds, 'bangumi'>>> | null = null;
+
+export function buildBangumiDataMap(items: { sites?: { site: string; id?: string }[] }[]): Map<string, Omit<AnimeIds, 'bangumi'>> {
+  const map = new Map<string, Omit<AnimeIds, 'bangumi'>>();
+  for (const it of items) {
+    const sites = new Map((it.sites ?? []).map((s) => [s.site, s.id]));
+    const bgm = sites.get('bangumi');
+    if (!bgm) continue;
+    const mal = parseInt(sites.get('mal') ?? '', 10);
+    map.set(bgm, {
+      mal: Number.isFinite(mal) && mal > 0 ? mal : undefined,
+      biliMedia: sites.get('bilibili') || undefined,
+      tmdb: sites.get('tmdb') || undefined,
+    });
+  }
+  return map;
+}
+
+async function loadBangumiData(): Promise<Map<string, Omit<AnimeIds, 'bangumi'>>> {
+  const key = 'skip:bangumi-data';
+  const cached = getCache<Map<string, Omit<AnimeIds, 'bangumi'>>>(key);
+  if (cached) return cached;
+  bangumiDataLoading ??= (async () => {
+    for (const url of BANGUMI_DATA_URLS) {
+      try {
+        const res = await fetchUpstream(url, { timeoutMs: 12000 });
+        if (!res.ok) continue;
+        const map = buildBangumiDataMap(((await res.json()) as { items?: [] }).items ?? []);
+        if (map.size > 0) {
+          setCache(key, map, 24 * 3600_000);
+          return map;
+        }
+      } catch {
+        // 换下一个镜像
+      }
+    }
+    return new Map();
+  })().finally(() => {
+    bangumiDataLoading = null;
+  });
+  return bangumiDataLoading;
 }
 
 /** 某一集的片头片尾；查不到返回 {}，暂时查不了返回 undefined */

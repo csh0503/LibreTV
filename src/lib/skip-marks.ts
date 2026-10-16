@@ -25,7 +25,7 @@ export interface LearnedSkip {
   manual?: boolean;
   /** 这部剧自动跳过 */
   auto?: boolean;
-  /** 你说 AniSkip 的时间点不准：这部剧不再用它，只用你自己跳过时记下的 */
+  /** 你说数据库（B站 / AniSkip / TheIntroDB）的时间点不准：这部剧不再用，只用你自己设的 / 记下的 */
   ignoreRemote?: boolean;
   updatedAt: number;
 }
@@ -88,7 +88,8 @@ export function classifySkip(
   return null;
 }
 
-export type SkipSource = 'manual' | 'aniskip' | 'aniskip-approx' | 'learned';
+/** remote = 片头片尾数据库（B站官方 / AniSkip / TheIntroDB，具体看区间的 via） */
+export type SkipSource = 'manual' | 'remote' | 'remote-approx' | 'learned';
 
 export interface EpisodeSkip {
   intro?: SkipSegment;
@@ -106,7 +107,7 @@ export interface EpisodeSkip {
 
 /**
  * 这一集实际用的片头片尾（绝对秒数），优先顺序：
- * 你手动设的 > AniSkip 的准确时间 > 你跳过后确认记下的 > AniSkip 只有别的版本时的大概位置。
+ * 你手动设的 > 数据库的准确时间（B站官方 / AniSkip）> 你跳过后确认记下的 > 数据库的约略位置（版本对不上 / TheIntroDB）。
  */
 export function resolveEpisodeSkip(remote: SkipTimes | undefined, learned: LearnedSkip | undefined, duration: number): EpisodeSkip {
   const valid = (s?: SkipSegment) =>
@@ -124,8 +125,8 @@ export function resolveEpisodeSkip(remote: SkipTimes | undefined, learned: Learn
     fromRemote: SkipSegment | undefined,
   ): { seg?: SkipSegment; source?: SkipSource } => {
     const candidates: [SkipSegment | undefined, SkipSource][] = learned?.manual
-      ? [[own, 'manual'], [exact(fromRemote), 'aniskip'], [approx(fromRemote), 'aniskip-approx']]
-      : [[exact(fromRemote), 'aniskip'], [own, mine], [approx(fromRemote), 'aniskip-approx']];
+      ? [[own, 'manual'], [exact(fromRemote), 'remote'], [approx(fromRemote), 'remote-approx']]
+      : [[exact(fromRemote), 'remote'], [own, mine], [approx(fromRemote), 'remote-approx']];
     const hit = candidates.find(([seg]) => seg);
     return hit ? { seg: hit[0], source: hit[1] } : {};
   };
@@ -137,7 +138,7 @@ export function resolveEpisodeSkip(remote: SkipTimes | undefined, learned: Learn
     outro: outro.seg,
     introJump,
     auto: Boolean(learned?.auto),
-    remote: { intro: intro.source === 'aniskip', outro: outro.source === 'aniskip' },
+    remote: { intro: intro.source === 'remote', outro: outro.source === 'remote' },
     source: { intro: intro.seg ? intro.source : introJump ? mine : undefined, outro: outro.source },
     missing: r?.missing ?? {},
   };

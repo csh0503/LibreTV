@@ -11,20 +11,20 @@ describe('pickSkipTimes', () => {
 
   it('片头前有剧情时照样只跳片头那一段', () => {
     expect(pickSkipTimes([r('op', 95, 185, 1420), r('ed', 1290, 1380, 1420)], 1421)).toEqual({
-      intro: { start: 95, end: 185 },
-      outro: { start: 1290, end: 1380 },
+      intro: { start: 95, end: 185, via: 'aniskip' },
+      outro: { start: 1290, end: 1380, via: 'aniskip' },
     });
   });
 
   it('总时长差 15~90 秒的当大概位置，再多不用；多条取最接近的', () => {
-    expect(pickSkipTimes([r('op', 0, 90, 1460)], 1420).intro).toEqual({ start: 0, end: 90, approx: true });
+    expect(pickSkipTimes([r('op', 0, 90, 1460)], 1420).intro).toEqual({ start: 0, end: 90, via: 'aniskip', approx: true });
     expect(pickSkipTimes([r('op', 0, 90, 1600)], 1420)).toEqual({ missing: { intro: 'other-version', outro: 'none' } });
-    expect(pickSkipTimes([r('op', 10, 100, 1430), r('mixed-op', 12, 102, 1421)], 1420).intro).toEqual({ start: 12, end: 102 });
+    expect(pickSkipTimes([r('op', 10, 100, 1430), r('mixed-op', 12, 102, 1421)], 1420).intro).toEqual({ start: 12, end: 102, via: 'aniskip' });
   });
 
   it('只有片尾时说明片头为什么没有', () => {
     expect(pickSkipTimes([r('ed', 1335, 1425, 1440)], 1440)).toEqual({
-      outro: { start: 1335, end: 1425 },
+      outro: { start: 1335, end: 1425, via: 'aniskip' },
       missing: { intro: 'none' },
     });
   });
@@ -122,7 +122,7 @@ describe('手动设置', () => {
     const remote = { intro: { start: 0, end: 90 }, outro: { start: 1335, end: 1425 } };
     const got = resolveEpisodeSkip(remote, { manual: true, intro: { start: 30, end: 120 }, updatedAt: 0 }, 1440);
     expect(got.intro).toEqual({ start: 30, end: 120 });
-    expect(got.source).toEqual({ intro: 'manual', outro: 'aniskip' });
+    expect(got.source).toEqual({ intro: 'manual', outro: 'remote' });
   });
 
   it('只填片头长度：没有片头位置时给 introJump', () => {

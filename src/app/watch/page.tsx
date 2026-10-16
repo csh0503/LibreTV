@@ -33,6 +33,7 @@ import {
 
 type PlayerPrompt = { text: string; actions: { label: string; onClick: () => void; primary?: boolean }[] };
 import { failoverQueryTitle } from '@/lib/failover';
+import type { SkipVia } from '@/lib/skip-times';
 import { enqueueDownload } from '@/components/download-manager';
 import { FavoriteButton } from '@/components/favorite-button';
 import { Icon } from '@/components/icon';
@@ -174,12 +175,23 @@ function WatchContent() {
   useEffect(() => setDuration(0), [currentIndex, sourceKey, vodId]);
   const positionRef = useRef({ time: 0, duration: 0 });
   const isAnime = /动漫|动画|番/.test(detailQuery.data?.videoInfo?.typeName ?? '');
-  // 动漫查 AniSkip（片子总长确定之后，用它挑同一版本的时间点）
+  // 查片头片尾数据库（片子总长确定之后，用它挑同一版本的时间点）：动漫查 B站官方 / AniSkip / TheIntroDB，其他查 TheIntroDB
+  const skipKind: 'tv' | 'movie' = episodes.length > 1 ? 'tv' : 'movie';
   const remoteSkip = useQuery({
-    queryKey: ['skip-times', failoverQueryTitle(videoTitle, videoYear), videoYear, currentIndex + 1, Math.round(duration / 5)],
+    queryKey: ['skip-times', failoverQueryTitle(videoTitle, videoYear), videoYear, currentIndex + 1, Math.round(duration / 5), isAnime, skipKind],
     queryFn: ({ signal }) =>
-      api.skipTimes({ title: failoverQueryTitle(videoTitle, videoYear), year: videoYear, episode: currentIndex + 1, length: duration }, signal),
-    enabled: isAnime && duration > 60 && Boolean(videoTitle),
+      api.skipTimes(
+        {
+          title: failoverQueryTitle(videoTitle, videoYear),
+          year: videoYear,
+          episode: currentIndex + 1,
+          length: duration,
+          anime: isAnime,
+          kind: skipKind,
+        },
+        signal,
+      ),
+    enabled: duration > 60 && Boolean(videoTitle) && !source?.isAdult,
     staleTime: 24 * 3600_000,
     retry: 0,
   });
@@ -211,7 +223,7 @@ function WatchContent() {
       const hit = classifySkip(from, to, total);
       if (!hit) return;
       const src = episodeSkip.source[hit.kind];
-      if (src === 'aniskip' || src === 'manual') return;
+      if (src === 'remote' || src === 'manual') return;
       const name = hit.kind === 'intro' ? '片头' : '片尾';
       const range =
         hit.kind === 'intro'
@@ -547,7 +559,7 @@ function WatchContent() {
                   onEdit={() => setSkipEditorOpen((v) => !v)}
                   onDistrust={() => {
                     updateLearned({ ignoreRemote: true });
-                    toast('这部剧不再用 AniSkip 的时间点，可以点「设置」手动填', 'info');
+                    toast('这部剧不再用数据库（B站 / AniSkip / TheIntroDB）的时间点，可以点「设置」手动填', 'info');
                   }}
                   onReset={() => {
                     updateLearned(null);
@@ -641,12 +653,13 @@ function WatchContent() {
   );
 }
 
-const SOURCE_LABEL: Record<SkipSource, string> = {
-  manual: '你手动设的',
-  aniskip: 'AniSkip',
-  'aniskip-approx': 'AniSkip 别的版本，约略位置，只显示按钮',
-  learned: '你跳过后记下的',
-};
+const VIA_LABEL: Record<SkipVia, string> = { bilibili: 'B站官方', aniskip: 'AniSkip', theintrodb: 'TheIntroDB' };
+function sourceLabel(src: SkipSource, seg: { via?: SkipVia }): string {
+  if (src === 'manual') return '你手动设的';
+  if (src === 'learned') return '你跳过后记下的';
+  const via = seg.via ? VIA_LABEL[seg.via] : '数据库';
+  return src === 'remote' ? via : `${via}，约略位置，只显示按钮`;
+}
 
 /** 播放器下方：这一集的片头片尾在哪、哪来的、自动跳过开关、设置 / 不准 / 重设 */
 function SkipSettingsRow({
@@ -664,16 +677,17 @@ function SkipSettingsRow({
   onDistrust: () => void;
   onReset: () => void;
 }) {
-  const fromRemote = skip.source.intro?.startsWith('aniskip') || skip.source.outro?.startsWith('aniskip');
+  const fromRemote = skip.source.intro?.startsWith('remote') || skip.source.outro?.startsWith('remote');
   const describe = (kind: 'intro' | 'outro') => {
     const name = kind === 'intro' ? '片头' : '片尾';
     const s = skip[kind];
     const src = skip.source[kind];
-    if (s && src) return `${name} ${formatTime(s.start)}–${formatTime(s.end)}（${SOURCE_LABEL[src]}）`;
+    if (s && src) return `${name} ${formatTime(s.start)}–${formatTime(s.end)}（${sourceLabel(src, s)}）`;
     if (kind === 'intro' && skip.introJump) return `片头长 ${formatTime(skip.introJump)}（开头附近按「跳过片头」往后跳）`;
-    const m = skip.missing[kind];
-    if (m === 'none') return `${name}：AniSkip 还没有这一集`;
-    if (m === 'other-version') return `${name}：AniSkip 的版本对不上`;
+    // 两段都没有时不逐条说原因（大多数剧集数据库里都没有），只在另一段有的时候说明这段为什么缺
+    const m = skip.intro || skip.outro || skip.introJump ? skip.missing[kind] : undefined;
+    if (m === 'none') return `${name}：数据库里还没有这一集`;
+    if (m === 'other-version') return `${name}：数据库里的版本对不上`;
     return '';
   };
   const parts = [describe('intro'), describe('outro')].filter(Boolean);
@@ -803,7 +817,7 @@ function SkipEditor({
         </button>
       </div>
       <p className="text-faint leading-relaxed">
-        填时间（如 1:30），或者播到那个位置点「现在」。片尾按离结尾多远记，每集长度差几秒也对得上。保存后比 AniSkip 优先。
+        填时间（如 1:30），或者播到那个位置点「现在」。片尾按离结尾多远记，每集长度差几秒也对得上。保存后比数据库（B站 / AniSkip / TheIntroDB）优先。
       </p>
       <div className="space-y-2">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
