@@ -2,22 +2,17 @@ import { NextResponse } from 'next/server';
 import { guardRequest, jsonError } from '@/lib/api-guard';
 import { cmsRequestHeaders, parseDetail } from '@/lib/cms-parser';
 import { fetchUpstream, getCache, setCache } from '@/lib/fetch-utils';
-import { makeAbsolute } from '@/lib/m3u8';
 import { checkUpstreamAllowed } from '@/lib/ssrf';
-import {
-  analyzeMediaPlaylist,
-  bestVariant,
-  heightFromKbps,
-  parseMasterPlaylist,
-  type SourceQuality,
-} from '@/lib/stream-quality';
+import { probeEpisode } from '@/lib/quality-probe';
+import type { SourceQuality } from '@/lib/stream-quality';
 
 export const runtime = 'nodejs';
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 /** 一次最多测几个源（全部并发）；每个源大约 3~4 个请求（详情、播放列表、可能的子列表、一个分片的大小） */
 const MAX_ITEMS = 30;
-const PER_ITEM_TIMEOUT_MS = 14000;
+/** 详情 10 秒 + 播放列表两次 + 分片：海外机房连采集站慢，留足时间；还测不到的由浏览器再测 */
+const PER_ITEM_TIMEOUT_MS = 30000;
 const CACHE_TTL = 60 * 60 * 1000;
 
 interface QualityRequestItem {
@@ -31,7 +26,7 @@ interface QualityRequestItem {
 async function fetchText(url: string): Promise<string> {
   const verdict = await checkUpstreamAllowed(url);
   if (!verdict.ok) throw new Error(verdict.reason);
-  const res = await fetchUpstream(url, { timeoutMs: 6000, headers: cmsRequestHeaders() });
+  const res = await fetchUpstream(url, { timeoutMs: 8000, headers: cmsRequestHeaders() });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.text();
 }
@@ -68,40 +63,12 @@ async function probe(item: QualityRequestItem): Promise<SourceQuality> {
   const listVerdict = await checkUpstreamAllowed(item.sourceUrl);
   if (!listVerdict.ok) return { key: item.key, ok: false, error: listVerdict.reason };
   const api = `${item.sourceUrl.replace(/\/+$/, '')}?ac=videolist&ids=${encodeURIComponent(item.vodId)}`;
-  const res = await fetchUpstream(api, { timeoutMs: 6000, headers: cmsRequestHeaders() });
+  const res = await fetchUpstream(api, { timeoutMs: 10000, headers: cmsRequestHeaders() });
   if (!res.ok) return { key: item.key, ok: false, error: `详情 HTTP ${res.status}` };
   const detail = parseDetail(await res.json(), { key: item.sourceKey, name: item.sourceName ?? item.sourceKey, url: item.sourceUrl });
   const first = detail.episodes[0];
   if (!first) return { key: item.key, ok: false, error: '没有播放地址' };
-  if (!/\.m3u8(\?|$)/i.test(first)) return { key: item.key, ok: true, error: '不是 m3u8，测不了' };
-
-  let playlistUrl = first;
-  let content = await fetchText(playlistUrl);
-  let height = 0;
-  const variants = parseMasterPlaylist(content);
-  if (variants.length > 0) {
-    const best = bestVariant(variants)!;
-    height = best.height;
-    playlistUrl = makeAbsolute(best.uri, playlistUrl);
-    content = await fetchText(playlistUrl);
-  }
-  const info = analyzeMediaPlaylist(content, playlistUrl);
-  let kbps = 0;
-  if (info.sampleSegment) {
-    const bytes = await segmentBytes(makeAbsolute(info.sampleSegment.uri, playlistUrl));
-    if (bytes > 0) kbps = Math.round((bytes * 8) / info.sampleSegment.seconds / 1000);
-  }
-  const estimated = height === 0 && kbps > 0;
-  const result: SourceQuality = {
-    key: item.key,
-    ok: true,
-    height: height || heightFromKbps(kbps) || undefined,
-    estimated: estimated || undefined,
-    kbps: kbps || undefined,
-    adSeconds: info.adSeconds,
-    suspectSeconds: info.suspectSeconds || undefined,
-    minutes: info.seconds > 0 ? Math.round(info.seconds / 60) : undefined,
-  };
+  const result: SourceQuality = { key: item.key, ...(await probeEpisode(first, { text: fetchText, segmentBytes })) };
   setCache(cacheKey, result, CACHE_TTL);
   return result;
 }

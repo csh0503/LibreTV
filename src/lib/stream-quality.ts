@@ -185,6 +185,8 @@ export interface SourceQuality {
   /** 第 1 集正片时长（分钟） */
   minutes?: number;
   error?: string;
+  /** 服务端测不到、由浏览器自己测的 */
+  via?: 'browser';
 }
 
 /** 排序用的清晰度档位：3=1080P 及以上，2=720P，1=更低或测不出，0=质检失败 */

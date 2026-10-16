@@ -5,7 +5,9 @@ import {
   aggregateResults,
   extractCoreSearchStem,
   hasTitleMatch,
+  kindOfTypeName,
   matchingGroups,
+  rankGroupsForPick,
   replaceAliasInTitle,
   titleMatchesQuery,
 } from './title-aliases';
@@ -71,5 +73,55 @@ describe('matchingGroups', () => {
     const row = (name: string) => ({ vodId: name, name, typeName: '剧集', sourceKey: 's1', sourceName: '源一' });
     const groups = aggregateResults(['庆余年', '庆余年第二季', '余年有你'].map(row), '庆余年');
     expect(matchingGroups(groups, '庆余年').map((g) => g.name).sort()).toEqual(['庆余年', '庆余年第二季']);
+  });
+});
+
+describe('作品详情弹窗：九门', () => {
+  const row = (name: string, year: string, typeName: string, sourceKey: string) => ({
+    vodId: `${name}-${sourceKey}`,
+    name,
+    year,
+    typeName,
+    sourceKey,
+    sourceName: sourceKey,
+  });
+  const list = [
+    ...['s1', 's2', 's3', 's4'].map((k) => row('九门', '2021', '剧情片', k)),
+    ...['s1', 's2'].map((k) => row('九门', '2026', '国产剧', k)),
+    ...['s3', 's5'].map((k) => row('九门2026', '2026', '大陆剧', k)),
+    row('九门八甲', '2020', '剧情片', 's1'),
+    row('九门提督', '2018', '动作片', 's1'),
+    row('九门 第二季', '2027', '国产剧', 's1'),
+  ];
+
+  it('名字只是开头一样的别的片不算同一部，季数后缀算', () => {
+    const names = matchingGroups(aggregateResults(list, '九门'), '九门').map((g) => g.name);
+    expect(names).not.toContain('九门八甲');
+    expect(names).not.toContain('九门提督');
+    expect(names).toContain('九门 第二季');
+  });
+
+  it('同一部的不同写法并成一组，年份和类型对得上的排第一', () => {
+    const ranked = rankGroupsForPick(matchingGroups(aggregateResults(list, '九门'), '九门'), {
+      title: '九门',
+      year: '2026',
+      isTv: true,
+    });
+    expect(ranked[0].year).toBe('2026');
+    expect(ranked[0].name).toBe('九门');
+    expect(new Set(ranked[0].items.map((i) => i.sourceKey))).toEqual(new Set(['s1', 's2', 's3', 's5']));
+    expect(ranked.map((g) => g.year)).toEqual(['2026', '2027', '2021']);
+  });
+
+  it('严格规则一个都没有时退回宽松规则', () => {
+    expect(matchingGroups(aggregateResults([row('九门八甲', '2020', '剧情片', 's1')], '九门'), '九门')).toHaveLength(1);
+  });
+
+  it('分类名看电影还是剧集', () => {
+    expect(kindOfTypeName('剧情片')).toBe('movie');
+    expect(kindOfTypeName('国产剧')).toBe('tv');
+    expect(kindOfTypeName('日韩动漫')).toBe('tv');
+    expect(kindOfTypeName('动画片')).toBeUndefined();
+    expect(kindOfTypeName(undefined)).toBeUndefined();
   });
 });

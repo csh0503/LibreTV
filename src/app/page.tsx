@@ -23,7 +23,7 @@ import { sourceIsAdult } from '@/lib/adult-sources';
 import { useLoadMore } from '@/components/use-load-more';
 import { useAliasFallback, useSourceSearch } from '@/components/use-source-search';
 import type { SearchResultItem, TitlePick } from '@/lib/types';
-import { hasTitleMatch } from '@/lib/title-aliases';
+import { hasTitleMatch, kindOfTypeName } from '@/lib/title-aliases';
 import { SearchHistoryDropdown, useSearchHistory } from '@/components/search-history';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/components/toast';
@@ -140,6 +140,7 @@ function HomeContent() {
       year: group.year,
       genres: group.typeName,
       remarks: group.remarks,
+      isTv: kindOfTypeName(group.typeName) === undefined ? undefined : kindOfTypeName(group.typeName) === 'tv',
     });
   };
 

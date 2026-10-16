@@ -229,18 +229,104 @@ export function hasTitleMatch(groups: AggregatedGroup[], title: string): boolean
   return groups.some(groupMatcher(title));
 }
 
-/** 只留这部作品本身（含各季）的分组，供作品详情弹窗列片源 */
+/**
+ * 只留这部作品本身（含各季）的分组，供作品详情弹窗列片源。
+ * 比 hasTitleMatch 严：片名后面直接接别的字（九门八甲、九门提督）不算同一部，
+ * 只认季数、年份、版本这类后缀，或原名里本来就用空格 / 冒号隔开的副标题。
+ * 严格规则一个都留不下时退回宽松规则，免得把有片源的作品判成没有。
+ */
 export function matchingGroups(groups: AggregatedGroup[], title: string): AggregatedGroup[] {
-  return groups.filter(groupMatcher(title));
+  const strict = groups.filter(groupMatcher(title, true));
+  return strict.length > 0 ? strict : groups.filter(groupMatcher(title));
 }
 
-function groupMatcher(title: string): (g: AggregatedGroup) => boolean {
+/** 片名后面跟着这些，才算同一部的某一季 / 某个版本 */
+const SAME_WORK_SUFFIX =
+  /^(?:\d{1,4}|[一二三四五六七八九十]+|第[\d一二三四五六七八九十百]+[季部篇期章]|.{0,4}[季篇章]|season\d+|s\d{1,2}|part\d+|[\u2160-\u217f]+|ova|oad|sp|特别篇|番外篇?|剧场版|电影版|国语版?|粤语版?|普通话版?|日语版?|原声版?|tv版?|未删减版?|导演剪辑版?|加长版?)?$/i;
+const SUBTITLE_SEPARATOR = /[\s:：·\-—(（]/;
+
+/** 搜索源的分类名 → 电影 / 剧集；看不出来返回 undefined */
+export function kindOfTypeName(typeName?: string): 'movie' | 'tv' | undefined {
+  const t = typeName?.trim();
+  if (!t || /动画片/.test(t)) return undefined;
+  if (/片$|电影/.test(t)) return 'movie';
+  if (/剧|综艺|动漫|番/.test(t)) return 'tv';
+  return undefined;
+}
+
+/** 分组片名去掉结尾和年份相同的数字（「九门2026」→「九门」），用来把同一部的不同写法并在一起 */
+function workKeyOf(g: AggregatedGroup, title: string): string {
+  const k = buildGroupTitleKey(g.name, title, false);
+  const y = normalizeYearToken(g.year);
+  return y && k.length > 4 && k.endsWith(y) ? k.slice(0, -4) : k;
+}
+
+/**
+ * 作品详情弹窗里的分组：同一部的不同写法合成一组，再按和点开的这部有多像排序——
+ * 年份对得上（差 1 年以内）> 电影 / 剧集对得上 > 片名完全一样 > 片源多。
+ * 否则同名的旧电影（源多）会排在刚上线的新剧前面，「播放」也会播错。
+ */
+export function rankGroupsForPick(
+  groups: AggregatedGroup[],
+  pick: { title: string; year?: string; isTv?: boolean },
+): AggregatedGroup[] {
+  const titleKey = buildGroupTitleKey(pick.title, pick.title, false);
+  const merged: { key: string; year?: number; group: AggregatedGroup; idx: number }[] = [];
+  groups.forEach((g, idx) => {
+    const key = workKeyOf(g, pick.title);
+    const y = normalizeYearToken(g.year);
+    const year = y ? parseInt(y, 10) : undefined;
+    const same = merged.find(
+      (m) => m.key === key && (m.year === undefined || year === undefined || Math.abs(m.year - year) <= 1),
+    );
+    if (!same) {
+      merged.push({ key, year, group: g, idx });
+      return;
+    }
+    const seen = new Set(same.group.items.map((i) => `${i.sourceKey}_${i.vodId}`));
+    const extra = g.items.filter((i) => !seen.has(`${i.sourceKey}_${i.vodId}`));
+    const keepName = buildGroupTitleKey(same.group.name, pick.title, false) === titleKey ? same.group.name : g.name;
+    same.group = {
+      ...same.group,
+      key: `${same.group.key}+${g.key}`,
+      name: keepName,
+      year: same.group.year ?? g.year,
+      typeName: same.group.typeName ?? g.typeName,
+      pic: same.group.pic ?? g.pic,
+      remarks: same.group.remarks ?? g.remarks,
+      items: [...same.group.items, ...extra],
+    };
+    if (same.year === undefined) same.year = year;
+  });
+
+  const pickYear = normalizeYearToken(pick.year);
+  const want = pick.isTv === true ? 'tv' : pick.isTv === false ? 'movie' : undefined;
+  const score = (m: (typeof merged)[number]) => {
+    const yearScore = pickYear && m.year !== undefined ? (Math.abs(m.year - parseInt(pickYear, 10)) <= 1 ? 2 : 0) : 1;
+    const kind = kindOfTypeName(m.group.typeName);
+    const kindScore = want && kind ? (want === kind ? 1 : -1) : 0;
+    const exact = m.key === titleKey ? 1 : 0;
+    return [yearScore, kindScore, exact, new Set(m.group.items.map((i) => i.sourceKey)).size];
+  };
+  return merged
+    .map((m) => ({ m, s: score(m) }))
+    .sort((a, b) => {
+      for (let i = 0; i < a.s.length; i++) if (a.s[i] !== b.s[i]) return b.s[i] - a.s[i];
+      return a.m.idx - b.m.idx;
+    })
+    .map((x) => x.m.group);
+}
+
+function groupMatcher(title: string, strict = false): (g: AggregatedGroup) => boolean {
   const key = buildGroupTitleKey(title, title, false);
   const base = key.replace(TRAILING_SEASON, '');
   return (g) => {
     if (!key || g.items.every(isCommentaryItem)) return false;
     const k = buildGroupTitleKey(g.name, title, false);
-    return k === key || (base.length >= 2 && k.startsWith(base));
+    if (k === key) return true;
+    if (base.length < 2 || !k.startsWith(base)) return false;
+    if (!strict) return true;
+    return SAME_WORK_SUFFIX.test(k.slice(base.length)) || SUBTITLE_SEPARATOR.test(g.name.trim());
   };
 }
 

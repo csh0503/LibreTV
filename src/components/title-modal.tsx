@@ -7,7 +7,7 @@ import { recallAlias } from '@/lib/alias-memory';
 import { addSearchHistory, db, favoriteIdOf, toggleFavorite } from '@/lib/db';
 import { describeContinueWatching } from '@/lib/home-features';
 import { resolveSource, useAppStore } from '@/lib/store';
-import { aggregateResults, canonicalTitle, matchingGroups, type AggregatedGroup } from '@/lib/title-aliases';
+import { aggregateResults, canonicalTitle, matchingGroups, rankGroupsForPick, type AggregatedGroup } from '@/lib/title-aliases';
 import type { SearchResultItem, TitlePick } from '@/lib/types';
 import { useProfile } from '@/lib/use-profile';
 import { buildWatchUrl, cn, formatTime } from '@/lib/utils';
@@ -97,8 +97,8 @@ function TitleModalBody({
   // 从搜索结果点开的就是这张卡本身（解说类等匹配不上的也照样列出来）
   const matched = useMemo(() => {
     const m = matchingGroups(groups, pick.title);
-    return presetItems && m.length === 0 ? groups : m;
-  }, [groups, pick.title, presetItems]);
+    return rankGroupsForPick(presetItems && m.length === 0 ? groups : m, pick);
+  }, [groups, pick, presetItems]);
   const othersCount = groups.length - matched.length;
 
   // 原名全部源都没有 → 查这部作品的其他中文名，逐个再搜
@@ -107,7 +107,11 @@ function TitleModalBody({
   const aliasNames = fallback.names;
   const alias = fallback.alias;
   /** 实际展示的片源：原名优先，没有就用别名找到的 */
-  const shown = matched.length > 0 ? matched : fallback.groups;
+  const aliasGroups = useMemo(
+    () => rankGroupsForPick(fallback.groups, { ...pick, title: fallback.alias || pick.title }),
+    [fallback.groups, fallback.alias, pick],
+  );
+  const shown = matched.length > 0 ? matched : aliasGroups;
   const foundVia = matched.length === 0 ? fallback.foundVia : undefined;
   const lookingUpAliases = fallback.lookingUp;
   const nothingFound = fallback.nothingFound;
