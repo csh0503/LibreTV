@@ -5,6 +5,7 @@ import { getEnvLiveSources } from '@/lib/env-live-sources';
 import { getEnvSubscriptions } from '@/lib/env-subscriptions';
 import { getEnvRecommendSource } from '@/lib/env-recommend-source';
 import { getEnvImageMode } from '@/lib/env-image-mode';
+import { syncStorageKind } from '@/lib/profile-sync-store';
 
 export const runtime = 'nodejs';
 
@@ -27,5 +28,7 @@ export async function GET(req: Request) {
     defaultRecommendSource: getEnvRecommendSource() ?? null,
     // 部署者通过 DEFAULT_IMAGE_MODE 指定的封面图加载方式默认值（未配置时为 null）
     defaultImageMode: getEnvImageMode() ?? null,
+    // 设定档同步用的存储：redis / blob / file（本地）/ none（没接）
+    syncStorage: syncStorageKind(),
   });
 }

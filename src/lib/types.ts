@@ -183,6 +183,8 @@ export interface AuthStatusResponse {
   defaultRecommendSource: 'douban' | 'bangumi' | 'hot-list' | null;
   /** 部署者通过 DEFAULT_IMAGE_MODE 环境变量指定的封面图加载方式默认值（未配置时为 null） */
   defaultImageMode: 'direct' | 'proxy' | null;
+  /** 设定档同步用的存储 */
+  syncStorage?: 'redis' | 'blob' | 'file' | 'none';
 }
 
 // —— 直播 / IPTV ——
