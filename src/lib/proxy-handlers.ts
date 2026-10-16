@@ -34,17 +34,25 @@ function isDoubanHost(host: string): boolean {
   );
 }
 
+function isBiliImageHost(host: string): boolean {
+  const h = host.toLowerCase();
+  return h === 'hdslb.com' || h.endsWith('.hdslb.com');
+}
+
 /**
  * 未登录即可代理的图片域白名单（精确后缀匹配，防 `evil-bgm.tv` 类绕过）：
- * 豆瓣封面需要 Referer 伪装；热榜 cover_proxy 镜像与 Bangumi 封面
- * 均为公开图片 CDN，无 Referer 校验，仅需防开放代理滥用。
+ * 豆瓣与 B站封面需要 Referer 伪装；热榜 cover_proxy 镜像、Bangumi、百度百科、TMDB 封面
+ * 均为公开图片 CDN，仅需防开放代理滥用。
  */
 function isAnonymousImageHost(host: string): boolean {
   const h = host.toLowerCase();
   return (
     isDoubanHost(h) ||
+    isBiliImageHost(h) ||
     h === 'doubanio.viki.moe' || h.endsWith('.doubanio.viki.moe') ||
-    h === 'bgm.tv' || h.endsWith('.bgm.tv')
+    h === 'bgm.tv' || h.endsWith('.bgm.tv') ||
+    h === 'bdstatic.com' || h.endsWith('.bdstatic.com') ||
+    h === 'tmdb.org' || h.endsWith('.tmdb.org')
   );
 }
 
@@ -81,8 +89,11 @@ export async function handleProxyRequest(req: Request, targetUrl: string): Promi
 
   const headers: Record<string, string> = { 'User-Agent': UA, Accept: '*/*' };
   try {
-    if (isDoubanHost(new URL(targetUrl).hostname)) {
+    const targetHost = new URL(targetUrl).hostname;
+    if (isDoubanHost(targetHost)) {
       headers.Referer = 'https://movie.douban.com/';
+    } else if (isBiliImageHost(targetHost)) {
+      headers.Referer = 'https://www.bilibili.com/';
     }
   } catch { /* 忽略非法 URL */ }
 

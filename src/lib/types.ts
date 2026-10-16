@@ -69,6 +69,8 @@ export interface DoubanItem {
   id: string;
   title: string;
   cover: string;
+  /** 横版海报/剧照（如 B站 ss_horizontal_cover 或 TMDB backdrop），首页大图优先采用 */
+  backdrop?: string;
   rating?: string;
   isTv?: boolean;
   /** 上映年，豆瓣 card_subtitle 或 year 字段 */
@@ -82,8 +84,12 @@ export interface DoubanItem {
    * 完结来自「全N集 / 完结」，或上映年早于今年。
    */
   status?: 'airing' | 'ended';
-  /** 原始更新说明，如「更新至18集」 */
+  /** 原始更新说明，如「更新至18集」或实时热度 */
   remarks?: string;
+  /** 简短看点、主演阵容、播放热度或剧情简介，用于首页大图与实时榜单展示 */
+  subtitle?: string;
+  /** 榜单来源标签，如「豆瓣实时」「B站国创」「B站番剧」「百度热播」「TMDB」 */
+  sourceLabel?: string;
 }
 
 export interface SourceSearchOutcome {

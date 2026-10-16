@@ -133,8 +133,8 @@ export function ShelfRow({
 }
 
 /**
- * 热榜 / 主推数据源：优先请求 60s 热榜接口，若上游不可用则自动降级到豆瓣热门接口，
- * 保证「首页大图」与「本周前十」在任何网络环境下都有数据。
+ * 热榜 / 主推数据源：支持全网实时聚合榜、豆瓣直连实时榜、B站 PGC 热播榜、TMDB 趋势与百度热播，
+ * 若某上游在特殊网络环境下不可用则自动降级到豆瓣热门接口，保证「首页大图」与「实时榜单」始终有数据。
  */
 function useTopRankItems(listId: HotListId, enabled: boolean) {
   const yellowFilter = useAppStore((s) => s.yellowFilter);
@@ -143,17 +143,22 @@ function useTopRankItems(listId: HotListId, enabled: boolean) {
     queryKey: ['hot-list', listId],
     queryFn: ({ signal }) => api.hotList(listId, signal),
     enabled,
-    staleTime: 30 * 60_000,
+    staleTime: 15 * 60_000,
     retry: 1,
   });
 
-  const fallbackKind = listId === 'douban_movie_weekly' ? 'movie' : 'tv';
+  const fallbackKind =
+    listId === 'douban_movie_weekly' || listId === 'douban_movie_realtime' || listId === 'bili_movie'
+      ? 'movie'
+      : 'tv';
   const fallbackTags =
-    listId === 'douban_movie_weekly'
+    fallbackKind === 'movie'
       ? ['电影']
-      : listId === 'douban_tv_chinese'
-        ? ['电视剧', '华语']
-        : ['电视剧'];
+      : listId === 'bili_guochuang' || listId === 'bili_bangumi' || listId === 'douban_anime_hot'
+        ? ['日本动画']
+        : listId === 'douban_tv_chinese' || listId === 'douban_tv_domestic'
+          ? ['电视剧', '华语']
+          : ['电视剧'];
 
   const fallbackQuery = useQuery({
     queryKey: ['hot-list-fallback', listId],
@@ -170,7 +175,7 @@ function useTopRankItems(listId: HotListId, enabled: boolean) {
         signal,
       ),
     enabled: enabled && hotQuery.isError,
-    staleTime: 30 * 60_000,
+    staleTime: 15 * 60_000,
     retry: 1,
   });
 
@@ -191,7 +196,8 @@ function useTopRankItems(listId: HotListId, enabled: boolean) {
 
 /**
  * 首页大图（Netflix 风格顶部主推）：
- * 默认展示热榜第一名，支持切换前 5 部主推，直接「播放」或「加入片单」。
+ * 默认采用全网实时聚合榜（realtime_all）交叉展示热剧、院线大片、B站国创与日番榜首，
+ * 优先渲染 16:9 横版海报（backdrop），支持切换前 6 部主推，直接「播放」或「加入片单」。
  */
 export function HeroBillboard({ onPick }: { onPick: (title: string) => void }) {
   const router = useRouter();
@@ -203,17 +209,21 @@ export function HeroBillboard({ onPick }: { onPick: (title: string) => void }) {
   const envSources = useAppStore((s) => s.envSources);
   const profileId = useProfile().id;
 
-  const { items, isLoading } = useTopRankItems('douban_tv_chinese', doubanEnabled);
-  const featuredList = useMemo(() => items.slice(0, 5), [items]);
+  const { items, isLoading } = useTopRankItems('realtime_all', doubanEnabled);
+  const featuredList = useMemo(() => items.slice(0, 6), [items]);
   const [activeIndex, setActiveIndex] = useState(0);
   const [imgFailed, setImgFailed] = useState(false);
+  const [backdropFailed, setBackdropFailed] = useState(false);
 
   useEffect(() => {
     if (activeIndex >= featuredList.length) setActiveIndex(0);
   }, [activeIndex, featuredList.length]);
 
   const current: DoubanItem | undefined = featuredList[activeIndex] ?? featuredList[0];
-  useEffect(() => setImgFailed(false), [current?.cover]);
+  useEffect(() => {
+    setImgFailed(false);
+    setBackdropFailed(false);
+  }, [current?.cover, current?.backdrop]);
 
   // 自动轮播：每 8 秒温和切换主推影片
   useEffect(() => {
@@ -268,6 +278,9 @@ export function HeroBillboard({ onPick }: { onPick: (title: string) => void }) {
     current.remarks,
   ].filter(Boolean);
 
+  const hasWidescreenBackdrop = Boolean(current.backdrop && !backdropFailed);
+  const bgUrl = hasWidescreenBackdrop ? current.backdrop : current.cover;
+
   const handlePlay = () => {
     void rememberDoubanItem(current, current.isTv === false ? 'movie' : 'tv');
     if (matchedHistory) {
@@ -308,22 +321,28 @@ export function HeroBillboard({ onPick }: { onPick: (title: string) => void }) {
       aria-label="今日主推影片"
       className="relative mb-7 rounded-2xl overflow-hidden border border-line bg-[#0b111e] text-white shadow-xl"
     >
-      {/* 背景大图氛围层 */}
-      {current.cover && !imgFailed && (
+      {/* 背景大图氛围层：有 16:9 横版海报时高清展示，仅竖版海报时作高斯模糊氛围背景 */}
+      {bgUrl && (!imgFailed || hasWidescreenBackdrop) && (
         <div className="absolute inset-0 overflow-hidden pointer-events-none" aria-hidden>
           <SmartImage
-            url={current.cover}
+            url={bgUrl}
             mode={imageProxyMode}
             customProxy={customImageProxy}
             alt=""
-            className="w-full h-full object-cover scale-110 blur-2xl opacity-45 transition-all duration-700"
-            onExhausted={() => setImgFailed(true)}
+            className={cn(
+              'w-full h-full object-cover transition-all duration-700',
+              hasWidescreenBackdrop ? 'scale-105 blur-[1px] opacity-60' : 'scale-110 blur-2xl opacity-45',
+            )}
+            onExhausted={() => {
+              if (hasWidescreenBackdrop) setBackdropFailed(true);
+              else setImgFailed(true);
+            }}
           />
         </div>
       )}
       <div
         aria-hidden
-        className="absolute inset-0 pointer-events-none bg-gradient-to-r from-[#070b14]/95 via-[#0b111e]/80 to-[#0b111e]/40"
+        className="absolute inset-0 pointer-events-none bg-gradient-to-r from-[#070b14]/95 via-[#0b111e]/80 to-[#0b111e]/35"
       />
       <div
         aria-hidden
@@ -334,7 +353,7 @@ export function HeroBillboard({ onPick }: { onPick: (title: string) => void }) {
         <div className="min-w-0 flex-1 max-w-2xl space-y-3">
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-red-600/90 text-white font-semibold tracking-wide shadow-sm">
-              TOP {activeIndex + 1} · 本周热推
+              TOP {activeIndex + 1} · {current.sourceLabel || '实时热推'}
             </span>
             {current.rating && (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/15 text-amber-300 font-semibold backdrop-blur-sm">
@@ -358,7 +377,8 @@ export function HeroBillboard({ onPick }: { onPick: (title: string) => void }) {
           <p className="text-xs sm:text-sm text-slate-300/90 max-w-xl line-clamp-2">
             {matchedHistory
               ? `上次看到第 ${matchedHistory.episodeIndex + 1} 集${matchedHistory.playbackPosition > 10 ? `（${formatTime(matchedHistory.playbackPosition)}）` : ''}，点击可接着上次进度继续观看。`
-              : '本周口碑与热度前列主推佳作，点击「播放」跨源检索最佳画质，或加入「我的片单」随时回看。'}
+              : current.subtitle ||
+                '全网实时热度与口碑前列佳作，点击「播放」跨源检索最佳画质，或加入「我的片单」随时回看。'}
           </p>
 
           <div className="pt-1 flex flex-wrap items-center gap-3">
@@ -801,20 +821,30 @@ export function MyListRow({
   );
 }
 
-const TOP_TEN_TABS: { id: HotListId; label: string; channel: 'tv' | 'movie' | 'show' }[] = [
-  { id: 'douban_tv_chinese', label: '华语剧集', channel: 'tv' },
-  { id: 'douban_tv_global', label: '全球剧集', channel: 'tv' },
-  { id: 'douban_movie_weekly', label: '口碑电影', channel: 'movie' },
-  { id: 'baidu_teleplay', label: '热播剧榜', channel: 'tv' },
+const TOP_TEN_TABS: { id: HotListId; label: string; channel: 'tv' | 'movie' | 'show' | 'anime' | 'doc' }[] = [
+  { id: 'realtime_all', label: '🔥 全网实时', channel: 'tv' },
+  { id: 'douban_tv_realtime', label: '📺 实时热剧', channel: 'tv' },
+  { id: 'douban_movie_realtime', label: '🍿 实时电影', channel: 'movie' },
+  { id: 'bili_guochuang', label: '🐉 B站国创', channel: 'anime' },
+  { id: 'bili_bangumi', label: '🌸 B站番剧', channel: 'anime' },
+  { id: 'douban_tv_domestic', label: '🇨🇳 国产剧', channel: 'tv' },
+  { id: 'douban_tv_korean', label: '🇰🇷 韩剧', channel: 'tv' },
+  { id: 'douban_tv_american', label: '🇺🇸 欧美剧', channel: 'tv' },
+  { id: 'douban_show_hot', label: '🎪 热门综艺', channel: 'show' },
+  { id: 'bili_doc', label: '🌍 B站纪录片', channel: 'doc' },
+  { id: 'baidu_teleplay', label: '⚡ 百度热播', channel: 'tv' },
+  { id: 'tmdb_trending', label: '🌐 全球趋势', channel: 'tv' },
+  { id: 'douban_tv_chinese', label: '🏆 华语口碑榜', channel: 'tv' },
+  { id: 'douban_movie_weekly', label: '🏆 电影口碑榜', channel: 'movie' },
 ];
 
 /**
- * 首页「本周前十」（Netflix 风格带大数字 1~10 的热榜排）：
- * 比混在海报墙里更直观，支持切换剧集 / 电影周榜。
+ * 首页「实时风向 · TOP 10」（Netflix 风格带大数字 1~10 的多源实时热榜排）：
+ * 融合豆瓣直连实时榜、B站 PGC 国创/番剧/纪录片榜、百度热播与全球趋势。
  */
 export function TopTenRow({ onPick }: { onPick: (title: string) => void }) {
   const doubanEnabled = useAppStore((s) => s.doubanEnabled);
-  const [tab, setTab] = useState<HotListId>('douban_tv_chinese');
+  const [tab, setTab] = useState<HotListId>('realtime_all');
   const { items, isLoading } = useTopRankItems(tab, doubanEnabled);
 
   if (!doubanEnabled) return null;
@@ -823,17 +853,17 @@ export function TopTenRow({ onPick }: { onPick: (title: string) => void }) {
 
   return (
     <ShelfRow
-      title="本周前十"
-      badge="TOP 10"
+      title="实时风向 · TOP 10"
+      badge="多源实时"
       headerExtra={
-        <div className="flex items-center gap-1 flex-wrap">
+        <div className="flex items-center gap-1 overflow-x-auto scrollbar-none max-w-full pb-0.5">
           {TOP_TEN_TABS.map((t) => (
             <button
               key={t.id}
               type="button"
               onClick={() => setTab(t.id)}
               className={cn(
-                'px-2.5 py-1 rounded-full text-xs transition-colors cursor-pointer',
+                'px-2.5 py-1 rounded-full text-xs transition-colors cursor-pointer shrink-0',
                 tab === t.id
                   ? 'bg-accent text-on-accent font-medium shadow-sm'
                   : 'bg-chip text-muted hover:text-content hover:bg-hover',
@@ -881,6 +911,23 @@ function TopTenCard({
   onClick: () => void;
   onFavorite: () => void;
 }) {
+  const metaText =
+    [item.year, item.area, item.genres?.split(/\s+/)[0]].filter(Boolean).join(' · ') ||
+    item.subtitle ||
+    item.sourceLabel ||
+    `实时第 ${rank} 名`;
+
+  const badge = item.remarks
+    ? {
+        text: item.remarks.length > 10 ? item.remarks.slice(0, 10) : item.remarks,
+        tone: (item.status === 'ended' ? 'ok' : 'warn') as 'ok' | 'warn',
+      }
+    : item.status === 'ended'
+      ? { text: '完结', tone: 'ok' as const }
+      : item.status === 'airing'
+        ? { text: '连载', tone: 'warn' as const }
+        : undefined;
+
   return (
     <div className="shrink-0 flex items-end group pl-1">
       {/* Netflix 风格大号空心描边渐变数字 */}
@@ -922,19 +969,14 @@ function TopTenCard({
             title: item.title,
             cover: item.cover,
             rating: item.rating,
-            meta: [item.year, item.area].filter(Boolean).join(' · ') || `本周第 ${rank} 名`,
+            meta: metaText,
             favorite: {
               localId: favoriteIdOf({ title: item.title }),
               title: item.title,
               pic: item.cover,
               year: item.year,
             },
-            badge:
-              item.status === 'ended'
-                ? { text: '完结', tone: 'ok' }
-                : item.status === 'airing'
-                  ? { text: '连载', tone: 'warn' }
-                  : undefined,
+            badge,
           }}
           onClick={onClick}
           onFavorite={onFavorite}
