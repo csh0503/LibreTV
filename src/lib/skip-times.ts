@@ -23,7 +23,8 @@ export interface SkipSegment {
   via?: SkipVia;
 }
 
-export type SkipVia = 'bilibili' | 'aniskip' | 'theintrodb';
+/** audio = 在你的浏览器里比对声音找到的 */
+export type SkipVia = 'bilibili' | 'aniskip' | 'theintrodb' | 'audio';
 
 /** 这一集为什么没有片头 / 片尾：AniSkip 上没人提交，或只有总时长差太多的版本 */
 export type SkipMissing = 'none' | 'other-version';

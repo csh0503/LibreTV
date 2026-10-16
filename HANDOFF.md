@@ -30,6 +30,12 @@
 - **播放卡住自动换源**：`player-shell.tsx` 在三种情况把「这个源不行」交给父级（`onRequestSwitchSource(reason, position)`，每集一次）：hls 重试耗尽、开播后卡住 25 秒、换地址 35 秒还没开播（画面已加载只是被浏览器挡了自动播放的不算）。`use-auto-failover.ts` 用同一部（`failoverQueryTitle` 去掉片名后的年份）重新搜（多半命中缓存），`lib/failover.ts` 的 `pickFailoverCandidates` 在同一组里按片源排名挑，确认有这一集后跳过去接着播（位置回退 3 秒），试过的记在 URL `tried`，一集最多 5 个源；都不行显示「换了 N 个源都播不了」+ 手动换源 / 重试。
 - **详情弹窗默认用上次看的源**：看过的作品，选集区默认是上次那个源（`lastWatched`），不是推荐源。
 
+- **声音比对找片头片尾（浏览器里，所有剧适用）**：`use-audio-skip.ts` 开播 4 秒后在后台取音频比对（不播放）。
+  - 第一次：本集和另一集（下一集，没有就上一集）开头各 4 分钟（找不到完整的再放大到 7 分钟），找两集共有的那段音乐 = 片头；播过一半后取两集最后 6 分钟找片尾。找到后把曲子开头 30 秒的特征存成模板（`audio-skip-store.ts`，localStorage，每段约 5KB，最多 80 部剧）。
+  - 之后：每集只拿本集开头 / 结尾跟模板比（先看前 4 分钟），不再下载别的集；模板这集对不上（换了片头曲）就再跟另一集比、换新模板。
+  - 管线：`hls-audio.ts`（读播放列表、主播放列表挑最低码率、和播放器同一套去广告规则保证时间轴一致、AES-128 用 WebCrypto 解密、按 EXTINF 把每个分片的音频摆到时间轴上）→ `ts-demux.ts`（TS 取出 AAC/MP3 音轨，跳过伪装的 PNG 头；fMP4 暂不支持）→ `hls-audio-browser.ts`（分片先读预加载缓存，再直连，再走 /api/proxy；OfflineAudioContext 22050Hz 解码后降到 11025Hz）→ `audio-fingerprint.ts`（0.093 秒一帧、16 个对数频段的能量形状；逐偏移量沿对角线比相似度，1 秒滑动平均后找 ≥0.8 的最长连续段，分批让出主线程）→ `audio-skip.ts`。
+  - 优先级：手动 > 数据库准确值 > 声音比对 > 你跳过后记下的 > 约略。已有手动 / 数据库准确值的那段不做。「不准」同时关掉数据库和声音比对；「重设」也清模板。设置面板里可关（浏览器开了省流量时默认关）。
+  - 测试：容器里的 Chromium 不能解 AAC（也不能播 H.264），浏览器端到端用 MP3 音轨的 HLS 测（`smoke/run7.cjs`）；AAC 解复用和 ffmpeg 抽出来的逐字节一致；ffmpeg 生成的两集（第二集 AES 加密）全管线误差 0.5 秒内。真实片源准不准要用户在真剧上看。
 - **片头片尾数据来源（2026-10-16 加）**：`/api/skip-times` 合并多个来源（`lib/skip-sources.ts` 的 `mergeSkipTimes`，每段挑最可靠的：准确的 B站 > 准确的 AniSkip > 约略的 B站 / AniSkip / TheIntroDB）。
   - 编号：Bangumi 按中文名搜到条目 → **bangumi-data** 对照表（jsDelivr / unpkg 上的 `bangumi-data@0.3/dist/data.json`，约 8MB、9 千部，内存缓存一天）拿 MAL / B站 media_id / TMDB；表里没 MAL 才用 AniList 搜。
   - **B站官方**：`pgc/review/user?media_id=` → season_id → `pgc/view/web/season` 每集的 `skip.op / skip.ed`（0–0 = 没标）和 `duration`，按总时长判断准确 / 约略。B站搜索对海外 IP 返回空（加 wbi 签名也一样），所以只能靠对照表；药屋少女的呢喃不在 B站。实测鬼灭第 2 集 1:04–2:32、幕末替身传说第 1 集片头在 9:56。

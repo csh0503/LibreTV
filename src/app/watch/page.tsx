@@ -19,6 +19,8 @@ import { EmptyState, LoadingState, Spinner } from '@/components/states';
 import { SwitchSourceModal } from '@/components/switch-source';
 import { useAutoFailover, type FailoverState } from '@/components/use-auto-failover';
 import { useToast } from '@/components/toast';
+import { useAudioSkip, type AudioSkipStatus } from '@/components/use-audio-skip';
+import { audioSkipEnabled, saveAudioTemplates, setAudioSkipEnabled } from '@/lib/audio-skip-store';
 import {
   classifySkip,
   loadSkipMarks,
@@ -195,9 +197,23 @@ function WatchContent() {
     staleTime: 24 * 3600_000,
     retry: 0,
   });
+  // 后台声音比对：这一段已经有你手动设的或数据库的准确值就不做（省流量）
+  const baseSkip = useMemo(() => resolveEpisodeSkip(remoteSkip.data, learned, duration), [remoteSkip.data, learned, duration]);
+  const audioSkip = useAudioSkip({
+    seriesKey,
+    episodes,
+    index: currentIndex,
+    adFilter: store.adFilter,
+    ready: duration > 60 && !remoteSkip.isFetching && !source?.isAdult,
+    need: {
+      intro: !learned?.ignoreRemote && baseSkip.source.intro !== 'manual' && baseSkip.source.intro !== 'remote',
+      outro: !learned?.ignoreRemote && baseSkip.source.outro !== 'manual' && baseSkip.source.outro !== 'remote',
+    },
+    positionRef,
+  });
   const episodeSkip = useMemo(
-    () => resolveEpisodeSkip(remoteSkip.data, learned, duration),
-    [remoteSkip.data, learned, duration],
+    () => resolveEpisodeSkip(remoteSkip.data, learned, duration, audioSkip.result),
+    [remoteSkip.data, learned, duration, audioSkip.result],
   );
   const updateLearned = useCallback(
     (patch: Partial<LearnedSkip> | null) => setLearned(saveSkipMarks(seriesKey, patch)),
@@ -223,7 +239,7 @@ function WatchContent() {
       const hit = classifySkip(from, to, total);
       if (!hit) return;
       const src = episodeSkip.source[hit.kind];
-      if (src === 'remote' || src === 'manual') return;
+      if (src === 'remote' || src === 'manual' || src === 'audio') return;
       const name = hit.kind === 'intro' ? '片头' : '片尾';
       const range =
         hit.kind === 'intro'
@@ -555,14 +571,16 @@ function WatchContent() {
                 <SkipSettingsRow
                   skip={episodeSkip}
                   learned={learned}
+                  audioStatus={audioSkip.status}
                   onAuto={(on) => updateLearned({ auto: on })}
                   onEdit={() => setSkipEditorOpen((v) => !v)}
                   onDistrust={() => {
                     updateLearned({ ignoreRemote: true });
-                    toast('这部剧不再用数据库（B站 / AniSkip / TheIntroDB）的时间点，可以点「设置」手动填', 'info');
+                    toast('这部剧不再用自动找到的时间点（数据库和声音比对），可以点「设置」手动填', 'info');
                   }}
                   onReset={() => {
                     updateLearned(null);
+                    saveAudioTemplates(seriesKey, null);
                     toast('已清除这部剧的片头片尾设置', 'info');
                   }}
                 />
@@ -653,10 +671,11 @@ function WatchContent() {
   );
 }
 
-const VIA_LABEL: Record<SkipVia, string> = { bilibili: 'B站官方', aniskip: 'AniSkip', theintrodb: 'TheIntroDB' };
+const VIA_LABEL: Record<SkipVia, string> = { bilibili: 'B站官方', aniskip: 'AniSkip', theintrodb: 'TheIntroDB', audio: '声音比对' };
 function sourceLabel(src: SkipSource, seg: { via?: SkipVia }): string {
   if (src === 'manual') return '你手动设的';
   if (src === 'learned') return '你跳过后记下的';
+  if (src === 'audio') return '声音比对';
   const via = seg.via ? VIA_LABEL[seg.via] : '数据库';
   return src === 'remote' ? via : `${via}，约略位置，只显示按钮`;
 }
@@ -665,6 +684,7 @@ function sourceLabel(src: SkipSource, seg: { via?: SkipVia }): string {
 function SkipSettingsRow({
   skip,
   learned,
+  audioStatus,
   onAuto,
   onEdit,
   onDistrust,
@@ -672,12 +692,13 @@ function SkipSettingsRow({
 }: {
   skip: EpisodeSkip;
   learned?: LearnedSkip;
+  audioStatus: AudioSkipStatus;
   onAuto: (on: boolean) => void;
   onEdit: () => void;
   onDistrust: () => void;
   onReset: () => void;
 }) {
-  const fromRemote = skip.source.intro?.startsWith('remote') || skip.source.outro?.startsWith('remote');
+  const fromRemote = [skip.source.intro, skip.source.outro].some((s) => s === 'remote' || s === 'remote-approx' || s === 'audio');
   const describe = (kind: 'intro' | 'outro') => {
     const name = kind === 'intro' ? '片头' : '片尾';
     const s = skip[kind];
@@ -707,7 +728,8 @@ function SkipSettingsRow({
         </label>
       )}
       <span className="text-faint">
-        （{parts.length > 0 ? parts.join(' · ') : '片头片尾还没设'}
+        （{parts.length > 0 ? parts.join(' · ') : audioStatus === 'working' ? '正在比对声音找片头片尾…' : '片头片尾还没设'}
+        {parts.length > 0 && audioStatus === 'working' && !(skip.intro && skip.outro) ? ' · 正在比对声音…' : ''}
         {' · '}
         <button type="button" className={linkCls} onClick={onEdit}>
           设置
@@ -762,6 +784,7 @@ function SkipEditor({
   const [outroEnd, setOutroEnd] = useState(fmt(skip.outro?.end));
   const [outroToEnd, setOutroToEnd] = useState(!skip.outro || skip.outro.end >= duration - 3);
   const [error, setError] = useState('');
+  const [audioOn, setAudioOn] = useState(() => audioSkipEnabled());
 
   const now = () => formatTime(positionRef.current.time);
   const save = () => {
@@ -847,6 +870,23 @@ function SkipEditor({
           </label>
         </div>
       </div>
+      <label className="flex items-start gap-1.5 cursor-pointer">
+        <input
+          type="checkbox"
+          className="mt-0.5 h-3.5 w-3.5 accent-[#2563eb]"
+          checked={audioOn}
+          onChange={(e) => {
+            setAudioOn(e.target.checked);
+            setAudioSkipEnabled(e.target.checked);
+          }}
+        />
+        <span>
+          后台比对声音自动找片头片尾（所有剧都适用）
+          <span className="block text-faint">
+            每部剧第一次会多下载另一集开头 / 结尾几分钟（约几十 MB），之后每集只用本集的；用手机流量时可以关掉
+          </span>
+        </span>
+      </label>
       {error && <p className="text-danger">{error}</p>}
       <div className="flex items-center gap-2">
         <button type="button" className="btn-primary btn-sm" onClick={save}>

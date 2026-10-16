@@ -88,8 +88,8 @@ export function classifySkip(
   return null;
 }
 
-/** remote = 片头片尾数据库（B站官方 / AniSkip / TheIntroDB，具体看区间的 via） */
-export type SkipSource = 'manual' | 'remote' | 'remote-approx' | 'learned';
+/** remote = 片头片尾数据库（B站官方 / AniSkip / TheIntroDB，具体看区间的 via）；audio = 浏览器里比对声音找到的 */
+export type SkipSource = 'manual' | 'remote' | 'audio' | 'remote-approx' | 'learned';
 
 export interface EpisodeSkip {
   intro?: SkipSegment;
@@ -107,9 +107,15 @@ export interface EpisodeSkip {
 
 /**
  * 这一集实际用的片头片尾（绝对秒数），优先顺序：
- * 你手动设的 > 数据库的准确时间（B站官方 / AniSkip）> 你跳过后确认记下的 > 数据库的约略位置（版本对不上 / TheIntroDB）。
+ * 你手动设的 > 数据库的准确时间（B站官方 / AniSkip）> 声音比对 > 你跳过后确认记下的 > 数据库的约略位置（版本对不上 / TheIntroDB）。
+ * 「不准」（ignoreRemote）同时关掉数据库和声音比对。
  */
-export function resolveEpisodeSkip(remote: SkipTimes | undefined, learned: LearnedSkip | undefined, duration: number): EpisodeSkip {
+export function resolveEpisodeSkip(
+  remote: SkipTimes | undefined,
+  learned: LearnedSkip | undefined,
+  duration: number,
+  audio?: SkipTimes,
+): EpisodeSkip {
   const valid = (s?: SkipSegment) =>
     s && s.end > s.start && s.start < duration ? { ...s, start: s.start, end: Math.min(s.end, duration) } : undefined;
   const learnedOutro =
@@ -120,18 +126,20 @@ export function resolveEpisodeSkip(remote: SkipTimes | undefined, learned: Learn
   const exact = (s?: SkipSegment) => (s && !s.approx ? valid(s) : undefined);
   const approx = (s?: SkipSegment) => (s?.approx ? valid(s) : undefined);
   const mine = learned?.manual ? 'manual' : 'learned';
+  const heard = learned?.ignoreRemote ? undefined : audio;
   const pick = (
     own: SkipSegment | undefined,
     fromRemote: SkipSegment | undefined,
+    fromAudio: SkipSegment | undefined,
   ): { seg?: SkipSegment; source?: SkipSource } => {
     const candidates: [SkipSegment | undefined, SkipSource][] = learned?.manual
-      ? [[own, 'manual'], [exact(fromRemote), 'remote'], [approx(fromRemote), 'remote-approx']]
-      : [[exact(fromRemote), 'remote'], [own, mine], [approx(fromRemote), 'remote-approx']];
+      ? [[own, 'manual'], [exact(fromRemote), 'remote'], [valid(fromAudio), 'audio'], [approx(fromRemote), 'remote-approx']]
+      : [[exact(fromRemote), 'remote'], [valid(fromAudio), 'audio'], [own, mine], [approx(fromRemote), 'remote-approx']];
     const hit = candidates.find(([seg]) => seg);
     return hit ? { seg: hit[0], source: hit[1] } : {};
   };
-  const intro = pick(valid(learned?.intro), r?.intro);
-  const outro = pick(learnedOutro, r?.outro);
+  const intro = pick(valid(learned?.intro), r?.intro, heard?.intro);
+  const outro = pick(learnedOutro, r?.outro, heard?.outro);
   const introJump = !intro.seg && learned?.introLength && learned.introLength > 0 ? learned.introLength : undefined;
   return {
     intro: intro.seg,
