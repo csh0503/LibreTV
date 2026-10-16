@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { groupCalendarByWeekday, normalizeWeekday, subjectToItem } from './bangumi';
+import { groupCalendarByWeekday, isNotYetAired, normalizeWeekday, subjectToItem } from './bangumi';
 
 describe('normalizeWeekday', () => {
   it('1-7 原样保留，非法值丢弃', () => {
@@ -62,5 +62,19 @@ describe('groupCalendarByWeekday', () => {
     expect(Object.keys(days).sort()).toEqual(['1', '7']);
     expect(days[1]).toEqual([{ id: '10', title: '甲', cover: 'c1', rating: '7.0', isTv: true }]);
     expect(days[7]).toEqual([]);
+  });
+});
+
+describe('isNotYetAired', () => {
+  it('首播日期晚于今天才算没开播（边缘行者 2：10/20 开播）', () => {
+    expect(isNotYetAired('2026-10-20', '2026-10-17')).toBe(true);
+    expect(isNotYetAired('2026-10-17', '2026-10-17')).toBe(false);
+    expect(isNotYetAired('2026-04-05', '2026-10-17')).toBe(false);
+  });
+
+  it('没有日期或格式不对时不判断', () => {
+    expect(isNotYetAired(undefined, '2026-10-17')).toBe(false);
+    expect(isNotYetAired('', '2026-10-17')).toBe(false);
+    expect(isNotYetAired('2026-10', '2026-10-17')).toBe(false);
   });
 });

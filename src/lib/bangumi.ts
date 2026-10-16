@@ -19,6 +19,8 @@ export function normalizeWeekday(id: number): number | undefined {
 
 interface BangumiSubject {
   id?: number;
+  /** 本季首播日期 YYYY-MM-DD；放送表会把还没开播的定档作品也排在对应星期里 */
+  air_date?: string;
   name?: string;
   name_cn?: string;
   images?: { large?: string; common?: string; medium?: string; small?: string; grid?: string };
@@ -29,6 +31,16 @@ interface BangumiSubject {
 interface BangumiCalendarDay {
   weekday?: { id?: number; en?: string; cn?: string };
   items?: BangumiSubject[];
+}
+
+/** 北京时间的 YYYY-MM-DD */
+function cnToday(now = Date.now()): string {
+  return new Date(now + 8 * 3600_000).toISOString().slice(0, 10);
+}
+
+/** 首播日期晚于今天（北京时间）＝还没开播；没有日期的不判断，按已播出处理 */
+export function isNotYetAired(airDate: string | undefined, today = cnToday()): boolean {
+  return Boolean(airDate && /^\d{4}-\d{2}-\d{2}$/.test(airDate) && airDate > today);
 }
 
 /** 单条 subject → DoubanItem；缺标题或封面的条目视为脏数据丢弃 */
@@ -77,6 +89,8 @@ export async function fetchBangumiCalendar(): Promise<Record<number, DoubanItem[
       .filter((item) => {
         const votes = item.rating?.total ?? 0;
         const doing = item.collection?.doing ?? 0;
+        // 放送表里「周二 · 2026-10-20 开播」这类还没开播的条目（想看人数不少）不是在播番，交给「即将播出」
+        if (isNotYetAired(item.air_date)) return false;
         return Boolean(item.name_cn) && (votes >= 40 || doing >= 80);
       })
       .sort((a, b) => {
