@@ -99,6 +99,7 @@ export function SiteFooter() {
           className="group relative inline-block cursor-help hover:text-accent"
         >
           LibreTV{version ? ` v${version}` : ''}
+          {process.env.NEXT_PUBLIC_APP_COMMIT && <span className="opacity-70"> ({process.env.NEXT_PUBLIC_APP_COMMIT})</span>}
           {version && <UpdateTip update={upstreamUpdate} />}
         </a>
         {' · '}

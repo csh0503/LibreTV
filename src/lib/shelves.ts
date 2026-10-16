@@ -9,12 +9,16 @@ import { isShelfId } from './shelf-defs';
  * 首页货架的取数：每一行由固定、可解释的来源组成，来源之间只做「补缺」，不做「各自成排」。
  * - 热榜类（豆瓣 / B站 / Bangumi / 百度的多源融合）直接复用 fetchHotList
  * - 题材类用 TMDB discover（已播出、近 3 年、有口碑），tv 与 movie 交错
- * 出口统一：剔除未播出条目、只留有封面的、每行最多 24 条。
+ * - 热榜通常只有二十来部，后面用同一频道的 TMDB discover 接上，让一行能往右多翻几页
+ * 出口统一：剔除未播出条目、只留有封面的、每行最多 40 条。
  */
 
 const SHELF_TTL = 15 * 60 * 1000;
-const SHELF_LIMIT = 24;
+const SHELF_LIMIT = 40;
 const hasCJK = (s: string) => /[一-龥]/.test(s);
+/** TMDB 没有中文译名时会回落到日文原名（含假名），这种标题在片源站搜不到 */
+const hasKana = (s: string) => /[\u3040-\u30ff]/.test(s);
+const CN_AREA = /中国|大陆|香港|台湾|华语/;
 const CN_OFFSET = 8 * 3600_000;
 
 const cnDate = (ms: number) => new Date(ms + CN_OFFSET).toISOString().slice(0, 10);
@@ -39,7 +43,7 @@ export function interleave(lists: DoubanItem[][]): DoubanItem[] {
 
 interface DiscoverSpec {
   /** 逗号 = 且，竖线 = 或（TMDB 语法） */
-  genres: string;
+  genres?: string;
   /** 额外的 discover 参数 */
   extra?: Record<string, string>;
 }
@@ -52,7 +56,7 @@ async function discoverOne(kind: 'tv' | 'movie', spec: DiscoverSpec, now: number
   const pages = await Promise.all(
     [1, 2].map((page) =>
       tmdbGet<{ results?: TmdbTrendingRaw[] }>(`/discover/${kind}`, {
-        with_genres: spec.genres,
+        ...(spec.genres ? { with_genres: spec.genres } : {}),
         sort_by: 'popularity.desc',
         'vote_count.gte': kind === 'tv' ? '150' : '400',
         'vote_average.gte': '6.5',
@@ -66,7 +70,7 @@ async function discoverOne(kind: 'tv' | 'movie', spec: DiscoverSpec, now: number
   return pages
     .flatMap((res) => res?.results ?? [])
     .map((row) => tmdbTrendingToItem({ ...row, media_type: kind }))
-    .filter((item): item is DoubanItem => item !== undefined && hasCJK(item.title));
+    .filter((item): item is DoubanItem => item !== undefined && hasCJK(item.title) && !hasKana(item.title));
 }
 
 async function discoverMix(specs: { tv?: DiscoverSpec; movie?: DiscoverSpec }, now: number): Promise<DoubanItem[]> {
@@ -79,20 +83,75 @@ async function discoverMix(specs: { tv?: DiscoverSpec; movie?: DiscoverSpec }, n
 
 const hot = (id: HotListId) => fetchHotList(id);
 
+/** 热榜在前，TMDB 接在后面补深度；同名只留热榜那条。补充源失败不影响热榜本身 */
+async function withBackfill(primary: Promise<DoubanItem[]>, backfill: Promise<DoubanItem[]>): Promise<DoubanItem[]> {
+  const [main, more] = await settled([primary, backfill]);
+  if (main.length === 0 && more.length === 0) throw new Error('货架数据为空');
+  return interleave([[...main, ...more]]);
+}
+
+const notCn = (items: DoubanItem[]) => items.filter((i) => !i.area || !CN_AREA.test(i.area));
+const onlyCn = (items: DoubanItem[]) => items.filter((i) => !i.area || CN_AREA.test(i.area));
+/** 剧集补充源里不要动画、综艺、纪录片，它们各有自己的行 */
+const LIVE_ACTION_TV = { without_genres: '16,99,10764,10767' };
+
 async function settled(tasks: Promise<DoubanItem[]>[]): Promise<DoubanItem[][]> {
   const res = await Promise.allSettled(tasks);
   return res.map((r) => (r.status === 'fulfilled' ? r.value : []));
 }
 
 const LOADERS: Record<string, (now: number) => Promise<DoubanItem[]>> = {
-  'hot-movies': () => hot('douban_movie_realtime'),
-  'cn-tv': () => hot('douban_tv_domestic'),
-  'anime-airing': () => hot('bili_bangumi'),
-  guoman: () => hot('bili_guochuang'),
-  'kr-jp-tv': () => hot('douban_tv_korean'),
-  'us-tv': () => hot('douban_tv_american'),
-  variety: () => hot('douban_show_hot'),
-  acclaimed: async () => interleave(await settled([hot('douban_movie_weekly'), hot('douban_tv_chinese')])),
+  'hot-movies': (now) =>
+    withBackfill(
+      hot('douban_movie_realtime'),
+      discoverOne('movie', { extra: { 'vote_count.gte': '100', 'primary_release_date.gte': cnDate(now - 365 * 24 * 3600_000) } }, now),
+    ),
+  'cn-tv': (now) =>
+    withBackfill(hot('douban_tv_domestic'), discoverOne('tv', { extra: { with_origin_country: 'CN', 'vote_count.gte': '5', ...LIVE_ACTION_TV } }, now)),
+  // 日漫行只放日本（及没标地区的）作品，国创归「国漫热播」
+  'anime-airing': async (now) =>
+    notCn(
+      await withBackfill(
+        hot('bili_bangumi'),
+        discoverOne('tv', { genres: '16', extra: { with_origin_country: 'JP', 'vote_count.gte': '20', 'vote_average.gte': '6' } }, now),
+      ),
+    ),
+  guoman: async (now) =>
+    onlyCn(
+      await withBackfill(
+        hot('bili_guochuang'),
+        discoverOne('tv', { genres: '16', extra: { with_origin_country: 'CN', 'vote_count.gte': '3', 'vote_average.gte': '0' } }, now),
+      ),
+    ),
+  'kr-jp-tv': (now) =>
+    withBackfill(
+      hot('douban_tv_korean'),
+      settled([
+        discoverOne('tv', { extra: { with_origin_country: 'KR', 'vote_count.gte': '30', ...LIVE_ACTION_TV } }, now),
+        discoverOne('tv', { extra: { with_origin_country: 'JP', 'vote_count.gte': '20', ...LIVE_ACTION_TV } }, now),
+      ]).then(interleave),
+    ),
+  'us-tv': (now) =>
+    withBackfill(
+      hot('douban_tv_american'),
+      settled([
+        discoverOne('tv', { extra: { with_origin_country: 'US', ...LIVE_ACTION_TV } }, now),
+        discoverOne('tv', { extra: { with_origin_country: 'GB', 'vote_count.gte': '50', ...LIVE_ACTION_TV } }, now),
+      ]).then(interleave),
+    ),
+  variety: (now) =>
+    withBackfill(
+      hot('douban_show_hot'),
+      discoverOne('tv', { genres: '10764|10767', extra: { with_origin_country: 'CN', 'vote_count.gte': '1', 'vote_average.gte': '0' } }, now),
+    ),
+  acclaimed: async (now) =>
+    interleave(
+      await settled([
+        hot('douban_movie_weekly'),
+        hot('douban_tv_chinese'),
+        discoverOne('movie', { extra: { 'vote_count.gte': '1500', 'vote_average.gte': '7.5' } }, now),
+      ]),
+    ),
   'g-crime': (now) =>
     discoverMix(
       { tv: { genres: '80|9648', extra: { without_genres: '16' } }, movie: { genres: '80|9648', extra: { without_genres: '16' } } },

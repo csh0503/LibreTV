@@ -1,11 +1,11 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useQueries } from '@tanstack/react-query';
+import { useQueries, useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/client-api';
 import { isAdultContent } from '@/lib/cms-parser';
 import { favoriteIdOf } from '@/lib/db';
-import { SHELF_DEFS, shelfDedupeKey } from '@/lib/shelf-defs';
+import { SHELF_DEFS, shelfItemKey, type ShelfChannel } from '@/lib/shelf-defs';
 import { useAppStore } from '@/lib/store';
 import { rememberDoubanItem } from '@/lib/taste-store';
 import type { DoubanItem, TitlePick } from '@/lib/types';
@@ -16,20 +16,45 @@ import { DoubanCard } from './video-card';
 const BATCH = 3;
 /** 一行至少要有几部才值得显示 */
 const MIN_ITEMS = 4;
-/** 去重后一行最多展示 */
-const MAX_PER_SHELF = 20;
+/** 每行前这么多部算这一行「占用」的，后面的行不再重复 */
+const CLAIM_PER_SHELF = 20;
+/** 去重后一行最多展示（超出 CLAIM 的部分只做补深度，不占用） */
+const MAX_PER_SHELF = 40;
+
+const CHANNEL_LABEL: Record<ShelfChannel, string> = {
+  anime: '动漫',
+  movie: '电影',
+  tv: '电视剧',
+  show: '综艺',
+  doc: '纪录片',
+};
 
 /**
  * 首页货架（Netflix 式）：按固定顺序一行一行往下排。
- * 整页同一部作品只出现一次（含不同季度），排在前面的行优先；
- * 数据取不到或去重后太少的行直接不显示，不留空壳。
+ * 整页同一部作品只出现一次（含不同季度），TOP 10 综合总榜（也是大图的来源）和排在前面的行优先；
+ * 数据取不到或去重后太少的行直接不显示，不留空壳。每行最后一格通往「浏览全部」的对应频道。
  * 点击后走搜索：有片源就能看，没有就显示「暂无片源」并可加入片单（首页不预先探测、不隐藏）。
  */
-export function ShelfRows({ onPick }: { onPick: (title: string, pick?: TitlePick) => void }) {
+export function ShelfRows({
+  onPick,
+  onBrowse,
+}: {
+  onPick: (title: string, pick?: TitlePick) => void;
+  onBrowse: (channel: ShelfChannel) => void;
+}) {
   const doubanEnabled = useAppStore((s) => s.doubanEnabled);
   const yellowFilter = useAppStore((s) => s.yellowFilter);
   const [revealed, setRevealed] = useState(BATCH);
   const sentinelRef = useRef<HTMLDivElement>(null);
+
+  // 与大图 / TOP 10 共用同一份缓存，不会多发请求
+  const topQuery = useQuery({
+    queryKey: ['hot-list', 'realtime_all'],
+    queryFn: ({ signal }) => api.hotList('realtime_all', signal),
+    enabled: doubanEnabled,
+    staleTime: 15 * 60_000,
+    retry: 1,
+  });
 
   const queries = useQueries({
     queries: SHELF_DEFS.map((def, idx) => ({
@@ -41,25 +66,36 @@ export function ShelfRows({ onPick }: { onPick: (title: string, pick?: TitlePick
     })),
   });
 
-  // 前面行已用掉的标题，后面的行不再重复
+  // TOP 10 落地前先不排货架，否则它回来时货架里的卡片会突然消失
+  const topPending = topQuery.isLoading;
+
+  // TOP 10 和前面行已用掉的作品，后面的行不再重复
   const shelves = useMemo(() => {
-    const seen = new Set<string>();
+    const seen = new Set<string>((topQuery.data?.items ?? []).slice(0, 10).map(shelfItemKey));
     return SHELF_DEFS.map((def, idx) => {
       const q = queries[idx];
       const items: DoubanItem[] = [];
+      const own = new Set<string>();
       for (const item of q.data?.items ?? []) {
         if (yellowFilter && isAdultContent(item.title)) continue;
-        const key = shelfDedupeKey(item.title);
-        if (!key || seen.has(key)) continue;
+        const key = shelfItemKey(item);
+        if (!key || seen.has(key) || own.has(key)) continue;
+        own.add(key);
         items.push(item);
         if (items.length >= MAX_PER_SHELF) break;
       }
-      // 只有真正展示的行才占用标题
+      // 只有真正展示的行才占用，且只占前 CLAIM 部
       const show = items.length >= MIN_ITEMS;
-      if (show) for (const item of items) seen.add(shelfDedupeKey(item.title));
-      return { def, items: show ? items : [], loading: q.isLoading, failed: q.isError, requested: idx < revealed };
+      if (show) for (const item of items.slice(0, CLAIM_PER_SHELF)) seen.add(shelfItemKey(item));
+      return {
+        def,
+        items: show ? items : [],
+        loading: q.isLoading || topPending,
+        failed: q.isError,
+        requested: idx < revealed,
+      };
     });
-  }, [queries, yellowFilter, revealed]);
+  }, [queries, yellowFilter, revealed, topQuery.data, topPending]);
 
   const allRevealed = revealed >= SHELF_DEFS.length;
   const settledCount = shelves.filter((s) => s.requested && !s.loading).length;
@@ -133,6 +169,17 @@ export function ShelfRows({ onPick }: { onPick: (title: string, pick?: TitlePick
                 />
               </div>
             ))}
+            <button
+              type="button"
+              onClick={() => onBrowse(def.channel)}
+              className="w-[7.25rem] sm:w-32 shrink-0 aspect-[2/3] rounded-xl border border-dashed border-line bg-surface/60 text-muted hover:text-content hover:bg-hover hover:border-accent/50 transition-colors flex flex-col items-center justify-center gap-2 cursor-pointer"
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+              <span className="text-xs font-medium">浏览全部{CHANNEL_LABEL[def.channel]}</span>
+              <span className="text-[10px] text-faint">按题材 / 地区 / 年份筛选</span>
+            </button>
           </ShelfRow>
         );
       })}

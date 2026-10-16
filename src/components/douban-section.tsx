@@ -23,6 +23,7 @@ import {
 import { SortArrows } from './sort-arrows';
 import { DoubanCard } from './video-card';
 import { favoriteIdOf } from '@/lib/db';
+import { dedupeSeasons } from '@/lib/shelf-defs';
 import { absorbHallTaste, rememberDoubanItem } from '@/lib/taste-store';
 import { AdultLibrary } from './adult-library';
 import { useLoadMore } from './use-load-more';
@@ -48,9 +49,14 @@ const YEARS = ['全部', '2026', '2025', '2024', '2023', '2022', '2021', '2020',
 const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
 export function RecommendSection({
+  ref,
+  initialChannel = 'anime',
   onPick,
   onOpen,
 }: {
+  ref?: React.Ref<HTMLElement>;
+  /** 从首页货架末尾点进来时直接落在对应频道 */
+  initialChannel?: HallChannel;
   onPick: (title: string, pick?: TitlePick) => void;
   onOpen: (item: SearchResultItem) => void;
 }) {
@@ -58,7 +64,7 @@ export function RecommendSection({
   const yellowFilter = useAppStore((s) => s.yellowFilter);
   const nowYear = new Date().getFullYear();
 
-  const [channel, setChannel] = useState<HallChannel>('anime');
+  const [channel, setChannel] = useState<HallChannel>(initialChannel);
   const [genre, setGenre] = useState('全部');
   const [area, setArea] = useState('全部');
   const [year, setYear] = useState('全部');
@@ -119,13 +125,13 @@ export function RecommendSection({
   const items = useMemo(() => {
     if (weekdayMode) {
       const day = bangumiQuery.data?.days.find((d) => d.weekday === weekday)?.items ?? [];
-      return sortHallItems(
+      return dedupeSeasons(sortHallItems(
         day
           .map((item) => ({ ...item, status: 'airing' as const, area: item.area || '日本', year: item.year || String(nowYear), isTv: true }))
           .filter((item) => status !== 'ended' && (!yellowFilter || !isAdultContent(item.title))),
         sortKey,
         sortDir
-      );
+      ));
     }
     if (!request) return [];
     const seen = new Set<string>();
@@ -169,7 +175,8 @@ export function RecommendSection({
       minScore: request.minScore,
       hideAdult: yellowFilter,
     });
-    return sortHallItems(filtered, sortKey, sortDir);
+    // 同一系列不同季只留排序靠前的一张
+    return dedupeSeasons(sortHallItems(filtered, sortKey, sortDir));
   }, [
     weekdayMode,
     weekday,
@@ -238,7 +245,7 @@ export function RecommendSection({
   };
 
   return (
-    <section aria-label="影视与动漫大厅" className="space-y-3.5 pt-2">
+    <section ref={ref} aria-label="影视与动漫大厅" className="space-y-3.5 pt-2 scroll-mt-20">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line pb-2.5">
         <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
           <h2 className="text-base sm:text-lg font-bold text-content tracking-tight mr-1">分类片库</h2>
