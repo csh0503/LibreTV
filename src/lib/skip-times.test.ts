@@ -16,9 +16,17 @@ describe('pickSkipTimes', () => {
     });
   });
 
-  it('总时长差超过 15 秒的提交不用，多条取最接近的', () => {
-    expect(pickSkipTimes([r('op', 0, 90, 1500)], 1420)).toEqual({});
+  it('总时长差 15~90 秒的当大概位置，再多不用；多条取最接近的', () => {
+    expect(pickSkipTimes([r('op', 0, 90, 1460)], 1420).intro).toEqual({ start: 0, end: 90, approx: true });
+    expect(pickSkipTimes([r('op', 0, 90, 1600)], 1420)).toEqual({ missing: { intro: 'other-version', outro: 'none' } });
     expect(pickSkipTimes([r('op', 10, 100, 1430), r('mixed-op', 12, 102, 1421)], 1420).intro).toEqual({ start: 12, end: 102 });
+  });
+
+  it('只有片尾时说明片头为什么没有', () => {
+    expect(pickSkipTimes([r('ed', 1335, 1425, 1440)], 1440)).toEqual({
+      outro: { start: 1335, end: 1425 },
+      missing: { intro: 'none' },
+    });
   });
 });
 
@@ -95,6 +103,16 @@ describe('不准：不再用 AniSkip', () => {
   it('ignoreRemote 时只用你记下的', () => {
     const got = resolveEpisodeSkip({ intro: { start: 90, end: 180 } }, { ignoreRemote: true, updatedAt: 0 }, 1440);
     expect(got.intro).toBeUndefined();
+    expect(got.remote.intro).toBe(false);
+  });
+});
+
+describe('大概位置排在你记下的后面', () => {
+  it('approx 的片头：有你记的用你记的，没有才用 approx，且不算 AniSkip 准确值（还能学）', () => {
+    const remote = { intro: { start: 80, end: 170, approx: true } };
+    expect(resolveEpisodeSkip(remote, { intro: { start: 60, end: 150 }, updatedAt: 0 }, 1440).intro).toEqual({ start: 60, end: 150 });
+    const got = resolveEpisodeSkip(remote, undefined, 1440);
+    expect(got.intro).toEqual({ start: 80, end: 170, approx: true });
     expect(got.remote.intro).toBe(false);
   });
 });

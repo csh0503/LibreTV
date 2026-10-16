@@ -17,11 +17,17 @@ export const LENGTH_TOLERANCE_SECONDS = 15;
 export interface SkipSegment {
   start: number;
   end: number;
+  /** AniSkip 只有总时长差 15~90 秒的版本：位置大概对，只显示按钮，不自动跳 */
+  approx?: boolean;
 }
+
+/** 这一集为什么没有片头 / 片尾：AniSkip 上没人提交，或只有总时长差太多的版本 */
+export type SkipMissing = 'none' | 'other-version';
 
 export interface SkipTimes {
   intro?: SkipSegment;
   outro?: SkipSegment;
+  missing?: { intro?: SkipMissing; outro?: SkipMissing };
 }
 
 interface BgmHit {
@@ -88,24 +94,39 @@ interface AniSkipResult {
   episodeLength?: number;
 }
 
+/** 总时长差这么多以内，位置大概还能用（只显示按钮） */
+export const APPROX_TOLERANCE_SECONDS = 90;
+
 /**
- * 从 AniSkip 的多条提交里挑：总时长和我们这一版差不超过 15 秒的才用（差多了说明版本不同，时间点会偏），
+ * 从 AniSkip 的多条提交里挑：总时长和我们这一版差不超过 15 秒的直接用；
+ * 只有差 15~90 秒的，当作大概位置（approx，只显示按钮、不自动跳）；再多就不用。
  * 同类型多条取总时长最接近的。mixed-op / mixed-ed（片头片尾和剧情叠在一起）也算片头片尾。
  */
 export function pickSkipTimes(results: AniSkipResult[], length?: number): SkipTimes {
   const out: SkipTimes = {};
   const best: Record<'intro' | 'outro', { seg: SkipSegment; diff: number } | undefined> = { intro: undefined, outro: undefined };
+  const seen = { intro: 0, outro: 0 };
   for (const r of results) {
     const kind = r.skipType === 'op' || r.skipType === 'mixed-op' ? 'intro' : r.skipType === 'ed' || r.skipType === 'mixed-ed' ? 'outro' : undefined;
     const start = r.interval?.startTime;
     const end = r.interval?.endTime;
     if (!kind || typeof start !== 'number' || typeof end !== 'number' || end - start < 10) continue;
+    seen[kind] += 1;
     const diff = length && r.episodeLength ? Math.abs(r.episodeLength - length) : 0;
-    if (length && r.episodeLength && diff > LENGTH_TOLERANCE_SECONDS) continue;
-    if (!best[kind] || diff < best[kind]!.diff) best[kind] = { seg: { start: Math.max(0, start), end }, diff };
+    if (diff > APPROX_TOLERANCE_SECONDS) continue;
+    if (!best[kind] || diff < best[kind]!.diff) {
+      best[kind] = {
+        seg: { start: Math.max(0, start), end, ...(diff > LENGTH_TOLERANCE_SECONDS ? { approx: true } : {}) },
+        diff,
+      };
+    }
   }
-  if (best.intro) out.intro = best.intro.seg;
-  if (best.outro) out.outro = best.outro.seg;
+  const missing: NonNullable<SkipTimes['missing']> = {};
+  for (const kind of ['intro', 'outro'] as const) {
+    if (best[kind]) out[kind] = best[kind]!.seg;
+    else missing[kind] = seen[kind] > 0 ? 'other-version' : 'none';
+  }
+  if (missing.intro || missing.outro) out.missing = missing;
   return out;
 }
 

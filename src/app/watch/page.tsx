@@ -619,9 +619,21 @@ function SkipSettingsRow({
   onDistrust: () => void;
   onReset: () => void;
 }) {
-  const seg = (s?: { start: number; end: number }) => (s ? `${formatTime(s.start)}–${formatTime(s.end)}` : '');
-  const fromRemote = skip.remote.intro || skip.remote.outro;
-  const parts = [skip.intro && `片头 ${seg(skip.intro)}`, skip.outro && `片尾 ${seg(skip.outro)}`].filter(Boolean);
+  const fromRemote = skip.remote.intro || skip.remote.outro || Boolean(skip.intro?.approx || skip.outro?.approx);
+  // 每段写清楚时间和哪来的；没有某一段时说清楚为什么（AniSkip 没人提交 / 只有别的版本）
+  const describe = (kind: 'intro' | 'outro') => {
+    const name = kind === 'intro' ? '片头' : '片尾';
+    const s = skip[kind];
+    if (s) {
+      const src = skip.remote[kind] ? 'AniSkip' : s.approx ? 'AniSkip 别的版本，约略位置，只显示按钮' : '你跳过时记下的';
+      return `${name} ${formatTime(s.start)}–${formatTime(s.end)}（${src}）`;
+    }
+    const m = skip.missing[kind];
+    if (m === 'none') return `${name}：AniSkip 还没有这一集，你跳过一次就记下`;
+    if (m === 'other-version') return `${name}：AniSkip 的版本对不上，你跳过一次就记下`;
+    return '';
+  };
+  const parts = [describe('intro'), describe('outro')].filter(Boolean);
   const linkCls = 'hover:text-content underline-offset-2 hover:underline cursor-pointer';
   return (
     <span className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted ml-auto">
@@ -638,7 +650,6 @@ function SkipSettingsRow({
       )}
       <span className="text-faint">
         （{parts.length > 0 ? parts.join(' · ') : '片头片尾还没记下'}
-        {parts.length > 0 ? ` · ${fromRemote ? 'AniSkip' : '你跳过时记下的'}` : ''}
         {fromRemote && (
           <>
             {' · '}

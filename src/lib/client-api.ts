@@ -260,8 +260,8 @@ export const api = {
 
   /** 动漫片头片尾（AniSkip）；length 取整到 5 秒，同一集的不同源能共用边缘缓存 */
   skipTimes: (query: { title: string; year?: string; episode: number; length: number }, signal?: AbortSignal) => {
-    // v=2：选季规则改严了，换个网址避开边缘节点上按旧规则缓存的结果
-    const sp = new URLSearchParams({ title: query.title, episode: String(query.episode), length: String(Math.round(query.length / 5) * 5), v: '2' });
+    // v=3：加了大概位置和没有的原因；v=2 选季规则改严了，换个网址避开边缘节点上按旧规则缓存的结果
+    const sp = new URLSearchParams({ title: query.title, episode: String(query.episode), length: String(Math.round(query.length / 5) * 5), v: '3' });
     if (query.year) sp.set('year', query.year);
     return request<{ malId: number | null } & import('./skip-times').SkipTimes>(`/api/skip-times?${sp.toString()}`, { signal });
   },

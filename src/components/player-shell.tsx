@@ -473,7 +473,14 @@ export function PlayerShell({
       else if (sk?.outro && t >= sk.outro.start && t < sk.outro.end - 1) active = 'outro';
       if (active && skippedRef.current.has(active) && !sk?.auto) {
         // 手动跳过之后又拖回来：按钮照样显示
-      } else if (active && sk?.auto && !skippedRef.current.has(active) && !art.video.seeking) {
+      } else if (
+        active &&
+        sk?.auto &&
+        // 大概位置（AniSkip 只有别的版本）只显示按钮，不自动跳
+        !(active === 'intro' ? sk.intro?.approx : sk.outro?.approx) &&
+        !skippedRef.current.has(active) &&
+        !art.video.seeking
+      ) {
         doSkip(active, true);
         active = null;
       }

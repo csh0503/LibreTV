@@ -85,24 +85,33 @@ export interface EpisodeSkip {
   intro?: SkipSegment;
   outro?: SkipSegment;
   auto: boolean;
-  /** 哪个是 AniSkip 给的（显示来源用） */
+  /** 哪段用的是 AniSkip 的准确时间（这段不再学你的跳过） */
   remote: { intro: boolean; outro: boolean };
+  /** 没有某段时的原因（AniSkip 那边） */
+  missing: NonNullable<SkipTimes['missing']>;
 }
 
-/** 这一集实际用的片头片尾（绝对秒数）：AniSkip 有就用，没有用记下的 */
+/**
+ * 这一集实际用的片头片尾（绝对秒数）：
+ * AniSkip 的准确时间 > 你自己跳过时记下的 > AniSkip 只有别的版本时的大概位置。
+ */
 export function resolveEpisodeSkip(remote: SkipTimes | undefined, learned: LearnedSkip | undefined, duration: number): EpisodeSkip {
-  const valid = (s?: SkipSegment) => (s && s.end > s.start && s.start < duration ? { start: s.start, end: Math.min(s.end, duration) } : undefined);
+  const valid = (s?: SkipSegment) =>
+    s && s.end > s.start && s.start < duration ? { ...s, start: s.start, end: Math.min(s.end, duration) } : undefined;
   const learnedOutro =
     learned?.outro && duration > 0
       ? valid({ start: duration - learned.outro.fromEnd, end: duration - learned.outro.toEnd })
       : undefined;
   const r = learned?.ignoreRemote ? undefined : remote;
-  const intro = valid(r?.intro) ?? valid(learned?.intro);
-  const outro = valid(r?.outro) ?? learnedOutro;
+  const exact = (s?: SkipSegment) => (s && !s.approx ? valid(s) : undefined);
+  const approx = (s?: SkipSegment) => (s?.approx ? valid(s) : undefined);
+  const intro = exact(r?.intro) ?? valid(learned?.intro) ?? approx(r?.intro);
+  const outro = exact(r?.outro) ?? learnedOutro ?? approx(r?.outro);
   return {
     intro,
     outro,
     auto: Boolean(learned?.auto),
-    remote: { intro: Boolean(valid(r?.intro)), outro: Boolean(valid(r?.outro)) },
+    remote: { intro: Boolean(exact(r?.intro)), outro: Boolean(exact(r?.outro)) },
+    missing: r?.missing ?? {},
   };
 }
