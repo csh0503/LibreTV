@@ -30,8 +30,10 @@ function redisConfig(): { url: string; token: string } | null {
       ? { url: env.UPSTASH_REDIS_REST_URL, token: env.UPSTASH_REDIS_REST_TOKEN }
       : null;
   if (direct) return direct;
+  // 连接时自定义了前缀：前缀_KV_REST_API_URL，或前缀直接替换了 KV（前缀_REST_API_URL，值指向 upstash.io）
   for (const [name, url] of Object.entries(env)) {
-    if (!url || !name.endsWith('_KV_REST_API_URL')) continue;
+    if (!url || !name.endsWith('_REST_API_URL')) continue;
+    if (!name.endsWith('_KV_REST_API_URL') && !/upstash\.io/.test(url)) continue;
     const token = env[name.replace(/_URL$/, '_TOKEN')];
     if (token) return { url, token };
   }

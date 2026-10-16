@@ -78,6 +78,15 @@ describe('从 Blob 搬到 Redis', () => {
     expect(await store.readStoredJson(store.profileDataKey(ID))).toBeNull();
   });
 
+  it('认自定义前缀的 Upstash 变量', async () => {
+    vi.stubEnv('KV_REST_API_URL', '');
+    vi.stubEnv('KV_REST_API_TOKEN', '');
+    vi.stubEnv('STORAGE_REST_API_URL', 'https://xx.upstash.io');
+    vi.stubEnv('STORAGE_REST_API_TOKEN', 't');
+    const store = await import('./profile-sync-store');
+    expect(store.syncStorageKind()).toBe('redis');
+  });
+
   it('只接了 Blob 时照旧用 Blob', async () => {
     vi.stubEnv('KV_REST_API_URL', '');
     vi.stubEnv('KV_REST_API_TOKEN', '');
