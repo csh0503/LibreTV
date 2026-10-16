@@ -11,7 +11,6 @@ import { aggregateResults, canonicalTitle, matchingGroups, rankGroupsForPick, ty
 import type { SearchResultItem, TitlePick } from '@/lib/types';
 import { useProfile } from '@/lib/use-profile';
 import { buildWatchUrl, cn, formatTime } from '@/lib/utils';
-import { episodeLabels } from '@/lib/cms-parser';
 import { Icon } from './icon';
 import { SmartImage } from './smart-image';
 import { Spinner } from './states';
@@ -205,8 +204,8 @@ function TitleModalBody({
     retry: 0,
   });
   const episodes = episodesQuery.data?.episodes ?? [];
-  // 集数以源给的集名为准（有的源列表从第 2 集开始）
-  const labels = episodeLabels(episodesQuery.data?.episodeNames, episodes.length);
+  // 集数按列表位置算；源给的集名不可靠，只在鼠标停留时提示
+  const episodeNames = episodesQuery.data?.episodeNames;
   const [reversed, setReversed] = useState(false);
   const watchedIndex =
     history && current && history.sourceKey === current.sourceKey && history.vodId === current.vodId
@@ -460,9 +459,13 @@ function TitleModalBody({
                           ? 'border-accent bg-accent/15 text-content font-medium'
                           : 'border-line bg-surface text-muted hover:text-content hover:border-accent/60',
                       )}
-                      title={i === watchedIndex ? '上次看到这一集' : undefined}
+                      title={
+                        [i === watchedIndex ? '上次看到这一集' : '', episodeNames?.[i] && episodeNames[i] !== String(i + 1) ? `源标的集名：${episodeNames[i]}` : '']
+                          .filter(Boolean)
+                          .join(' · ') || undefined
+                      }
                     >
-                      {labels[i]}
+                      {i + 1}
                     </button>
                   ))}
                 </div>

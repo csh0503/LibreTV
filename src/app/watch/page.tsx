@@ -64,7 +64,6 @@ import {
 import { getActiveProfileId, whenProfileReady } from '@/lib/profile-session';
 import { rememberVideoInfo } from '@/lib/taste-store';
 import { cn, formatTime } from '@/lib/utils';
-import { episodeLabels, episodeNumberFromName } from '@/lib/cms-parser';
 
 /**
  * 播放页（唯一入口，替代旧版 watch.html → player.html 跳转链）。
@@ -108,9 +107,9 @@ function WatchContent() {
   });
 
   const episodes = useMemo(() => detailQuery.data?.episodes ?? [], [detailQuery.data]);
-  // 集数以源给的集名为准（有的源列表从第 2 集开始，按位置数会错位）
-  const labels = useMemo(() => episodeLabels(detailQuery.data?.episodeNames, episodes.length), [detailQuery.data, episodes.length]);
-  const labelOf = (i: number) => labels[i] ?? String(i + 1);
+  // 集数按列表位置算。源给的集名不可靠（实测最大资源把第二季第 1~3 集标成「第02~04集」），只当提示
+  const labelOf = (i: number) => String(i + 1);
+  const episodeNames = detailQuery.data?.episodeNames;
   const videoTitle = titleParam || detailQuery.data?.videoInfo?.title || '未知视频';
 
   // 当前播放地址：优先取剧集列表中的当前集，其次直连 URL 参数
@@ -189,8 +188,7 @@ function WatchContent() {
   const isAnime = /动漫|动画|番/.test(detailQuery.data?.videoInfo?.typeName ?? '');
   // 查片头片尾数据库（片子总长确定之后，用它挑同一版本的时间点）：动漫查 B站官方 / AniSkip / TheIntroDB，其他查 TheIntroDB
   const skipKind: 'tv' | 'movie' = episodes.length > 1 ? 'tv' : 'movie';
-  // 查片头片尾数据库用真正的集数（集名里的），不是第几个按钮
-  const episodeNumber = episodeNumberFromName(detailQuery.data?.episodeNames?.[currentIndex]) ?? currentIndex + 1;
+  const episodeNumber = currentIndex + 1;
   const remoteSkip = useQuery({
     queryKey: ['skip-times', failoverQueryTitle(videoTitle, videoYear), videoYear, episodeNumber, Math.round(duration / 5), isAnime, skipKind],
     queryFn: ({ signal }) =>
@@ -448,10 +446,7 @@ function WatchContent() {
             <h1 className="text-sm font-medium text-content truncate">{videoTitle}</h1>
             <p className="text-xs text-faint">
               {source.name}
-              {episodes.length > 0 &&
-                (labelOf(currentIndex) === String(currentIndex + 1)
-                  ? ` · 第 ${currentIndex + 1}/${episodes.length} 集`
-                  : ` · 第 ${labelOf(currentIndex)} 集（列表第 ${currentIndex + 1}/${episodes.length} 个）`)}
+              {episodes.length > 0 && ` · 第 ${currentIndex + 1}/${episodes.length} 集`}
             </p>
           </div>
           <div className="ml-auto flex items-center gap-2">
@@ -685,6 +680,7 @@ function WatchContent() {
                   <EpisodeButton
                     key={realIndex}
                     label={labelOf(realIndex)}
+                    hint={episodeNames?.[realIndex]}
                     active={realIndex === currentIndex}
                     onClick={() => goEpisode(realIndex)}
                   />
@@ -1132,7 +1128,7 @@ function FailoverOverlayCard({
 }
 
 /** 集数按钮：激活时自动滚动进可视区（长剧列表） */
-function EpisodeButton({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+function EpisodeButton({ label, hint, active, onClick }: { label: string; hint?: string; active: boolean; onClick: () => void }) {
   const ref = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -1143,6 +1139,7 @@ function EpisodeButton({ label, active, onClick }: { label: string; active: bool
     <button
       ref={ref}
       className={cn('btn btn-sm !px-1', active ? 'episode-active' : 'btn-ghost')}
+      title={hint && hint !== label ? `源标的集名：${hint}` : undefined}
       onClick={onClick}
     >
       {label}

@@ -115,8 +115,8 @@ export function extractEpisodesFromPlayUrl(playUrl: string): string[] {
 }
 
 /**
- * 同上，连集名一起（「第02集$https://…」里的「第02集」）。有的源列表不是从第 1 集开始（第 1 集放在另一个条目里），
- * 按位置数第几集就会错位，所以集数以集名为准。
+ * 同上，连集名一起（「第02集$https://…」里的「第02集」）。集名不可靠（实测最大资源把第二季第 1~3 集标成
+ * 「第02~04集」），集数仍按位置算，集名只当提示。
  */
 export function extractEpisodesWithNames(playUrl: string): { urls: string[]; names: string[] } {
   if (!playUrl) return { urls: [], names: [] };
@@ -135,29 +135,6 @@ export function extractEpisodesWithNames(playUrl: string): { urls: string[]; nam
   if (groups.length === 0) return { urls: [], names: [] };
   const picked = groups.find((eps) => eps.some((e) => e.url.includes('.m3u8'))) ?? groups[0];
   return { urls: picked.map((e) => e.url), names: picked.map((e) => e.name) };
-}
-
-/** 集名里的集数：「第02集」「第2话」「EP03」「03」→ 2 / 2 / 3 / 3；看不出返回 undefined */
-export function episodeNumberFromName(name?: string): number | undefined {
-  const n = name?.trim();
-  if (!n) return undefined;
-  const m = n.match(/第\s*0*(\d{1,4})\s*[集话話期回]/) ?? n.match(/^(?:ep|e)?\s*0*(\d{1,4})$/i);
-  const v = m ? parseInt(m[1], 10) : NaN;
-  return Number.isFinite(v) && v > 0 ? v : undefined;
-}
-
-/**
- * 每一集按钮上显示什么：集名里有集数就用集数；没有用集名（「正片」「HD中字」之类，截短）；都没有按位置。
- * 只有在集名里的集数和位置对不上时才有区别。
- */
-export function episodeLabels(names: string[] | undefined, count: number): string[] {
-  return Array.from({ length: count }, (_, i) => {
-    const name = names?.[i];
-    const num = episodeNumberFromName(name);
-    if (num) return String(num);
-    if (name && name.length <= 6 && !/^\d+$/.test(name)) return name;
-    return String(i + 1);
-  });
 }
 
 /** 从简介文本中兜底提取 m3u8 链接 */
