@@ -143,7 +143,6 @@ function WatchContent() {
     index: currentIndex,
     sourceName: source?.name ?? sourceKey,
   });
-  const [nextPrefetchState, setNextPrefetchState] = useState<'idle' | 'running' | 'done'>('idle');
   /** 连续自动连播计数：手动点选集数或确认「还在看」时归零 */
   const autoPlayStreakRef = useRef(0);
 
@@ -501,7 +500,6 @@ function WatchContent() {
                   onTimeUpdate={handleProgress}
                   onPause={handleProgress}
                   onEnded={handleEnded}
-                  onNextPrefetchState={setNextPrefetchState}
                   onRequestSwitchSource={vodId ? failover.requestSwitch : undefined}
                   skip={episodeSkip.intro || episodeSkip.outro || episodeSkip.introJump ? episodeSkip : undefined}
                   onUserSeek={learnSkip}
@@ -527,7 +525,6 @@ function WatchContent() {
                         cover={detailQuery.data?.videoInfo?.cover}
                         totalEpisodes={episodes.length}
                         nextLabel={labelOf(endOverlay.nextIndex)}
-                        prefetchState={nextPrefetchState}
                         onPlayNow={() => {
                           autoPlayStreakRef.current = 0;
                           goEpisode(endOverlay.nextIndex);
@@ -579,16 +576,8 @@ function WatchContent() {
                 下一集
               </button>
               <button className="btn-ghost btn-sm" onClick={() => setAdPanelOpen((v) => !v)}>
-                这集有广告？
+                广告详情
               </button>
-              {nextPrefetchState !== 'idle' && currentIndex + 1 < episodes.length && (
-                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] bg-emerald-500/15 text-emerald-500 font-medium">
-                  <Icon name="bolt" className="w-3 h-3" />
-                  {nextPrefetchState === 'done'
-                    ? `第 ${labelOf(currentIndex + 1)} 集已预热就绪`
-                    : `正在预热第 ${labelOf(currentIndex + 1)} 集…`}
-                </span>
-              )}
               {duration > 0 && (
                 <SkipSettingsRow
                   skip={episodeSkip}
@@ -940,9 +929,9 @@ function SkipEditor({
 }
 
 /**
- * 「这集有广告？」：
- * - 广告诊断：在你的浏览器里读这一集的播放列表，按插播段和「换了网站 / 路径 / 命名」切组列出来，
- *   标出哪些已被去广告规则剔除；可复制给开发者看（规则漏掉的广告长什么样）。
+ * 「广告详情」：
+ * - 已去掉的广告：被去广告规则剔除的每一段，可以单独预览原片确认；
+ * - 技术信息（折叠）：在浏览器里读这一集的播放列表，按插播段和「换了网站 / 路径 / 命名」切组列出来，反馈问题时复制。
  * - 手动标广告：填时间或播到那里点「现在」，这一集播到就自动跳过。
  */
 function AdPanel({
@@ -1006,13 +995,47 @@ function AdPanel({
   return (
     <div className="mt-3 rounded-xl border border-line bg-surface-raised p-3 sm:p-4 space-y-3 text-xs text-muted">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-content">这集有广告？</h3>
+        <h3 className="text-sm font-semibold text-content">广告详情</h3>
         <button type="button" className="text-faint hover:text-content" onClick={onClose}>
           收起
         </button>
       </div>
       <div className="space-y-2">
-        <p className="font-medium text-content">标出广告的位置（这一集播到会自动跳过）</p>
+        <p className="font-medium text-content">
+          已去掉的广告
+          {diag.data && diag.data.removed.length > 0
+            ? `（${diag.data.removed.length} 段，共 ${Math.round(diag.data.strippedSeconds)} 秒，播放时自动跳过）`
+            : ''}
+        </p>
+        {diag.isLoading ? (
+          <p className="text-faint">正在检查…</p>
+        ) : diag.isError ? (
+          <p className="text-faint">暂时检查不了这一集。</p>
+        ) : diag.data && diag.data.removed.length > 0 ? (
+          <>
+            <div className="flex flex-wrap gap-1.5">
+              {diag.data.removed.map((clip, i) => (
+                <button
+                  key={clip.start}
+                  type="button"
+                  onClick={() => setPreviewing((v) => (v === i ? null : i))}
+                  className={cn('btn-sm', previewing === i ? 'btn-primary' : 'btn-ghost')}
+                >
+                  {previewing === i ? '收起' : '预览'} {formatTime(clip.start)}–{formatTime(clip.start + clip.seconds)}（{Math.round(clip.seconds)} 秒）
+                </button>
+              ))}
+            </div>
+            {previewing !== null && diag.data.removed[previewing] && (
+              <ClipPreview key={diag.data.removed[previewing].start} playlist={diag.data.removed[previewing].playlist} />
+            )}
+            <p className="text-faint">时间是原片里的位置。如果预览出来是正片，可以在设置里暂时关掉「去广告」，并把下面的技术信息发给我们。</p>
+          </>
+        ) : (
+          <p className="text-faint">这一集没有发现插播广告。</p>
+        )}
+      </div>
+      <div className="space-y-2">
+        <p className="font-medium text-content">还有漏掉的？标出来，这一集播到会自动跳过</p>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           {input(start, setStart, '开始')}
           {input(end, setEnd, '结束')}
@@ -1038,58 +1061,29 @@ function AdPanel({
           </ul>
         )}
       </div>
-      <div className="space-y-1.5">
-        <div className="flex items-center justify-between gap-2">
-          <p className="font-medium text-content">广告诊断（播放列表里每一段从哪来，✂ = 已被去广告规则去掉）</p>
-          <button
-            type="button"
-            className="btn-ghost btn-sm shrink-0"
-            disabled={!text}
-            onClick={() =>
-              void navigator.clipboard
-                .writeText(text)
-                .then(() => toast('已复制，可以贴给开发者', 'success'))
-                .catch(() => toast('复制失败，可以手动选中文字复制', 'warning'))
-            }
-          >
-            复制
-          </button>
-        </div>
-        {diag.data && diag.data.removed.length > 0 && (
-          <div className="space-y-2 rounded-lg border border-line bg-surface p-2.5">
-            <p className="text-content">
-              被去掉的片段（播放时会跳过）——点「预览」只播这一段原片，看看是不是真的广告：
-            </p>
-            <div className="flex flex-wrap gap-1.5">
-              {diag.data.removed.map((clip, i) => (
-                <button
-                  key={clip.start}
-                  type="button"
-                  onClick={() => setPreviewing((v) => (v === i ? null : i))}
-                  className={cn('btn-sm', previewing === i ? 'btn-primary' : 'btn-ghost')}
-                >
-                  {previewing === i ? '收起' : '预览'} {formatTime(clip.start)}–{formatTime(clip.start + clip.seconds)}（{Math.round(clip.seconds)} 秒）
-                </button>
-              ))}
-            </div>
-            {previewing !== null && diag.data.removed[previewing] && (
-              <ClipPreview key={diag.data.removed[previewing].start} playlist={diag.data.removed[previewing].playlist} />
-            )}
-            <p className="text-faint">
-              时间是原片里的位置。如果预览出来是正片（被误删了），把上面的诊断复制给开发者；想马上看，可以在设置里暂时关掉「去广告」。
-            </p>
+      <details className="group">
+        <summary className="cursor-pointer text-faint hover:text-content select-none">技术信息（反馈问题时用）</summary>
+        <div className="mt-2 space-y-1.5">
+          <div className="flex justify-end">
+            <button
+              type="button"
+              className="btn-ghost btn-sm"
+              disabled={!text}
+              onClick={() =>
+                void navigator.clipboard
+                  .writeText(text)
+                  .then(() => toast('已复制', 'success'))
+                  .catch(() => toast('复制失败，可以手动选中文字复制', 'warning'))
+              }
+            >
+              复制
+            </button>
           </div>
-        )}
-        {diag.isLoading ? (
-          <p className="text-faint">正在读取播放列表…</p>
-        ) : diag.isError ? (
-          <p className="text-danger">读不到播放列表：{diag.error instanceof Error ? diag.error.message : '失败'}</p>
-        ) : (
           <pre className="max-h-64 overflow-auto rounded-lg bg-surface border border-line p-2 text-[11px] leading-relaxed text-content whitespace-pre-wrap break-all select-all">
-            {text}
+            {text || (diag.isError ? `读不到播放列表：${diag.error instanceof Error ? diag.error.message : '失败'}` : '…')}
           </pre>
-        )}
-      </div>
+        </div>
+      </details>
     </div>
   );
 }
@@ -1275,7 +1269,6 @@ function EndEpisodeOverlayCard({
   cover,
   totalEpisodes,
   nextLabel,
-  prefetchState,
   onPlayNow,
   onCancelCountdown,
   onDismiss,
@@ -1288,7 +1281,6 @@ function EndEpisodeOverlayCard({
   cover?: string;
   totalEpisodes: number;
   nextLabel: string;
-  prefetchState: 'idle' | 'running' | 'done';
   onPlayNow: () => void;
   onCancelCountdown: () => void;
   onDismiss: () => void;
@@ -1328,12 +1320,6 @@ function EndEpisodeOverlayCard({
                 《{title}》即将播放 <span className="text-white font-semibold">第 {nextEpNum} 集</span>
                 {totalEpisodes > 0 ? `（共 ${totalEpisodes} 集）` : ''}
               </p>
-              {prefetchState !== 'idle' && (
-                <p className="text-[11px] text-emerald-400 flex items-center gap-1">
-                  <Icon name="bolt" className="w-3.5 h-3.5" />
-                  <span>下一集已预热完毕，点按即可秒播</span>
-                </p>
-              )}
             </div>
           </div>
 
@@ -1404,12 +1390,6 @@ function EndEpisodeOverlayCard({
               <span className="text-xs font-semibold text-sky-400">
                 {isCounting ? `${state.remaining} 秒后自动播放下一集` : '下一集就绪'}
               </span>
-              {prefetchState !== 'idle' && (
-                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-500/20 text-emerald-300">
-                  <Icon name="bolt" className="w-3 h-3" />
-                  {prefetchState === 'done' ? '已预热' : '预热中'}
-                </span>
-              )}
             </div>
 
             <h3 className="text-sm sm:text-base font-bold text-white truncate" title={title}>

@@ -815,11 +815,6 @@ export function PlayerShell({
           </div>,
           overlayHost,
         )}
-      {autoplayNext && !error && !overlay && !activeSkip && (
-        <div className="absolute bottom-16 right-3 text-[10px] text-muted bg-black/50 px-2 py-0.5 rounded pointer-events-none">
-          自动连播已开启
-        </div>
-      )}
       {overlay && (overlayHost ? createPortal(overlay, overlayHost) : overlay)}
     </div>
   );

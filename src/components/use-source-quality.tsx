@@ -3,7 +3,7 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/client-api';
-import { failureReason, probeEpisode } from '@/lib/quality-probe';
+import { probeEpisode } from '@/lib/quality-probe';
 import { qualityKey, rankSources } from '@/lib/source-rank';
 import { resolveSource, useAppStore } from '@/lib/store';
 import { qualityLabel, type SourceQuality } from '@/lib/stream-quality';
@@ -136,31 +136,15 @@ export function useSourceQuality(groups: SearchResultItem[][], enabled: boolean)
 
 /** 源按钮上的质检小标签：「1080P」「约720P」「广告15秒·已跳过」「无插入广告」 */
 export function QualityTag({ q }: { q?: SourceQuality }) {
-  if (!q) return null;
-  if (!q.ok) {
-    const reason = failureReason(q.error);
-    return (
-      <span className="ml-1 text-faint" title={q.error}>
-        · 测不了{reason ? `·${reason}` : ''}
-      </span>
-    );
-  }
+  // 测不了的不显示（原因只对排查有用）；「疑似广告」是还在观察的规则，也不给用户看
+  if (!q || !q.ok) return null;
   const label = q.height ? `${q.estimated ? '约' : ''}${qualityLabel(q.height)}` : '';
-  const parts: string[] = [];
-  if (q.adSeconds && q.adSeconds > 0) parts.push(`广告${q.adSeconds}秒·已跳过`);
-  if (q.suspectSeconds && q.suspectSeconds > 0) parts.push(`疑似广告${q.suspectSeconds}秒`);
-  const ads = parts.length > 0 ? parts.join(' · ') : q.height || q.kbps || q.adSeconds === 0 ? '无插入广告' : '';
+  const ads = q.adSeconds && q.adSeconds > 0 ? `已去广告 ${q.adSeconds} 秒` : q.height || q.kbps || q.adSeconds === 0 ? '无插入广告' : '';
   if (!label && !ads) return null;
   return (
     <span
       className="ml-1 text-faint"
-      title={[
-        q.kbps ? `约 ${(q.kbps / 1000).toFixed(1)} Mbps` : '',
-        q.minutes ? `第 1 集 ${q.minutes} 分钟` : '',
-        q.via === 'browser' ? '由你的浏览器测得' : '',
-      ]
-        .filter(Boolean)
-        .join(' · ')}
+      title={[q.kbps ? `约 ${(q.kbps / 1000).toFixed(1)} Mbps` : '', q.minutes ? `第 1 集 ${q.minutes} 分钟` : ''].filter(Boolean).join(' · ') || undefined}
     >
       · {[label, ads].filter(Boolean).join(' · ')}
     </span>

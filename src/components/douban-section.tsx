@@ -254,11 +254,6 @@ export function RecommendSection({
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line pb-2.5">
         <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
           <h2 className="text-base sm:text-lg font-bold text-content tracking-tight mr-1">分类片库</h2>
-          {channel !== 'adult' && (
-            <span className="text-[11px] text-faint hidden md:inline mr-1" title="每一页都是这几个来源各取一页合并而成，同名作品互相补全封面、评分、连载状态">
-              豆瓣 · B站片库 · TMDB{channel === 'anime' ? ' · Bangumi' : ''} 合并
-            </span>
-          )}
           {CHANNELS.map((c) => (
             <ChannelButton key={c.id} active={channel === c.id} onClick={() => pickChannel(c.id)}>
               <span>{c.icon}</span>

@@ -132,7 +132,7 @@ export function AggregatedCard({
       {multi && expanded && (
         <div className="border-t border-line p-2.5 animate-fade-in">
           <p className="text-[10px] text-faint mb-1.5">
-            选择来源播放{qualityFetching ? ' · 正在测清晰度和广告…' : ''}
+            选择来源播放{qualityFetching ? ' · 正在挑选画质最好的片源…' : ''}
           </p>
           <div className="flex flex-wrap gap-1.5">
             {rankedItems.map((item, i) => (

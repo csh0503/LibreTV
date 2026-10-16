@@ -364,7 +364,7 @@ function TitleModalBody({
                       ? `正在查找 ${streamedOutcomes.length}/${selectedSources.length} 个点播源…`
                       : shown.length > 0
                         ? `${sourceTotal} 个点播源可看${foundVia ? ` · 按别名《${foundVia}》找到` : ''}${
-                            qualityFetching ? ' · 正在测清晰度和广告…' : ''
+                            qualityFetching ? ' · 正在挑选画质最好的片源…' : ''
                           }`
                         : lookingUpAliases
                           ? alias
@@ -475,7 +475,6 @@ function TitleModalBody({
             </section>
           )}
 
-          {pick.sourceLabel && <p className="text-[11px] text-faint">热度来源：{pick.sourceLabel}</p>}
         </div>
       </div>
     </div>
