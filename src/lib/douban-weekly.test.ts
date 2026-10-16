@@ -309,3 +309,35 @@ describe('TOP 10 排名：按平台分组的 RRF', () => {
     expect(platformOf('Bangumi')).toBe('bangumi');
   });
 });
+
+describe('TOP 10 上升势头', () => {
+  const item = (title: string) => ({ id: title, title, cover: 'c' });
+
+  it('名次往前冲的加分、新上榜标记、系数封顶', async () => {
+    const { fuseMultiSourceRankings, momentumFactor } = await import('./douban-weekly');
+    expect(momentumFactor(30)).toBeCloseTo(1.06);
+    expect(momentumFactor(-30)).toBeCloseTo(0.94);
+    const titles = ['甲', '乙', '丙', '丁'];
+    const without = fuseMultiSourceRankings([{ name: '豆瓣实时影', items: titles.map(item) }]);
+    expect(without.map((r) => r.title)).toEqual(titles);
+    expect(without.some((r) => r.rankNew || r.rankDelta)).toBe(false);
+
+    // 基准里「丁」原本第 30 名，现在第 4 → 大幅上升；「乙」不在基准里 → 新上榜
+    const ranked = fuseMultiSourceRankings([{ name: '豆瓣实时影', items: titles.map(item) }], {
+      baseline: { 甲: 0, 丙: 1, 丁: 30 },
+    });
+    const by = (t: string) => ranked.find((r) => r.title === t)!;
+    expect(by('乙').rankNew).toBe(true);
+    expect(ranked.indexOf(by('丁'))).toBeLessThan(3);
+    expect(by('丁').rankDelta).toBeGreaterThan(20);
+  });
+
+  it('基准快照：优先 3~24 小时前最早的一次，没有就用 1 小时前的', async () => {
+    const { pickBaseline } = await import('./rank-history');
+    const now = 100 * 3600_000;
+    const at = (h: number) => ({ at: now - h * 3600_000, ranks: { [`h${h}`]: 0 } });
+    expect(pickBaseline([at(30), at(20), at(5), at(0.5)], now)?.at).toBe(now - 20 * 3600_000);
+    expect(pickBaseline([at(2), at(0.5)], now)?.at).toBe(now - 2 * 3600_000);
+    expect(pickBaseline([at(0.5)], now)).toBeUndefined();
+  });
+});

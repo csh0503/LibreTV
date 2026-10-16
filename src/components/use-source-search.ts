@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { sourceIsAdult } from '@/lib/adult-sources';
 import { api } from '@/lib/client-api';
 import { isInDisabledSubscription, isSourceDisabled, resolveSource, useAppStore } from '@/lib/store';
+import { forgetAlias, recallAlias, rememberAlias } from '@/lib/alias-memory';
 import { aggregateResults, matchingGroups } from '@/lib/title-aliases';
 import type { SourceSearchOutcome, TitlePick } from '@/lib/types';
 import { formatDisableTtl, validateSourceUrl } from '@/lib/utils';
@@ -130,14 +131,19 @@ export function useAliasFallback(pick: TitlePick, primaryMissing: boolean) {
     staleTime: 24 * 3600_000,
     retry: 0,
   });
-  const names = useMemo(
-    () => (identityQuery.data?.identity?.names ?? []).slice(0, MAX_ALIAS_TRIES),
-    [identityQuery.data]
-  );
+  // 上次在这台设备上用哪个别名找到过：开局就和原名一起搜，不用等原名落空
+  const [remembered, setRemembered] = useState<{ title: string; alias?: string }>({ title: '' });
+  useEffect(() => setRemembered({ title: pick.title, alias: recallAlias(pick.title) }), [pick.title]);
+  const known = remembered.title === pick.title ? remembered.alias : undefined;
+  const names = useMemo(() => {
+    const out = known ? [known] : [];
+    for (const n of identityQuery.data?.identity?.names ?? []) if (!out.includes(n)) out.push(n);
+    return out.slice(0, MAX_ALIAS_TRIES);
+  }, [identityQuery.data, known]);
   // 换片名时从第一个别名重新开始
   const [cursor, setCursor] = useState({ title: pick.title, idx: 0 });
   const idx = cursor.title === pick.title ? cursor.idx : 0;
-  const alias = primaryMissing ? (names[idx] ?? '') : '';
+  const alias = primaryMissing || (known && idx === 0) ? (names[idx] ?? '') : '';
   const search = useSourceSearch(alias, Boolean(alias));
   const groups = useMemo(
     () => (alias ? matchingGroups(aggregateResults(search.list, alias), alias) : []),
@@ -155,17 +161,30 @@ export function useAliasFallback(pick: TitlePick, primaryMissing: boolean) {
     groups.length === 0 &&
     (identityQuery.isLoading || (Boolean(alias) && (!search.settled || !exhausted)));
 
+  // 找到了就记住；记住的别名这次落空了就忘掉，免得每次白搜
+  useEffect(() => {
+    if (!alias || !search.settled) return;
+    if (groups.length > 0) {
+      if (primaryMissing) rememberAlias(pick.title, alias);
+    } else if (alias === known) {
+      forgetAlias(pick.title);
+    }
+  }, [alias, search.settled, groups.length, primaryMissing, known, pick.title]);
+
+  // 原名找得到时，别名结果不展示（记住的别名会提前搜，但只在原名落空时才用）
+  const usable = primaryMissing ? groups : [];
+
   return {
     /** 当前在试的别名 */
     alias,
     /** 准备试的全部别名 */
     names,
     /** 按别名找到的这部作品的分组 */
-    groups,
+    groups: usable,
     /** 别名搜索的原始结果（搜索结果页展示用） */
     list: search.list,
     /** 找到时用的是哪个别名 */
-    foundVia: groups.length > 0 ? alias : undefined,
+    foundVia: usable.length > 0 ? alias : undefined,
     lookingUp,
     /** 原名、别名都查完了还是没有 */
     nothingFound: primaryMissing && !lookingUp && groups.length === 0,

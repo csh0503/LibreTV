@@ -97,10 +97,12 @@ export function RecommendSection({
       if (last.items.length === 0) return undefined;
       const prev = allPages[allPages.length - 2];
       if (prev?.items[0]?.id && prev.items[0].id === last.items[0]?.id) return undefined;
-      const loaded = allPages.reduce((sum, page) => sum + page.items.length, 0);
-      if (typeof last.total === 'number' && loaded >= last.total) return undefined;
+      // 偏移按「第几页 × 每页条数」算，不能用已加载的卡片数：每页是豆瓣 / B站 / TMDB / Bangumi
+      // 各取一页融合出来的，常常比一页多，拿它当偏移会让各来源跳过中间整页
+      const nextStart = allPages.length * HALL_PAGE_SIZE;
+      if (typeof last.total === 'number' && nextStart >= last.total) return undefined;
       if (last.items.length < HALL_PAGE_SIZE) return undefined;
-      return loaded;
+      return nextStart;
     },
     enabled: doubanEnabled && request !== null && !weekdayMode,
     placeholderData: keepPreviousData,
@@ -249,6 +251,11 @@ export function RecommendSection({
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line pb-2.5">
         <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
           <h2 className="text-base sm:text-lg font-bold text-content tracking-tight mr-1">分类片库</h2>
+          {channel !== 'adult' && (
+            <span className="text-[11px] text-faint hidden md:inline mr-1" title="每一页都是这几个来源各取一页合并而成，同名作品互相补全封面、评分、连载状态">
+              豆瓣 · B站片库 · TMDB{channel === 'anime' ? ' · Bangumi' : ''} 合并
+            </span>
+          )}
           {CHANNELS.map((c) => (
             <ChannelButton key={c.id} active={channel === c.id} onClick={() => pickChannel(c.id)}>
               <span>{c.icon}</span>

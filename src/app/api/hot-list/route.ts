@@ -1,10 +1,10 @@
 import { NextResponse } from 'next/server';
 import { guardRequest } from '@/lib/api-guard';
-import { fetchHotList, isHotListId } from '@/lib/douban-weekly';
+import { fetchHotListWithMeta, isHotListId } from '@/lib/douban-weekly';
 
 export const runtime = 'nodejs';
 
-/** 影视热榜（经 60s API 免 key）：豆瓣五个周榜 + 百度热播剧，服务端转发 + 缓存 */
+/** 影视热榜：多源融合排名（见 fuseMultiSourceRankings），附带算出时间与各来源取数情况 */
 export async function GET(req: Request) {
   const guarded = guardRequest(req);
   if (guarded) return guarded;
@@ -15,8 +15,12 @@ export async function GET(req: Request) {
   }
 
   try {
-    const items = await fetchHotList(id);
-    return NextResponse.json({ items });
+    const { items, meta } = await fetchHotListWithMeta(id);
+    // 边缘节点共享 10 分钟：所有人看到同一份榜单，冷启动的实例也不用把十几个上游重新拉一遍
+    return NextResponse.json(
+      { items, meta },
+      { headers: { 'Cache-Control': 'public, s-maxage=600, stale-while-revalidate=1800' } },
+    );
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : '榜单获取失败' },

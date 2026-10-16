@@ -30,7 +30,11 @@ export async function GET(req: Request) {
 
   try {
     const { items, total } = await fetchDoubanRecommend({ kind, tags, sort, score, yearRange: null, minScore: null, pageStart, pageSize });
-    return NextResponse.json({ items, total });
+    // 片库变化慢：边缘节点共享 30 分钟，翻页、换筛选回来都更快
+    return NextResponse.json(
+      { items, total },
+      { headers: { 'Cache-Control': 'public, s-maxage=1800, stale-while-revalidate=7200' } },
+    );
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : '豆瓣推荐获取失败' },

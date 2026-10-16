@@ -171,6 +171,8 @@ function useTopRankItems(listId: HotListId, enabled: boolean) {
     queryFn: ({ signal }) => api.hotList(listId, signal),
     enabled,
     staleTime: 15 * 60_000,
+    // 页面一直开着也跟着服务端每 15 分钟的重算走
+    refetchInterval: 15 * 60_000,
     retry: 1,
   });
 
@@ -218,6 +220,8 @@ function useTopRankItems(listId: HotListId, enabled: boolean) {
   return {
     items,
     isLoading: hotQuery.isLoading || (hotQuery.isError && fallbackQuery.isLoading),
+    /** 热榜取不到、退回豆瓣热门时为 undefined */
+    meta: hotQuery.data?.items?.length ? hotQuery.data.meta : undefined,
   };
 }
 
@@ -930,7 +934,8 @@ const TOP_TEN_TABS: { id: HotListId; label: string; channel: 'tv' | 'movie' | 's
 export function TopTenRow({ onPick }: { onPick: (title: string, pick?: TitlePick) => void }) {
   const doubanEnabled = useAppStore((s) => s.doubanEnabled);
   const [tab, setTab] = useState<HotListId>('realtime_all');
-  const { items, isLoading } = useTopRankItems(tab, doubanEnabled);
+  const { items, isLoading, meta } = useTopRankItems(tab, doubanEnabled);
+  const [explainOpen, setExplainOpen] = useState(false);
   const tabScrollerRef = useRef<HTMLDivElement>(null);
   const [canTabLeft, setCanTabLeft] = useState(false);
   const [canTabRight, setCanTabRight] = useState(false);
@@ -966,11 +971,21 @@ export function TopTenRow({ onPick }: { onPick: (title: string, pick?: TitlePick
   const activeChannel = TOP_TEN_TABS.find((t) => t.id === tab)?.channel ?? 'tv';
 
   return (
+    <div className="space-y-2">
     <ShelfRow
       title="实时风向 · TOP 10"
       badge="多源综合排名"
+      hint={meta ? `${formatClock(meta.updatedAt)} 更新 · ${meta.sources.filter((s) => s.ok).length} 个来源` : undefined}
       headerExtra={
         <div className="flex items-center gap-1.5 min-w-0 max-w-full">
+          <button
+            type="button"
+            onClick={() => setExplainOpen((v) => !v)}
+            aria-expanded={explainOpen}
+            className="px-2 py-1 rounded-full text-[11px] text-muted hover:text-content hover:bg-hover shrink-0 cursor-pointer"
+          >
+            怎么排的？
+          </button>
           {(canTabLeft || canTabRight) && (
             <button
               type="button"
@@ -1044,6 +1059,52 @@ export function TopTenRow({ onPick }: { onPick: (title: string, pick?: TitlePick
             />
           ))}
     </ShelfRow>
+    {explainOpen && <RankingExplainer meta={meta} />}
+    </div>
+  );
+}
+
+const formatClock = (ms: number) => {
+  const d = new Date(ms);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+};
+
+/** 「怎么排的？」：说明排名规则，并列出这一次实际取到了哪些来源 */
+function RankingExplainer({ meta }: { meta?: { updatedAt: number; ttl: number; sources: { name: string; ok: boolean; count: number }[] } }) {
+  return (
+    <div className="rounded-xl border border-line bg-surface/70 px-4 py-3.5 text-xs text-muted leading-relaxed space-y-2.5">
+      <ol className="list-decimal pl-4 space-y-1">
+        <li>同时拉取多个平台的实时榜单：豆瓣实时热门、B站热播、百度热播、Bangumi 在看人数、TMDB 当日趋势（各标签用的来源不同）。</li>
+        <li>先清洗：剔除还没播出的、常年霸榜的长青老番（柯南、海贼王等）、中配重复版、超长集数作品；同一系列只保留最新一季。</li>
+        <li>每部作品在每个平台按名次得分，第 r 名得 1 ÷ (60 + r)，名次越前分越高；同一平台的几个榜只算最好的那一次，避免一个平台重复投票。</li>
+        <li>各平台得分相加——上榜的平台越多越靠前；再乘评分系数：7 分为中性，高分最多 +12%，低分最多 −12%。</li>
+        <li>综合总榜的前 10 名里，同一类（电影 / 剧集 / 日漫 / 国漫 / 综艺 / 纪录片）最多 4 部。</li>
+        <li>综合总榜每小时记一次名次快照，和 3~24 小时前比：往前冲的最多加 6%（约等于往前挪三四名），往后掉的最多减 6%，新上榜加 3%；卡片上的「↑N」「新上榜」就是这个。</li>
+        <li>服务器每 15 分钟重算一次，所有人看到同一份；页面开着也会自动刷新。</li>
+      </ol>
+      {meta && (
+        <div className="pt-2 border-t border-line">
+          <p className="mb-1.5 text-faint">
+            这一次（{formatClock(meta.updatedAt)}）用到的来源：
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {meta.sources.map((s) => (
+              <span
+                key={s.name}
+                className={cn(
+                  'px-2 py-0.5 rounded-full border',
+                  s.ok ? 'border-line text-content' : 'border-dashed border-line text-faint line-through',
+                )}
+                title={s.ok ? `取到 ${s.count} 条` : '这次没取到，不参与排名'}
+              >
+                {s.name}
+                {s.ok && <span className="ml-1 text-faint">{s.count}</span>}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1113,6 +1174,14 @@ function TopTenCard({
       </div>
 
       <div className="relative z-10 w-[7.25rem] sm:w-32">
+        {(item.rankNew || (item.rankDelta ?? 0) >= 2) && (
+          <span
+            className="absolute top-9 right-1.5 z-20 px-1.5 py-0.5 rounded-md text-[10px] font-bold text-white bg-emerald-600/95 shadow pointer-events-none"
+            title={item.rankNew ? '最近一天新上榜' : `比半天到一天前上升 ${item.rankDelta} 名`}
+          >
+            {item.rankNew ? '新上榜' : `↑${item.rankDelta}`}
+          </span>
+        )}
         <DoubanCard
           item={{
             title: item.title,

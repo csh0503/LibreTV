@@ -596,6 +596,8 @@ export function fuseMultiSourceRankings(
     filterEvergreen?: boolean;
     dropEndedCatalog?: boolean;
     diversify?: boolean;
+    /** 3~24 小时前的名次（作品键 → 名次），用来算上升势头；没有就不算 */
+    baseline?: Record<string, number>;
   } = {}
 ): DoubanItem[] {
   const limit = opts.limit ?? 24;
@@ -621,7 +623,7 @@ export function fuseMultiSourceRankings(
     });
 
     curated.forEach((item, rank) => {
-      const stem = extractSeriesStem(item.title) || canonicalTitle(item.title);
+      const stem = rankKeyOf(item.title);
       if (!stem) return;
 
       const contribution = weight / (K + rank + 1);
@@ -670,7 +672,7 @@ export function fuseMultiSourceRankings(
     });
   }
 
-  const ranked = [...map.values()].map((entry) => {
+  const ranked = [...map.entries()].map(([key, entry]) => {
     const base = [...entry.platformScores.values()].reduce((sum, v) => sum + v, 0);
     const airingTieBreaker = entry.item.status === 'airing' ? 1e-4 : 0;
     const finalScore = base * ratingFactor(entry.item.rating) + airingTieBreaker;
@@ -682,19 +684,49 @@ export function fuseMultiSourceRankings(
         : entry.item.sourceLabel || platforms[0];
 
     return {
+      key,
       item: { ...entry.item, sourceLabel },
       finalScore,
       firstSeenRank: entry.firstSeenRank,
     };
   });
 
-  const sorted = ranked
-    .sort((a, b) => {
-      if (Math.abs(b.finalScore - a.finalScore) > 1e-9) return b.finalScore - a.finalScore;
-      return a.firstSeenRank - b.firstSeenRank;
-    })
-    .map((r) => r.item);
-  return (opts.diversify ? diversifyRanking(sorted) : sorted).slice(0, limit);
+  const byScore = (a: { finalScore: number; firstSeenRank: number }, b: { finalScore: number; firstSeenRank: number }) => {
+    if (Math.abs(b.finalScore - a.finalScore) > 1e-9) return b.finalScore - a.finalScore;
+    return a.firstSeenRank - b.firstSeenRank;
+  };
+  ranked.sort(byScore);
+
+  // 上升势头：和基准快照比，名次往前走的轻微加分（最多 +6%，约等于往前挪 3~4 名），往后掉的轻微减分，新上榜 +3%
+  const baseline = opts.baseline;
+  if (baseline && Object.keys(baseline).length > 0) {
+    ranked.forEach((r, i) => {
+      const before = baseline[r.key];
+      r.finalScore *= before === undefined ? 1.03 : momentumFactor(before - i);
+    });
+    ranked.sort(byScore);
+  }
+
+  const sorted = ranked.map((r) => r.item);
+  const out = (opts.diversify ? diversifyRanking(sorted) : sorted).slice(0, limit);
+  if (baseline && Object.keys(baseline).length > 0) {
+    out.forEach((item, i) => {
+      const before = baseline[rankKeyOf(item.title)];
+      if (before === undefined) item.rankNew = true;
+      else if (before !== i) item.rankDelta = before - i;
+    });
+  }
+  return out;
+}
+
+/** 名次变化 → 分数系数：每升 1 名 +0.6%，±6% 封顶 */
+export function momentumFactor(delta: number): number {
+  return 1 + 0.06 * Math.max(-1, Math.min(1, delta / 10));
+}
+
+/** 排名里认「同一部」用的键：系列主名（去季数）→ 标准片名 */
+export function rankKeyOf(title: string): string {
+  return extractSeriesStem(title) || canonicalTitle(title);
 }
 
 function assertArray<T>(value: unknown, what: string): T[] {
@@ -851,12 +883,18 @@ async function fetchTmdbTrending(mediaType: 'all' | 'tv' | 'movie' = 'all'): Pro
 
 /** 并发拉取多源榜单并用 RRF + 跨源共现算法融合排名 */
 async function collectAndFuse(
+  report: HotListSourceReport[],
   tasks: { name: string; weight: number; run: () => Promise<DoubanItem[]> }[],
-  opts: { maxEpisodes?: number; dropEndedCatalog?: boolean; diversify?: boolean } = {}
+  opts: { maxEpisodes?: number; dropEndedCatalog?: boolean; diversify?: boolean; baseline?: Record<string, number> } = {}
 ): Promise<DoubanItem[]> {
   const settled = await Promise.allSettled(tasks.map((t) => t.run()));
   const sources: RankedSourceInput[] = [];
   settled.forEach((res, idx) => {
+    report.push({
+      name: tasks[idx].name,
+      ok: res.status === 'fulfilled' && res.value.length > 0,
+      count: res.status === 'fulfilled' ? res.value.length : 0,
+    });
     if (res.status === 'fulfilled' && res.value.length > 0) {
       sources.push({
         name: tasks[idx].name,
@@ -871,15 +909,37 @@ async function collectAndFuse(
     maxEpisodes: opts.maxEpisodes ?? 120,
     dropEndedCatalog: opts.dropEndedCatalog,
     diversify: opts.diversify,
+    baseline: opts.baseline,
   });
   if (fused.length === 0) throw new Error('多源榜单聚合失败');
   return fused;
 }
 
+/** 一个榜这次参与计算的来源：哪些取到了、各多少条 */
+export interface HotListSourceReport {
+  name: string;
+  ok: boolean;
+  count: number;
+}
+
+export interface HotListMeta {
+  /** 这份榜单在服务端算出来的时间（毫秒时间戳） */
+  updatedAt: number;
+  /** 服务端缓存多久后重算（毫秒） */
+  ttl: number;
+  sources: HotListSourceReport[];
+}
+
 export async function fetchHotList(id: HotListId): Promise<DoubanItem[]> {
-  const cacheKey = `hot-list:${id}`;
-  const cached = getCache<DoubanItem[]>(cacheKey);
+  return (await fetchHotListWithMeta(id)).items;
+}
+
+export async function fetchHotListWithMeta(id: HotListId): Promise<{ items: DoubanItem[]; meta: HotListMeta }> {
+  const cacheKey = `hot-list:v2:${id}`;
+  const cached = getCache<{ items: DoubanItem[]; meta: HotListMeta }>(cacheKey);
   if (cached) return cached;
+  const report: HotListSourceReport[] = [];
+  let rankHistory: import('./rank-history').RankSnapshot[] | undefined;
 
   let items: DoubanItem[];
   let ttl = REALTIME_CACHE_TTL;
@@ -888,7 +948,11 @@ export async function fetchHotList(id: HotListId): Promise<DoubanItem[]> {
   switch (id) {
     // 1. 全网综合总榜：剧集 + 电影 + 日番 + 国漫 + 百度热播 + Bangumi + TMDB
     case 'realtime_all': {
-      items = await collectAndFuse(
+      // 读上一批快照算势头（没接存储就是空的，不影响排名）
+      const { loadRankHistory, pickBaseline } = await import('./rank-history');
+      rankHistory = await loadRankHistory(id);
+      const baseline = pickBaseline(rankHistory)?.ranks;
+      items = await collectAndFuse(report, 
         [
           { name: '豆瓣实时剧', weight: 1.1, run: () => fetchDoubanWithFallback('douban_tv_realtime') },
           { name: 'B站番剧', weight: 1.0, run: () => fetchBiliRankRaw(BILI_SEASON_TYPE_MAP.bili_bangumi!) },
@@ -899,14 +963,14 @@ export async function fetchHotList(id: HotListId): Promise<DoubanItem[]> {
           ...(hasTmdbKey ? [{ name: 'TMDB趋势', weight: 1.05, run: () => fetchTmdbTrending('all') }] : []),
         ],
         // 综合总榜也是首页大图的来源：前 10 名同一大类最多 4 部，避免一屏全是电影或全是番
-        { maxEpisodes: 260, diversify: true }
+        { maxEpisodes: 260, diversify: true, baseline }
       );
       break;
     }
 
     // 2. 剧集分类综合榜：豆瓣实时热剧 + 百度/猫眼热播剧 + B站剧集 + 华语口碑剧 + 全球口碑剧 (+ TMDB)
     case 'douban_tv_realtime': {
-      items = await collectAndFuse([
+      items = await collectAndFuse(report, [
         { name: '豆瓣热剧', weight: 1.2, run: () => fetchDoubanWithFallback('douban_tv_realtime') },
         { name: '百度热播', weight: 1.05, run: () => fetchBaiduTeleplayList() },
         { name: '华语口碑', weight: 0.95, run: () => fetchDoubanWithFallback('douban_tv_chinese') },
@@ -919,7 +983,7 @@ export async function fetchHotList(id: HotListId): Promise<DoubanItem[]> {
 
     // 3. 电影分类综合榜：豆瓣实时热门电影 + B站热播电影 + 豆瓣一周口碑电影 (+ TMDB)
     case 'douban_movie_realtime': {
-      items = await collectAndFuse([
+      items = await collectAndFuse(report, [
         { name: '豆瓣实时影', weight: 1.2, run: () => fetchDoubanWithFallback('douban_movie_realtime') },
         { name: '一周口碑影', weight: 1.05, run: () => fetchDoubanWithFallback('douban_movie_weekly') },
         { name: 'B站电影', weight: 0.95, run: () => fetchBiliRankRaw(BILI_SEASON_TYPE_MAP.bili_movie!) },
@@ -931,7 +995,7 @@ export async function fetchHotList(id: HotListId): Promise<DoubanItem[]> {
     // 4. 日漫新番分类综合榜：Bangumi 当季实时放送榜 + B站番剧榜 + 豆瓣当季新番榜
     case 'bili_bangumi':
     case 'douban_anime_hot': {
-      items = await collectAndFuse(
+      items = await collectAndFuse(report, 
         [
           { name: 'Bangumi', weight: 1.15, run: () => fetchBangumiHotAiring(24) },
           { name: 'B站番剧', weight: 1.1, run: () => fetchBiliRankRaw(BILI_SEASON_TYPE_MAP.bili_bangumi!) },
@@ -944,7 +1008,7 @@ export async function fetchHotList(id: HotListId): Promise<DoubanItem[]> {
 
     // 5. 国漫分类综合榜：B站国创热播榜 + 豆瓣热门动画（筛华语）
     case 'bili_guochuang': {
-      items = await collectAndFuse(
+      items = await collectAndFuse(report, 
         [
           { name: 'B站国创', weight: 1.25, run: () => fetchBiliRankRaw(BILI_SEASON_TYPE_MAP.bili_guochuang!) },
           {
@@ -963,7 +1027,7 @@ export async function fetchHotList(id: HotListId): Promise<DoubanItem[]> {
 
     // 6. 国产剧分类综合榜：豆瓣国产剧 + 百度实时热播剧 + 华语口碑剧集
     case 'douban_tv_domestic': {
-      items = await collectAndFuse([
+      items = await collectAndFuse(report, [
         { name: '豆瓣陆剧', weight: 1.2, run: () => fetchDoubanWithFallback('douban_tv_domestic') },
         { name: '百度热播', weight: 1.05, run: () => fetchBaiduTeleplayList() },
         { name: '华语口碑', weight: 1.0, run: () => fetchDoubanWithFallback('douban_tv_chinese') },
@@ -974,7 +1038,7 @@ export async function fetchHotList(id: HotListId): Promise<DoubanItem[]> {
 
     // 7. 日韩剧分类综合榜：豆瓣韩剧 + 豆瓣日剧 + 全球口碑剧集
     case 'douban_tv_korean': {
-      items = await collectAndFuse([
+      items = await collectAndFuse(report, [
         { name: '豆瓣韩剧', weight: 1.15, run: () => fetchDoubanWithFallback('douban_tv_korean') },
         { name: '豆瓣日剧', weight: 1.05, run: () => fetchDoubanWithFallback('douban_tv_japanese') },
         {
@@ -991,7 +1055,7 @@ export async function fetchHotList(id: HotListId): Promise<DoubanItem[]> {
 
     // 8. 欧美剧分类综合榜：豆瓣欧美剧 + 全球口碑剧集 (+ TMDB)
     case 'douban_tv_american': {
-      items = await collectAndFuse([
+      items = await collectAndFuse(report, [
         { name: '豆瓣美剧', weight: 1.2, run: () => fetchDoubanWithFallback('douban_tv_american') },
         {
           name: '全球口碑',
@@ -1008,7 +1072,7 @@ export async function fetchHotList(id: HotListId): Promise<DoubanItem[]> {
 
     // 9. 综艺分类综合榜：豆瓣热门综艺 + 国内口碑综艺 + 海外口碑综艺
     case 'douban_show_hot': {
-      items = await collectAndFuse([
+      items = await collectAndFuse(report, [
         { name: '热门综艺', weight: 1.2, run: () => fetchDoubanWithFallback('douban_show_hot') },
         { name: '国内口碑', weight: 1.05, run: () => fetchDoubanWithFallback('douban_show_chinese') },
         { name: '海外口碑', weight: 0.9, run: () => fetchDoubanWithFallback('douban_show_global') },
@@ -1018,7 +1082,7 @@ export async function fetchHotList(id: HotListId): Promise<DoubanItem[]> {
 
     // 10. 纪录片分类综合榜：B站纪录片热播榜 + 豆瓣高分纪录片
     case 'bili_doc': {
-      items = await collectAndFuse([
+      items = await collectAndFuse(report, [
         { name: 'B站纪录片', weight: 1.2, run: () => fetchBiliRankRaw(BILI_SEASON_TYPE_MAP.bili_doc!) },
       ]);
       break;
@@ -1027,17 +1091,21 @@ export async function fetchHotList(id: HotListId): Promise<DoubanItem[]> {
     // 11. 全球趋势榜：TMDB + 豆瓣全球剧集 + 豆瓣实时电影
     case 'tmdb_trending': {
       items = await fetchTmdbTrending('all');
+      report.push({ name: 'TMDB趋势', ok: true, count: items.length });
       break;
     }
 
     default: {
       if (BILI_SEASON_TYPE_MAP[id]) {
         items = await fetchBiliRankRaw(BILI_SEASON_TYPE_MAP[id]!);
+        report.push({ name: BILI_SEASON_TYPE_MAP[id]!.label, ok: true, count: items.length });
       } else if (DOUBAN_COLLECTION_MAP[id]) {
         if (DOUBAN_WEEKLY_CATEGORY[id]) ttl = WEEKLY_CACHE_TTL;
         items = await fetchDoubanWithFallback(id);
+        report.push({ name: DOUBAN_COLLECTION_MAP[id]!.label, ok: true, count: items.length });
       } else {
         items = await fetchBaiduTeleplayList();
+        report.push({ name: '百度热播', ok: true, count: items.length });
       }
       break;
     }
@@ -1053,7 +1121,14 @@ export async function fetchHotList(id: HotListId): Promise<DoubanItem[]> {
     // 索引取不到时不影响榜单
   }
 
-  setCache(cacheKey, items, ttl);
-  return items;
+  if (rankHistory) {
+    // 每小时最多写一次；Serverless 函数返回后可能被冻结，所以等它写完（写失败不影响榜单）
+    const { recordSnapshot } = await import('./rank-history');
+    await recordSnapshot(id, items.map((i) => rankKeyOf(i.title)), rankHistory);
+  }
+
+  const result = { items, meta: { updatedAt: Date.now(), ttl, sources: report } };
+  setCache(cacheKey, result, ttl);
+  return result;
 }
 

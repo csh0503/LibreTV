@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { recallAlias } from '@/lib/alias-memory';
 import { db, favoriteIdOf, toggleFavorite } from '@/lib/db';
 import { describeContinueWatching } from '@/lib/home-features';
 import { resolveSource, useAppStore } from '@/lib/store';
@@ -101,11 +102,12 @@ function TitleModalBody({
     [profileId, localId],
   );
   // 看过同一部（按标准片名）→ 主按钮变成「继续播放」
+  // 看过的可能是用别名找到的那一版（大师计划 → 偷天父子兵），两个名字都算
   const history = useLiveQuery(async () => {
-    const key = canonicalTitle(pick.title);
-    if (!profileId || !key) return undefined;
+    const keys = new Set([pick.title, recallAlias(pick.title) ?? ''].map((t) => canonicalTitle(t)).filter(Boolean));
+    if (!profileId || keys.size === 0) return undefined;
     const rows = await db.history.where('profileId').equals(profileId).toArray();
-    return rows.filter((r) => canonicalTitle(r.title) === key).sort((a, b) => b.timestamp - a.timestamp)[0];
+    return rows.filter((r) => keys.has(canonicalTitle(r.title))).sort((a, b) => b.timestamp - a.timestamp)[0];
   }, [profileId, pick.title]);
   const resumeView = history ? describeContinueWatching(history, undefined, formatTime) : undefined;
 

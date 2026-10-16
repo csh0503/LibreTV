@@ -112,6 +112,10 @@ export interface DoubanItem {
   sourceLabel?: string;
   /** 来源自带的热度值（如 Bangumi 在看 + 评分人数），只用于同一来源内部排序 */
   popularity?: number;
+  /** 综合总榜：比起 3~24 小时前上升了几名（负数为下降） */
+  rankDelta?: number;
+  /** 综合总榜：上次快照里还没有，新上榜 */
+  rankNew?: boolean;
 }
 
 export interface SourceSearchOutcome {
@@ -143,6 +147,12 @@ export interface DoubanResponse {
   items: DoubanItem[];
   /** 该筛选条件下的总条数；没有时前端按「本页是否满页」判断还有没有下一页 */
   total?: number;
+  /** 热榜才有：服务端算出这份榜单的时间、缓存时长和各来源取数情况 */
+  meta?: {
+    updatedAt: number;
+    ttl: number;
+    sources: { name: string; ok: boolean; count: number }[];
+  };
 }
 
 export interface BangumiCalendarDay {
