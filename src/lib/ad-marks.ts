@@ -1,4 +1,4 @@
-import type { SkipSegment } from './skip-times';
+import type { SkipSegment } from './skip-segment';
 
 /**
  * 你手动标的广告位置（按「源 + 影片 + 第几集」记，这台设备的 localStorage）：播放到这里自动跳过。

@@ -2,10 +2,10 @@
 
 import { useEffect, useState } from 'react';
 import { detectIntro, detectOutro, type AudioDetectResult } from '@/lib/audio-skip';
-import { audioSkipEnabled, hasAudioMiss, loadAudioTemplates, recordAudioMiss, saveAudioTemplates } from '@/lib/audio-skip-store';
+import { hasAudioMiss, loadAudioTemplates, recordAudioMiss, saveAudioTemplates } from '@/lib/audio-skip-store';
 import { loadSegments, type HlsSegment } from '@/lib/hls-audio';
 import { browserAudioDeps } from '@/lib/hls-audio-browser';
-import type { SkipTimes } from '@/lib/skip-times';
+import type { SkipTimes } from '@/lib/skip-segment';
 
 export type AudioSkipStatus = 'idle' | 'working' | 'done' | 'off';
 
@@ -19,17 +19,16 @@ const START_DELAY_MS = 2000;
  * - 开播 2 秒后先找片头、紧接着找片尾（一起做完，不等播到）。
  * - 有这部剧的模板就只拿本集的开头 / 结尾比；没有就依次跟下一集、上一集、下下集比（最多 3 集，
  *   有的集只有片头没片尾、或只有片尾没片头），找到就停。
- * need 为 false 的那段（已有你手动设的 / 数据库的准确值）不做。
+ * enabled = 播放器设置里的「声音比对找片头片尾」。
  */
 export function useAudioSkip(opts: {
   seriesKey: string;
   episodes: string[];
   index: number;
   adFilter: boolean;
-  /** 片子总长已知（播放器开始播了）、数据库也查完了 */
+  /** 片子总长已知（播放器开始播了） */
   ready: boolean;
-  need: { intro: boolean; outro: boolean };
-  positionRef: React.MutableRefObject<{ time: number; duration: number }>;
+  enabled: boolean;
 }): { result: SkipTimes; status: AudioSkipStatus } {
   const [result, setResult] = useState<SkipTimes>({});
   const [status, setStatus] = useState<AudioSkipStatus>('idle');
@@ -40,17 +39,15 @@ export function useAudioSkip(opts: {
     .slice(0, MAX_OTHERS)
     .map((i) => opts.episodes[i])
     .join('\n');
-  const { seriesKey, adFilter, ready } = opts;
-  const needIntro = opts.need.intro;
-  const needOutro = opts.need.outro;
+  const { seriesKey, adFilter, ready, enabled } = opts;
 
   useEffect(() => {
     setResult({});
-    if (!url || !ready || (!needIntro && !needOutro)) {
+    if (!url || !ready) {
       setStatus('idle');
       return;
     }
-    if (!audioSkipEnabled()) {
+    if (!enabled) {
       setStatus('off');
       return;
     }
@@ -99,16 +96,12 @@ export function useAudioSkip(opts: {
         return {};
       };
 
-      if (needIntro) {
-        const intro = await solve('intro');
-        if (signal.aborted) return;
-        if (intro.seg) setResult((r) => ({ ...r, intro: intro.seg }));
-      }
-      if (needOutro) {
-        const outro = await solve('outro');
-        if (signal.aborted) return;
-        if (outro.seg) setResult((r) => ({ ...r, outro: outro.seg }));
-      }
+      const intro = await solve('intro');
+      if (signal.aborted) return;
+      if (intro.seg) setResult((r) => ({ ...r, intro: intro.seg }));
+      const outro = await solve('outro');
+      if (signal.aborted) return;
+      if (outro.seg) setResult((r) => ({ ...r, outro: outro.seg }));
       setStatus('done');
     };
 
@@ -117,7 +110,7 @@ export function useAudioSkip(opts: {
       clearTimeout(timer);
       ctrl.abort();
     };
-  }, [url, otherUrls, seriesKey, adFilter, ready, needIntro, needOutro]);
+  }, [url, otherUrls, seriesKey, adFilter, ready, enabled]);
 
   return { result, status };
 }

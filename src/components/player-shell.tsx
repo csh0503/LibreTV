@@ -13,11 +13,13 @@ import {
 } from '@/lib/video-prefetcher';
 import { loadCacheSettings } from '@/lib/video-cache';
 import { formatTime } from '@/lib/utils';
-import type { SkipSegment } from '@/lib/skip-times';
+import type { SkipSegment } from '@/lib/skip-segment';
+import { PLAYBACK_RATES, SEEK_STEPS, loadPlayerPrefs, savePlayerPrefs } from '@/lib/player-prefs';
 
 /**
  * 播放器外壳：ArtPlayer + hls.js（旧版 player.js 的 React 化）。
  * 保留：广告分片过滤、自动连播回调、进度回调、快捷键、移动端长按倍速、错误恢复。
+ * 控制栏：快退 / 快进 N 秒（N 在设置里选，← → 键同步）、倍速（换集后保持）。
  * 移除：DOM 手工操作、watch.html 跳转链、localStorage 状态总线。
  *
  * 关键设计：ArtPlayer 实例只在挂载时创建一次，换集（url 变化）只「切换 HLS 源」
@@ -57,14 +59,10 @@ interface PlayerShellProps {
   onNextPrefetchState?: (state: 'idle' | 'running' | 'done') => void;
   /** 播放器表面浮层（如播完时的下一集倒计时大卡、「还在看吗？」询问卡），支持全屏内展示 */
   overlay?: React.ReactNode;
-  /** 这一集的片头片尾（绝对秒数）；auto = 进入区间自动跳，否则只显示按钮 */
-  skip?: { intro?: SkipSegment; outro?: SkipSegment; introJump?: number; auto: boolean };
+  /** 这一集的片头片尾（绝对秒数）；auto = 进入区间倒数后自动跳，否则只显示按钮 */
+  skip?: { intro?: SkipSegment; outro?: SkipSegment; auto: boolean };
   /** 你手动标的广告位置：播到就自动跳过 */
   adSkips?: SkipSegment[];
-  /** 播放器里的一张小卡（例如「刚才跳过了 1:30–3:00，记成片头？」），全屏时也看得到 */
-  prompt?: { text: string; actions: { label: string; onClick: () => void; primary?: boolean }[] } | null;
-  /** 用户自己拖进度条 / 往前跳（不含播放器自己的跳转）：父级拿来学片头片尾位置 */
-  onUserSeek?: (from: number, to: number, duration: number) => void;
   /** 片尾一直到结尾时，「跳过片尾」直接进下一集 */
   onNextEpisode?: () => void;
   /** 实时的播放位置（父级点「下一集」时用来记片尾位置） */
@@ -88,8 +86,6 @@ export function PlayerShell({
   overlay,
   skip,
   adSkips,
-  prompt,
-  onUserSeek,
   onNextEpisode,
   positionRef,
 }: PlayerShellProps) {
@@ -108,12 +104,12 @@ export function PlayerShell({
   const propsRef = useRef({
     url, title, adFilter, autoplayNext, episodeKey, nextUrl, nextEpisodeKey,
     getRestorePosition, onTimeUpdate, onEnded, onPause, onRequestSwitchSource, onNextPrefetchState,
-    skip, onUserSeek, onNextEpisode, positionRef, adSkips,
+    skip, onNextEpisode, positionRef, adSkips,
   });
   propsRef.current = {
     url, title, adFilter, autoplayNext, episodeKey, nextUrl, nextEpisodeKey,
     getRestorePosition, onTimeUpdate, onEnded, onPause, onRequestSwitchSource, onNextPrefetchState,
-    skip, onUserSeek, onNextEpisode, positionRef, adSkips,
+    skip, onNextEpisode, positionRef, adSkips,
   };
 
   // 跨集共享、每次换集重置的播放链路状态
@@ -139,14 +135,8 @@ export function PlayerShell({
   const stallTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const startTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 跳过片头片尾：当前落在哪一段、这一集已经跳过哪些（自动跳过只跳一次，往回拖不会再跳）
-  // jump = 只知道片头长度：开头附近显示「跳过 1:30」，从当前位置往后跳
-  const [activeSkip, setActiveSkip] = useState<'intro' | 'outro' | 'jump' | null>(null);
+  const [activeSkip, setActiveSkip] = useState<'intro' | 'outro' | null>(null);
   const skippedRef = useRef(new Set<'intro' | 'outro'>());
-  // 上一次的播放位置（判断用户从哪跳到哪）；播放器自己跳时不算用户跳
-  const lastTimeRef = useRef(0);
-  // 这次跳转从哪开始（在 seeking 时记：浏览器在 seeked 之前就会用新位置触发 timeupdate）
-  const seekFromRef = useRef<number | null>(null);
-  const programmaticSeekRef = useRef(false);
   // 自动跳过的倒数：进入片头 / 片尾后先倒数几秒（按播放时间），到了才跳
   const autoPendingRef = useRef<{ kind: 'intro' | 'outro'; at: number } | null>(null);
   const [autoLeft, setAutoLeft] = useState<number | null>(null);
@@ -154,21 +144,38 @@ export function PlayerShell({
   const seekTo = (time: number) => {
     const art = artRef.current;
     if (!art) return;
-    programmaticSeekRef.current = true;
     art.currentTime = time;
   };
 
-  const doSkip = (kind: 'intro' | 'outro' | 'jump', auto: boolean) => {
+  /** 往前 / 往后跳一步（步长在设置里选） */
+  const seekBy = (dir: -1 | 1) => {
     const art = artRef.current;
-    if (kind === 'jump') {
-      const len = propsRef.current.skip?.introJump ?? 0;
-      if (!art || len <= 0) return;
-      skippedRef.current.add('intro');
-      setActiveSkip(null);
-      seekTo(Math.min(art.currentTime + len, Math.max(0, (art.duration || Infinity) - 1)));
-      showHint(`已往后跳 ${formatTime(len)}`);
-      return;
+    if (!art) return;
+    const step = loadPlayerPrefs().seekStep;
+    const d = art.duration || 0;
+    const target = Math.max(0, Math.min(art.currentTime + dir * step, d > 0 ? d - 0.5 : Infinity));
+    seekTo(target);
+    showHint(`${dir < 0 ? '快退' : '快进'} ${step} 秒`);
+  };
+
+  const setRate = (rate: number) => {
+    const art = artRef.current;
+    if (!art) return;
+    savePlayerPrefs({ rate });
+    art.video.defaultPlaybackRate = rate;
+    art.playbackRate = rate;
+    const el = controlEl(art, 'rate');
+    if (el) {
+      // 控制栏上的倍速按钮：文字 + 选中项
+      const label = el.querySelector('.art-selector-value') ?? el.firstElementChild ?? el;
+      if (label) label.textContent = rateLabel(rate);
+      el.querySelectorAll<HTMLElement>('.art-selector-item').forEach((it) => it.classList.toggle('art-current', Number(it.dataset.value) === rate));
     }
+    showHint(rate === 1 ? '正常速度' : `${rate} 倍速`);
+  };
+
+  const doSkip = (kind: 'intro' | 'outro', auto: boolean) => {
+    const art = artRef.current;
     const seg = kind === 'intro' ? propsRef.current.skip?.intro : propsRef.current.skip?.outro;
     if (!art || !seg) return;
     skippedRef.current.add(kind);
@@ -387,8 +394,6 @@ export function PlayerShell({
     autoPendingRef.current = null;
     setAutoLeft(null);
     setActiveSkip(null);
-    lastTimeRef.current = 0;
-    seekFromRef.current = null;
     clearWatchdogs();
     armStartWatchdog();
     // 换集时清掉上一集的预取窗口，避免带宽被旧集占用
@@ -419,6 +424,7 @@ export function PlayerShell({
 
     let lastSave = 0;
 
+    const prefs = loadPlayerPrefs();
     const art = new Artplayer({
       container: containerRef.current,
       url: initialUrl,
@@ -429,7 +435,6 @@ export function PlayerShell({
       autoMini: true,
       screenshot: true,
       setting: true,
-      playbackRate: true,
       aspectRatio: true,
       fullscreen: true,
       fullscreenWeb: true,
@@ -442,6 +447,81 @@ export function PlayerShell({
       theme: '#2563eb',
       lang: navigator.language.toLowerCase().startsWith('zh') ? 'zh-cn' : 'en',
       moreVideoAttr: { crossOrigin: 'anonymous', playsInline: true },
+      controls: [
+        {
+          name: 'seek-back',
+          position: 'left',
+          index: 11,
+          html: seekIcon(-1, prefs.seekStep),
+          tooltip: `快退 ${prefs.seekStep} 秒`,
+          click: () => seekBy(-1),
+        },
+        {
+          name: 'seek-forward',
+          position: 'left',
+          index: 12,
+          html: seekIcon(1, prefs.seekStep),
+          tooltip: `快进 ${prefs.seekStep} 秒`,
+          click: () => seekBy(1),
+        },
+        {
+          name: 'rate',
+          position: 'right',
+          index: 5,
+          html: rateLabel(prefs.rate),
+          selector: [...PLAYBACK_RATES].reverse().map((r) => ({ html: r === 1 ? '正常' : `${r}x`, value: r, default: r === prefs.rate })),
+          onSelect: (item) => {
+            setRate(Number(item.value));
+            return rateLabel(Number(item.value));
+          },
+        },
+      ],
+      settings: [
+        {
+          name: 'auto-skip',
+          html: '自动跳过片头片尾',
+          tooltip: prefs.autoSkip ? '开' : '关',
+          switch: prefs.autoSkip,
+          onSwitch: (item) => {
+            const next = !item.switch;
+            savePlayerPrefs({ autoSkip: next });
+            item.tooltip = next ? '开' : '关';
+            showHint(next ? '片头片尾会倒数 5 秒后自动跳过' : '片头片尾只显示「跳过」按钮');
+            return next;
+          },
+        },
+        {
+          name: 'audio-skip',
+          html: '识别片头片尾',
+          tooltip: prefs.audioSkip ? '开' : '关',
+          switch: prefs.audioSkip,
+          onSwitch: (item) => {
+            const next = !item.switch;
+            savePlayerPrefs({ audioSkip: next });
+            item.tooltip = next ? '开' : '关';
+            showHint(next ? '会在后台比对前后几集，找出片头片尾' : '不再识别片头片尾（省流量）');
+            return next;
+          },
+        },
+        {
+          name: 'seek-step',
+          html: '快进快退',
+          tooltip: `${prefs.seekStep} 秒`,
+          selector: SEEK_STEPS.map((n) => ({ html: `${n} 秒`, value: n, default: n === prefs.seekStep })),
+          onSelect: (item) => {
+            const step = Number(item.value);
+            savePlayerPrefs({ seekStep: step });
+            for (const dir of [-1, 1] as const) {
+              const el = controlEl(artRef.current, dir < 0 ? 'seek-back' : 'seek-forward');
+              if (el) {
+                el.innerHTML = seekIcon(dir, step);
+                el.setAttribute('aria-label', `${dir < 0 ? '快退' : '快进'} ${step} 秒`);
+              }
+            }
+            return item.html;
+          },
+        },
+      ],
       customType: {
         m3u8: (video: HTMLVideoElement, mediaUrl: string) => {
           setupHls(video, mediaUrl, true);
@@ -457,6 +537,10 @@ export function PlayerShell({
     setOverlayHost(host);
 
     art.on('video:loadedmetadata', () => {
+      // 换集（换了媒体源）后浏览器会把速度重置成默认值：按你选的速度来
+      const rate = loadPlayerPrefs().rate;
+      art.video.defaultPlaybackRate = rate;
+      if (art.video.playbackRate !== rate) art.video.playbackRate = rate;
       // ArtPlayer 运行时支持 title 选项（类型定义未覆盖），用于界面标题展示
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -488,7 +572,6 @@ export function PlayerShell({
       const t = art.currentTime;
       const d = art.duration;
       if (propsRef.current.positionRef) propsRef.current.positionRef.current = { time: t, duration: d };
-      if (!art.video.seeking) lastTimeRef.current = t;
       // 你标过的广告：播到就跳过（拖进去也跳）
       const ad = propsRef.current.adSkips?.find((r) => t >= r.start && t < r.end - 0.5);
       if (ad && !art.video.seeking) {
@@ -498,18 +581,15 @@ export function PlayerShell({
       }
       // 片头片尾：落在区间里显示按钮；这部剧开了自动跳过就直接跳（每集每段只跳一次）
       const sk = propsRef.current.skip;
-      let active: 'intro' | 'outro' | 'jump' | null = null;
+      let active: 'intro' | 'outro' | null = null;
       if (sk?.intro && t >= sk.intro.start && t < sk.intro.end - 1) active = 'intro';
       else if (sk?.outro && t >= sk.outro.start && t < sk.outro.end - 1) active = 'outro';
-      else if (!sk?.intro && sk?.introJump && t > 1 && t < Math.min(600, d * 0.35) && !skippedRef.current.has('intro')) active = 'jump';
-      if (active === 'jump') {
-        // 只知道长度的片头不会自动跳：位置不固定，要你在片头开始时按
-      } else if (active && skippedRef.current.has(active) && !sk?.auto) {
+      if (active && skippedRef.current.has(active) && !sk?.auto) {
         // 手动跳过之后又拖回来：按钮照样显示
       } else if (
         active &&
         sk?.auto &&
-        // 大概位置（AniSkip 只有别的版本）只显示按钮，不自动跳
+        // 官方数据只有别的版本（位置大概对）：只显示按钮，不自动跳
         !(active === 'intro' ? sk.intro?.approx : sk.outro?.approx) &&
         !skippedRef.current.has(active) &&
         !art.video.seeking
@@ -556,19 +636,8 @@ export function PlayerShell({
         }
       }
     });
-    art.on('video:seeking', () => {
-      if (seekFromRef.current === null) seekFromRef.current = lastTimeRef.current;
-    });
     art.on('video:seeked', () => {
       ensurePrefetch(currentMediaUrlRef.current, art.currentTime);
-      const from = seekFromRef.current ?? lastTimeRef.current;
-      seekFromRef.current = null;
-      if (programmaticSeekRef.current) {
-        programmaticSeekRef.current = false;
-      } else if (playbackStartedRef.current) {
-        propsRef.current.onUserSeek?.(from, art.currentTime, art.duration);
-      }
-      lastTimeRef.current = art.currentTime;
     });
     art.on('video:pause', () => {
       propsRef.current.onPause?.(art.currentTime, art.duration);
@@ -618,11 +687,18 @@ export function PlayerShell({
       if (e.altKey && e.key === 'ArrowRight') { e.preventDefault(); return; }
       switch (e.key) {
         case 'ArrowLeft':
-          if (current.currentTime > 5) { current.currentTime -= 5; showHint('快退 5s'); e.preventDefault(); }
+          seekBy(-1); e.preventDefault();
           break;
         case 'ArrowRight':
-          if (current.duration - current.currentTime > 5) { current.currentTime += 5; showHint('快进 5s'); e.preventDefault(); }
+          seekBy(1); e.preventDefault();
           break;
+        case '<': case '>': {
+          // 跟 YouTube 一样：Shift + , / . 调慢 / 调快
+          const i = PLAYBACK_RATES.indexOf(current.playbackRate as (typeof PLAYBACK_RATES)[number]);
+          const next = PLAYBACK_RATES[Math.min(PLAYBACK_RATES.length - 1, Math.max(0, (i < 0 ? PLAYBACK_RATES.indexOf(1) : i) + (e.key === '>' ? 1 : -1)))];
+          setRate(next); e.preventDefault();
+          break;
+        }
         case 'ArrowUp':
           if (current.volume < 1) { current.volume = Math.min(1, current.volume + 0.1); showHint(`音量 ${Math.round(current.volume * 100)}%`); e.preventDefault(); }
           break;
@@ -768,15 +844,13 @@ export function PlayerShell({
         createPortal(
           <SkipButton
             label={
-              activeSkip === 'jump'
-                ? `跳过片头 ${formatTime(skip?.introJump ?? 0)}`
-                : activeSkip === 'intro'
+              activeSkip === 'intro'
                 ? '跳过片头'
                 : skip?.outro && artRef.current?.duration && skip.outro.end >= artRef.current.duration - 3 && nextUrl && onNextEpisode
                   ? '下一集'
                   : '跳过片尾'
             }
-            countdown={activeSkip !== 'jump' ? (autoLeft ?? undefined) : undefined}
+            countdown={autoLeft ?? undefined}
             onClick={() => {
               autoPendingRef.current = null;
               setAutoLeft(null);
@@ -784,7 +858,7 @@ export function PlayerShell({
             }}
             onCancel={() => {
               // 这次想看片头 / 片尾曲：这一集这一段不再自动跳，按钮也收起
-              if (activeSkip !== 'jump') skippedRef.current.add(activeSkip);
+              skippedRef.current.add(activeSkip);
               autoPendingRef.current = null;
               setAutoLeft(null);
               setActiveSkip(null);
@@ -792,32 +866,28 @@ export function PlayerShell({
           />,
           overlayHost,
         )}
-      {prompt && !error && !overlay && overlayHost &&
-        createPortal(
-          <div className="pointer-events-auto absolute top-3 right-3 max-w-[min(22rem,calc(100%-1.5rem))] rounded-xl border border-white/20 bg-black/75 text-white p-3 shadow-xl backdrop-blur-sm space-y-2 animate-fade-in">
-            <p className="text-xs sm:text-sm leading-snug">{prompt.text}</p>
-            <div className="flex flex-wrap gap-1.5">
-              {prompt.actions.map((a) => (
-                <button
-                  key={a.label}
-                  type="button"
-                  onClick={a.onClick}
-                  className={
-                    a.primary
-                      ? 'px-3 py-1 rounded-lg bg-white text-slate-950 text-xs font-semibold hover:bg-slate-100 cursor-pointer'
-                      : 'px-3 py-1 rounded-lg border border-white/30 text-xs hover:bg-white/15 cursor-pointer'
-                  }
-                >
-                  {a.label}
-                </button>
-              ))}
-            </div>
-          </div>,
-          overlayHost,
-        )}
       {overlay && (overlayHost ? createPortal(overlay, overlayHost) : overlay)}
     </div>
   );
+}
+
+/** 控制栏上某个按钮的元素（ArtPlayer 按 name 存在 controls.cache 里） */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function controlEl(art: any, name: string): HTMLElement | undefined {
+  return art?.controls?.cache?.get?.(name)?.$ref;
+}
+
+function rateLabel(rate: number): string {
+  return rate === 1 ? '倍速' : `${rate}x`;
+}
+
+/** 控制栏上的快退 / 快进按钮：圆形箭头 + 秒数 */
+function seekIcon(dir: -1 | 1, step: number): string {
+  const arrow =
+    dir < 0
+      ? '<path d="M12 5V2L7 6l5 4V7a6 6 0 1 1-6 6H4a8 8 0 1 0 8-8z" fill="currentColor"/>'
+      : '<path d="M12 5V2l5 4-5 4V7a6 6 0 1 0 6 6h2a8 8 0 1 1-8-8z" fill="currentColor"/>';
+  return `<svg width="26" height="26" viewBox="0 0 24 24" aria-hidden="true">${arrow}<text x="12" y="16.2" text-anchor="middle" font-size="7.2" font-weight="700" fill="currentColor" font-family="system-ui,sans-serif">${step}</text></svg>`;
 }
 
 /** Netflix 式右下角「跳过片头 / 跳过片尾 / 下一集」按钮（挂在播放器里，全屏时也在） */

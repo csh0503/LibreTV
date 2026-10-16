@@ -6,7 +6,6 @@ import type { AudioTemplate } from './audio-skip';
  */
 
 const KEY = 'libretv:audio-skip:v1';
-const ENABLED_KEY = 'libretv:audio-skip:enabled';
 const MAX_SERIES = 80;
 
 export interface AudioSkipEntry {
@@ -54,24 +53,4 @@ export function recordAudioMiss(series: string, kind: 'intro' | 'outro', episode
   const entry = readAll()[series];
   const list = [...(entry?.misses?.[kind] ?? []).filter((u) => u !== episodeUrl), episodeUrl].slice(-MAX_MISSES);
   saveAudioTemplates(series, { misses: { ...entry?.misses, [kind]: list } });
-}
-
-/** 后台声音比对开关：默认开；浏览器开了「省流量」时默认关 */
-export function audioSkipEnabled(): boolean {
-  try {
-    const v = localStorage.getItem(ENABLED_KEY);
-    if (v !== null) return v === '1';
-  } catch {
-    // 读不到按默认
-  }
-  const conn = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection;
-  return !conn?.saveData;
-}
-
-export function setAudioSkipEnabled(on: boolean): void {
-  try {
-    localStorage.setItem(ENABLED_KEY, on ? '1' : '0');
-  } catch {
-    // 忽略
-  }
 }

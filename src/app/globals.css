@@ -161,3 +161,16 @@ body {
   0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.5); }
   50% { opacity: 0.55; box-shadow: 0 0 0 4px rgba(239, 68, 68, 0); }
 }
+
+/* 播放器控制栏：手机上放不下就收起音量（用实体键）、截图、画中画、网页全屏，留出快退 / 快进 / 倍速 / 设置 / 全屏 */
+@media (max-width: 520px) {
+  .art-video-player .art-control-volume,
+  .art-video-player .art-control-screenshot,
+  .art-video-player .art-control-pip,
+  .art-video-player .art-control-fullscreenWeb {
+    display: none !important;
+  }
+  .art-video-player .art-controls .art-control {
+    min-width: 38px !important;
+  }
+}

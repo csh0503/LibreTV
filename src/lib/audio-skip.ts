@@ -8,7 +8,7 @@ import {
   fingerprint,
 } from './audio-fingerprint';
 import { extractAudio, playlistDuration, type HlsAudioDeps, type HlsSegment } from './hls-audio';
-import type { SkipSegment } from './skip-times';
+import type { SkipSegment } from './skip-segment';
 
 /**
  * 声音比对找片头 / 片尾：
@@ -89,7 +89,7 @@ async function compareEpisodes(
     if (!endIsFine && touches) continue;
     const start = w.from + m.aStart;
     return {
-      seg: { start: round1(start), end: round1(start + m.seconds), via: 'audio' },
+      seg: { start: round1(start), end: round1(start + m.seconds) },
       template: makeTemplate(fa, m.aStart, m.seconds),
     };
   }
@@ -132,7 +132,7 @@ async function matchTemplate(
     const t = await findCommonSegmentAsync(tail, fingerprint(pcm.subarray(lo, hi)), { minSeconds: 10 }, signal);
     if (t) end = winFrom + t.bStart - t.aStart + TAIL_SECONDS;
   }
-  return { seg: { start: round1(start), end: round1(end), via: 'audio' } };
+  return { seg: { start: round1(start), end: round1(end) } };
 }
 
 export async function detectIntro(opts: {
