@@ -280,7 +280,8 @@ export async function updateHistoryProgress(
     duration,
     timestamp: Date.now(),
   });
-  markProfileDirty();
+  // 播放中每 5 秒存一次进度，不必每次都传云端
+  markProfileDirty('lazy');
 }
 
 export async function removeHistory(sourceKey: string, vodId: string): Promise<void> {

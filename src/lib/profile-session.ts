@@ -53,7 +53,12 @@ export function resetProfileReady(): void {
 }
 
 let quiet = 0;
-const dirtyListeners = new Set<() => void>();
+/**
+ * now：收藏、新开一部、删记录这类操作，几秒内同步；
+ * lazy：播放进度这类每几秒就变一次的，攒着晚点一起传（云端存储按请求次数计费）。
+ */
+export type DirtyKind = 'now' | 'lazy';
+const dirtyListeners = new Set<(kind: DirtyKind) => void>();
 
 /** 套用云端资料时不要再触发上传 */
 export async function withoutProfileDirty<T>(fn: () => Promise<T>): Promise<T> {
@@ -65,12 +70,12 @@ export async function withoutProfileDirty<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-export function markProfileDirty(): void {
+export function markProfileDirty(kind: DirtyKind = 'now'): void {
   if (quiet > 0) return;
-  dirtyListeners.forEach((listener) => listener());
+  dirtyListeners.forEach((listener) => listener(kind));
 }
 
-export function onProfileDirty(listener: () => void): () => void {
+export function onProfileDirty(listener: (kind: DirtyKind) => void): () => void {
   dirtyListeners.add(listener);
   return () => dirtyListeners.delete(listener);
 }

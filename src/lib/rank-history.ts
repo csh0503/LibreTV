@@ -18,14 +18,22 @@ const TOP_N = 30;
 
 const storageKey = (listId: string) => `rank-history/${listId}.json`;
 
+/** 每个实例一小时最多读一次存储（按请求次数计费），写入后直接更新这份内存副本 */
+const memory = new Map<string, { at: number; snapshots: RankSnapshot[] }>();
+
 export async function loadRankHistory(listId: string): Promise<RankSnapshot[]> {
+  const cached = memory.get(listId);
+  if (cached && Date.now() - cached.at < HOUR) return cached.snapshots;
+  let snapshots: RankSnapshot[] = [];
   try {
     const raw = await readStoredJson(storageKey(listId));
     const parsed = raw ? (JSON.parse(raw) as { snapshots?: RankSnapshot[] }) : null;
-    return Array.isArray(parsed?.snapshots) ? parsed.snapshots.filter((s) => s && typeof s.at === 'number') : [];
+    snapshots = Array.isArray(parsed?.snapshots) ? parsed.snapshots.filter((s) => s && typeof s.at === 'number') : [];
   } catch {
-    return [];
+    // 没接存储：当作没有历史
   }
+  memory.set(listId, { at: Date.now(), snapshots });
+  return snapshots;
 }
 
 /**
@@ -53,6 +61,7 @@ export async function recordSnapshot(
     if (key && ranks[key] === undefined) ranks[key] = i;
   });
   const snapshots = [...history, { at: now, ranks }].sort((a, b) => a.at - b.at).slice(-KEEP);
+  memory.set(listId, { at: Date.now(), snapshots });
   try {
     await writeStoredJson(storageKey(listId), JSON.stringify({ snapshots }));
   } catch {

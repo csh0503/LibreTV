@@ -14,7 +14,18 @@ import {
 import { useAppStore } from './store';
 
 let timer: ReturnType<typeof setTimeout> | undefined;
+let lazyTimer: ReturnType<typeof setTimeout> | undefined;
+/** 待上传的只有播放进度：定时轮询和切回页面时先不传，等 5 分钟的那次或离开页面时再传 */
+let lazyOnly = false;
 let syncing = false;
+/**
+ * 云端存储（Vercel Blob / KV）按请求次数计费，免费额度每月约一万次读、两千次写：
+ * 收藏等操作 2 秒内上传；播放进度最多 5 分钟传一次，离开页面时补传；
+ * 页面开着时每 2 分钟看一眼别的设备有没有新东西，切回页面时立刻看一次。
+ */
+const PUSH_DEBOUNCE_MS = 2000;
+const LAZY_PUSH_MS = 5 * 60_000;
+const POLL_MS = 2 * 60_000;
 let lastDevice = '';
 
 function stripLocalIds<T extends { id: string; profileId: string }>(row: T): Omit<T, 'id' | 'profileId'> {
@@ -379,10 +390,11 @@ export async function syncCloudProfilesToDevice(): Promise<CatalogProfile[] | nu
   return catalog;
 }
 
-export async function pushProfile(profileId: string): Promise<void> {
+export async function pushProfile(profileId: string, knownCatalog?: CatalogProfile[]): Promise<void> {
   const profile = await db.profiles.get(profileId);
   if (!profile) return;
-  const catalog = await api.profileCatalog();
+  // 刚读过名单就直接用，省一次存储读取
+  const catalog = knownCatalog ? { profiles: knownCatalog } : await api.profileCatalog();
   const ids = new Set(catalog.profiles.map((item) => item.id));
   // 别的设备刚删掉的档，不能因为本机还留着就再写回云端。
   if (shouldDropLocalProfile(profile, ids)) {
@@ -393,10 +405,15 @@ export async function pushProfile(profileId: string): Promise<void> {
     return;
   }
   let remote: ProfileBundle | null = null;
-  try {
-    remote = await api.profileSyncGet(profile.id);
-  } catch (err) {
-    if (!isNotFound(err)) throw err;
+  // 名单上的更新时间不比本机新，说明别的设备没动过这份，不用先下载再合并
+  const listedEntry = catalog.profiles.find((item) => item.id === profile.id);
+  const remoteMayBeNewer = !listedEntry || (listedEntry.updatedAt || 0) > (profile.cloudUpdatedAt ?? 0);
+  if (remoteMayBeNewer) {
+    try {
+      remote = await api.profileSyncGet(profile.id);
+    } catch (err) {
+      if (!isNotFound(err)) throw err;
+    }
   }
   // 先把另一台刚加上的收藏和记录并进来，再整份上传，避免盖掉对方。
   if (remote && remote.updatedAt > (profile.cloudUpdatedAt ?? 0)) {
@@ -409,16 +426,17 @@ export async function pushProfile(profileId: string): Promise<void> {
   await db.profiles.update(latest.id, { cloudUpdatedAt: bundle.updatedAt, pendingPush: false });
 }
 
-export async function pushActiveProfile(): Promise<void> {
+export async function pushActiveProfile(knownCatalog?: CatalogProfile[]): Promise<void> {
   const profileId = getActiveProfileId();
   if (!profileId) return;
-  await pushProfile(profileId);
+  await pushProfile(profileId, knownCatalog);
 }
 
 export async function reconcileProfile(): Promise<void> {
   if (syncing) {
     clearTimeout(timer);
     timer = setTimeout(() => {
+      timer = undefined;
       void reconcileProfile().catch(() => {});
     }, 300);
     return;
@@ -429,14 +447,19 @@ export async function reconcileProfile(): Promise<void> {
     const profileId = getActiveProfileId();
     const profile = profileId ? await db.profiles.get(profileId) : undefined;
     if (!profile) return;
+    const wantPush = profile.pendingPush && !(lazyOnly && lazyTimer !== undefined);
     if (!catalog) {
-      if (profile.pendingPush) await pushActiveProfile();
+      if (wantPush) await pushActiveProfile();
+      if (wantPush) lazyOnly = false;
       return;
     }
     const listed = catalog.some((item) => item.id === profile.id);
     // 名单已经确认没有这份，就停。再上传会把别的手机删掉的档写回去。
     if (!listed && profile.cloudUpdatedAt != null) return;
-    if (profile.pendingPush && (listed || profile.cloudUpdatedAt == null)) await pushActiveProfile();
+    if (wantPush && (listed || profile.cloudUpdatedAt == null)) {
+      await pushActiveProfile(catalog);
+      lazyOnly = false;
+    }
   } finally {
     syncing = false;
   }
@@ -486,14 +509,29 @@ export function startProfileSync(): void {
   if (typeof window === 'undefined') return;
   const state = useAppStore.getState();
   lastDevice = JSON.stringify([state.customAPIs, state.selectedKeys, state.subscriptions, state.liveSubscriptions, state.liveSelectedUrls]);
-  onProfileDirty(() => {
+  onProfileDirty((kind) => {
     const id = getActiveProfileId();
     if (!id) return;
     void db.profiles.update(id, { pendingPush: true });
+    if (kind === 'lazy') {
+      if (!timer) lazyOnly = true;
+      // 已经排着一次就不再推迟，保证最多 5 分钟传一次
+      if (!lazyTimer) {
+        lazyTimer = setTimeout(() => {
+          lazyTimer = undefined;
+          void reconcileProfile().catch(() => {});
+        }, LAZY_PUSH_MS);
+      }
+      return;
+    }
+    lazyOnly = false;
+    clearTimeout(lazyTimer);
+    lazyTimer = undefined;
     clearTimeout(timer);
     timer = setTimeout(() => {
+      timer = undefined;
       void reconcileProfile().catch(() => {});
-    }, 300);
+    }, PUSH_DEBOUNCE_MS);
   });
   useAppStore.subscribe((next) => {
     const sig = JSON.stringify([next.customAPIs, next.selectedKeys, next.subscriptions, next.liveSubscriptions, next.liveSelectedUrls]);
@@ -501,13 +539,22 @@ export function startProfileSync(): void {
     lastDevice = sig;
     markProfileDirty();
   });
+  // 切回页面：看看别的设备有没有新东西；离开页面：把攒着的进度传上去
+  const flushPending = () => {
+    if (!lazyTimer) return;
+    clearTimeout(lazyTimer);
+    lazyTimer = undefined;
+    void reconcileProfile().catch(() => {});
+  };
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') void reconcileProfile().catch(() => {});
+    else flushPending();
   });
-  // 页面开着时持续把别的设备新收藏、新观看记录拉下来。
+  window.addEventListener('pagehide', flushPending);
+  // 页面开着时定期把别的设备新收藏、新观看记录拉下来。
   window.setInterval(() => {
     if (document.visibilityState !== 'visible') return;
     void reconcileProfile().catch(() => {});
-  }, 2000);
+  }, POLL_MS);
   void reconcileProfile().catch(() => {});
 }
