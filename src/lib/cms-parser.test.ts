@@ -237,3 +237,18 @@ describe('filterRelevantResults', () => {
     expect(filterRelevantResults(junk, wd)).toEqual(junk);
   });
 });
+
+describe('集名里的集数', () => {
+  it('episodeNumberFromName / episodeLabels', async () => {
+    const { episodeNumberFromName, episodeLabels, extractEpisodesWithNames } = await import('./cms-parser');
+    expect(episodeNumberFromName('第02集')).toBe(2);
+    expect(episodeNumberFromName('第 12 话')).toBe(12);
+    expect(episodeNumberFromName('EP03')).toBe(3);
+    expect(episodeNumberFromName('正片')).toBeUndefined();
+    const { urls, names } = extractEpisodesWithNames('第02集$https://a/2.m3u8#第03集$https://a/3.m3u8');
+    expect(urls).toEqual(['https://a/2.m3u8', 'https://a/3.m3u8']);
+    expect(episodeLabels(names, 2)).toEqual(['2', '3']);
+    expect(episodeLabels(['HD中字'], 1)).toEqual(['HD中字']);
+    expect(episodeLabels(undefined, 2)).toEqual(['1', '2']);
+  });
+});

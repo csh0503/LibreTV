@@ -11,6 +11,7 @@ import { aggregateResults, canonicalTitle, matchingGroups, rankGroupsForPick, ty
 import type { SearchResultItem, TitlePick } from '@/lib/types';
 import { useProfile } from '@/lib/use-profile';
 import { buildWatchUrl, cn, formatTime } from '@/lib/utils';
+import { episodeLabels } from '@/lib/cms-parser';
 import { Icon } from './icon';
 import { SmartImage } from './smart-image';
 import { Spinner } from './states';
@@ -204,6 +205,8 @@ function TitleModalBody({
     retry: 0,
   });
   const episodes = episodesQuery.data?.episodes ?? [];
+  // 集数以源给的集名为准（有的源列表从第 2 集开始）
+  const labels = episodeLabels(episodesQuery.data?.episodeNames, episodes.length);
   const [reversed, setReversed] = useState(false);
   const watchedIndex =
     history && current && history.sourceKey === current.sourceKey && history.vodId === current.vodId
@@ -459,7 +462,7 @@ function TitleModalBody({
                       )}
                       title={i === watchedIndex ? '上次看到这一集' : undefined}
                     >
-                      {i + 1}
+                      {labels[i]}
                     </button>
                   ))}
                 </div>

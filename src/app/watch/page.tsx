@@ -21,6 +21,12 @@ import { useAutoFailover, type FailoverState } from '@/components/use-auto-failo
 import { useToast } from '@/components/toast';
 import { useAudioSkip, type AudioSkipStatus } from '@/components/use-audio-skip';
 import { audioSkipEnabled, saveAudioTemplates, setAudioSkipEnabled } from '@/lib/audio-skip-store';
+import { diagnosePlaylist, formatDiagnosis } from '@/lib/ad-diagnose';
+import { loadAdMarks, saveAdMarks } from '@/lib/ad-marks';
+import { browserAudioDeps } from '@/lib/hls-audio-browser';
+import { makeAbsolute } from '@/lib/m3u8';
+import { bestVariant, parseMasterPlaylist } from '@/lib/stream-quality';
+import type { SkipSegment } from '@/lib/skip-times';
 import {
   classifySkip,
   loadSkipMarks,
@@ -58,6 +64,7 @@ import {
 import { getActiveProfileId, whenProfileReady } from '@/lib/profile-session';
 import { rememberVideoInfo } from '@/lib/taste-store';
 import { cn, formatTime } from '@/lib/utils';
+import { episodeLabels, episodeNumberFromName } from '@/lib/cms-parser';
 
 /**
  * 播放页（唯一入口，替代旧版 watch.html → player.html 跳转链）。
@@ -101,6 +108,9 @@ function WatchContent() {
   });
 
   const episodes = useMemo(() => detailQuery.data?.episodes ?? [], [detailQuery.data]);
+  // 集数以源给的集名为准（有的源列表从第 2 集开始，按位置数会错位）
+  const labels = useMemo(() => episodeLabels(detailQuery.data?.episodeNames, episodes.length), [detailQuery.data, episodes.length]);
+  const labelOf = (i: number) => labels[i] ?? String(i + 1);
   const videoTitle = titleParam || detailQuery.data?.videoInfo?.title || '未知视频';
 
   // 当前播放地址：优先取剧集列表中的当前集，其次直连 URL 参数
@@ -179,14 +189,16 @@ function WatchContent() {
   const isAnime = /动漫|动画|番/.test(detailQuery.data?.videoInfo?.typeName ?? '');
   // 查片头片尾数据库（片子总长确定之后，用它挑同一版本的时间点）：动漫查 B站官方 / AniSkip / TheIntroDB，其他查 TheIntroDB
   const skipKind: 'tv' | 'movie' = episodes.length > 1 ? 'tv' : 'movie';
+  // 查片头片尾数据库用真正的集数（集名里的），不是第几个按钮
+  const episodeNumber = episodeNumberFromName(detailQuery.data?.episodeNames?.[currentIndex]) ?? currentIndex + 1;
   const remoteSkip = useQuery({
-    queryKey: ['skip-times', failoverQueryTitle(videoTitle, videoYear), videoYear, currentIndex + 1, Math.round(duration / 5), isAnime, skipKind],
+    queryKey: ['skip-times', failoverQueryTitle(videoTitle, videoYear), videoYear, episodeNumber, Math.round(duration / 5), isAnime, skipKind],
     queryFn: ({ signal }) =>
       api.skipTimes(
         {
           title: failoverQueryTitle(videoTitle, videoYear),
           year: videoYear,
-          episode: currentIndex + 1,
+          episode: episodeNumber,
           length: duration,
           anime: isAnime,
           kind: skipKind,
@@ -220,6 +232,12 @@ function WatchContent() {
     (patch: Partial<LearnedSkip> | null) => setLearned(saveSkipMarks(seriesKey, patch)),
     [seriesKey],
   );
+  // 你手动标的广告（按集记）：播到自动跳过
+  const adEpisodeKey = `${sourceKey}:${vodId}:${currentIndex}`;
+  const [adMarks, setAdMarks] = useState<SkipSegment[]>([]);
+  useEffect(() => setAdMarks(loadAdMarks(adEpisodeKey)), [adEpisodeKey]);
+  const [adPanelOpen, setAdPanelOpen] = useState(false);
+
   /** 播放器里的小卡：你刚跳过一大段时问要不要记成片头 / 片尾 */
   const [skipPrompt, setSkipPrompt] = useState<PlayerPrompt | null>(null);
   const [skipEditorOpen, setSkipEditorOpen] = useState(false);
@@ -430,7 +448,10 @@ function WatchContent() {
             <h1 className="text-sm font-medium text-content truncate">{videoTitle}</h1>
             <p className="text-xs text-faint">
               {source.name}
-              {episodes.length > 0 && ` · 第 ${currentIndex + 1}/${episodes.length} 集`}
+              {episodes.length > 0 &&
+                (labelOf(currentIndex) === String(currentIndex + 1)
+                  ? ` · 第 ${currentIndex + 1}/${episodes.length} 集`
+                  : ` · 第 ${labelOf(currentIndex)} 集（列表第 ${currentIndex + 1}/${episodes.length} 个）`)}
             </p>
           </div>
           <div className="ml-auto flex items-center gap-2">
@@ -452,7 +473,7 @@ function WatchContent() {
                 enqueueDownload({
                   url: currentUrl,
                   // 多集才带集数后缀；单集影片（含电影）文件名就是纯标题
-                  title: `${videoTitle}${episodes.length > 1 ? ` 第${currentIndex + 1}集` : ''}`,
+                  title: `${videoTitle}${episodes.length > 1 ? ` 第${labelOf(currentIndex)}集` : ''}`,
                   format: 'MP4',
                 });
                 // 「已加入下载队列」由 DownloadManager 在真正入队后提示：
@@ -490,6 +511,7 @@ function WatchContent() {
                   skip={episodeSkip.intro || episodeSkip.outro || episodeSkip.introJump ? episodeSkip : undefined}
                   onUserSeek={learnSkip}
                   prompt={skipPrompt}
+                  adSkips={adMarks}
                   onNextEpisode={currentIndex + 1 < episodes.length ? () => goEpisode(currentIndex + 1) : undefined}
                   positionRef={positionRef}
                   overlay={
@@ -509,6 +531,7 @@ function WatchContent() {
                         title={videoTitle}
                         cover={detailQuery.data?.videoInfo?.cover}
                         totalEpisodes={episodes.length}
+                        nextLabel={labelOf(endOverlay.nextIndex)}
                         prefetchState={nextPrefetchState}
                         onPlayNow={() => {
                           autoPlayStreakRef.current = 0;
@@ -560,12 +583,15 @@ function WatchContent() {
               >
                 下一集
               </button>
+              <button className="btn-ghost btn-sm" onClick={() => setAdPanelOpen((v) => !v)}>
+                这集有广告？
+              </button>
               {nextPrefetchState !== 'idle' && currentIndex + 1 < episodes.length && (
                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] bg-emerald-500/15 text-emerald-500 font-medium">
                   <Icon name="bolt" className="w-3 h-3" />
                   {nextPrefetchState === 'done'
-                    ? `第 ${currentIndex + 2} 集已预热就绪`
-                    : `正在预热第 ${currentIndex + 2} 集…`}
+                    ? `第 ${labelOf(currentIndex + 1)} 集已预热就绪`
+                    : `正在预热第 ${labelOf(currentIndex + 1)} 集…`}
                 </span>
               )}
               {duration > 0 && (
@@ -596,6 +622,19 @@ function WatchContent() {
                 自动连播
               </label>
             </div>
+            {adPanelOpen && currentUrl && (
+              <AdPanel
+                url={currentUrl}
+                title={`${videoTitle}${episodes.length > 1 ? ` 第${labelOf(currentIndex)}集` : ''} · ${source.name}`}
+                positionRef={positionRef}
+                marks={adMarks}
+                onChange={(next) => {
+                  setAdMarks(next);
+                  saveAdMarks(adEpisodeKey, next);
+                }}
+                onClose={() => setAdPanelOpen(false)}
+              />
+            )}
             {skipEditorOpen && duration > 0 && (
               <SkipEditor
                 skip={episodeSkip}
@@ -645,7 +684,7 @@ function WatchContent() {
                 {orderedEpisodes.map((realIndex) => (
                   <EpisodeButton
                     key={realIndex}
-                    index={realIndex}
+                    label={labelOf(realIndex)}
                     active={realIndex === currentIndex}
                     onClick={() => goEpisode(realIndex)}
                   />
@@ -901,6 +940,135 @@ function SkipEditor({
   );
 }
 
+/**
+ * 「这集有广告？」：
+ * - 广告诊断：在你的浏览器里读这一集的播放列表，按插播段和「换了网站 / 路径 / 命名」切组列出来，
+ *   标出哪些已被去广告规则剔除；可复制给开发者看（规则漏掉的广告长什么样）。
+ * - 手动标广告：填时间或播到那里点「现在」，这一集播到就自动跳过。
+ */
+function AdPanel({
+  url,
+  title,
+  positionRef,
+  marks,
+  onChange,
+  onClose,
+}: {
+  url: string;
+  title: string;
+  positionRef: React.MutableRefObject<{ time: number; duration: number }>;
+  marks: SkipSegment[];
+  onChange: (next: SkipSegment[]) => void;
+  onClose: () => void;
+}) {
+  const { toast } = useToast();
+  const [start, setStart] = useState('');
+  const [end, setEnd] = useState('');
+  const diag = useQuery({
+    queryKey: ['ad-diag', url],
+    queryFn: async ({ signal }) => {
+      const deps = browserAudioDeps();
+      let res = await deps.fetchText(url, signal);
+      const variants = parseMasterPlaylist(res.text);
+      if (variants.length > 0) res = await deps.fetchText(makeAbsolute(bestVariant(variants)!.uri, res.url), signal);
+      return diagnosePlaylist(res.text, res.url);
+    },
+    staleTime: 10 * 60_000,
+    retry: 0,
+  });
+  const text = diag.data ? `${formatDiagnosis(diag.data, title)}\n当前播放到 ${formatTime(positionRef.current.time)}` : '';
+  const add = () => {
+    const a = parseClock(start);
+    const b = parseClock(end);
+    if (a === undefined || b === undefined || b <= a || b - a > 600) {
+      toast('填广告的开始和结束时间（如 8:44 和 9:14），最长 10 分钟', 'warning');
+      return;
+    }
+    onChange([...marks.filter((m) => m.end <= a || m.start >= b), { start: a, end: b }]);
+    setStart('');
+    setEnd('');
+    toast(`已标记 ${formatTime(a)}–${formatTime(b)}，这一集播到会自动跳过`, 'success');
+  };
+  const input = (value: string, set: (v: string) => void, label: string) => (
+    <label className="flex items-center gap-1.5">
+      <span className="text-faint">{label}</span>
+      <input
+        value={value}
+        onChange={(e) => set(e.target.value)}
+        placeholder="0:00"
+        className="w-16 px-2 py-1 rounded-md bg-surface border border-line text-content text-xs"
+      />
+      <button type="button" className="text-accent hover:underline" onClick={() => set(formatTime(positionRef.current.time))}>
+        现在
+      </button>
+    </label>
+  );
+  return (
+    <div className="mt-3 rounded-xl border border-line bg-surface-raised p-3 sm:p-4 space-y-3 text-xs text-muted">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-content">这集有广告？</h3>
+        <button type="button" className="text-faint hover:text-content" onClick={onClose}>
+          收起
+        </button>
+      </div>
+      <div className="space-y-2">
+        <p className="font-medium text-content">标出广告的位置（这一集播到会自动跳过）</p>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          {input(start, setStart, '开始')}
+          {input(end, setEnd, '结束')}
+          <button type="button" className="btn-primary btn-sm" onClick={add}>
+            标记
+          </button>
+        </div>
+        {marks.length > 0 && (
+          <ul className="flex flex-wrap gap-1.5">
+            {marks.map((m) => (
+              <li key={`${m.start}-${m.end}`} className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-chip text-content">
+                {formatTime(m.start)}–{formatTime(m.end)}
+                <button
+                  type="button"
+                  className="text-faint hover:text-danger"
+                  aria-label="删除这个标记"
+                  onClick={() => onChange(marks.filter((x) => x !== m))}
+                >
+                  ×
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between gap-2">
+          <p className="font-medium text-content">广告诊断（播放列表里每一段从哪来，✂ = 已被去广告规则去掉）</p>
+          <button
+            type="button"
+            className="btn-ghost btn-sm shrink-0"
+            disabled={!text}
+            onClick={() =>
+              void navigator.clipboard
+                .writeText(text)
+                .then(() => toast('已复制，可以贴给开发者', 'success'))
+                .catch(() => toast('复制失败，可以手动选中文字复制', 'warning'))
+            }
+          >
+            复制
+          </button>
+        </div>
+        {diag.isLoading ? (
+          <p className="text-faint">正在读取播放列表…</p>
+        ) : diag.isError ? (
+          <p className="text-danger">读不到播放列表：{diag.error instanceof Error ? diag.error.message : '失败'}</p>
+        ) : (
+          <pre className="max-h-64 overflow-auto rounded-lg bg-surface border border-line p-2 text-[11px] leading-relaxed text-content whitespace-pre-wrap break-all select-all">
+            {text}
+          </pre>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /** 自动换源时盖在播放器上的小卡：正在换 / 换不动了 */
 function FailoverOverlayCard({
   state,
@@ -961,7 +1129,7 @@ function FailoverOverlayCard({
 }
 
 /** 集数按钮：激活时自动滚动进可视区（长剧列表） */
-function EpisodeButton({ index, active, onClick }: { index: number; active: boolean; onClick: () => void }) {
+function EpisodeButton({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
   const ref = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -974,7 +1142,7 @@ function EpisodeButton({ index, active, onClick }: { index: number; active: bool
       className={cn('btn btn-sm !px-1', active ? 'episode-active' : 'btn-ghost')}
       onClick={onClick}
     >
-      {index + 1}
+      {label}
     </button>
   );
 }
@@ -1021,6 +1189,7 @@ function EndEpisodeOverlayCard({
   title,
   cover,
   totalEpisodes,
+  nextLabel,
   prefetchState,
   onPlayNow,
   onCancelCountdown,
@@ -1033,6 +1202,7 @@ function EndEpisodeOverlayCard({
   title: string;
   cover?: string;
   totalEpisodes: number;
+  nextLabel: string;
   prefetchState: 'idle' | 'running' | 'done';
   onPlayNow: () => void;
   onCancelCountdown: () => void;
@@ -1042,7 +1212,7 @@ function EndEpisodeOverlayCard({
   const customImageProxy = useAppStore((s) => s.customImageProxy);
   const [imgFailed, setImgFailed] = useState(false);
 
-  const nextEpNum = state.nextIndex + 1;
+  const nextEpNum = nextLabel;
 
   if (state.mode === 'still-watching') {
     return (

@@ -62,6 +62,8 @@ export interface VideoInfo {
 
 export interface VideoDetail {
   episodes: string[];
+  /** 集名（「第02集」），和 episodes 一一对应；源没给就没有 */
+  episodeNames?: string[];
   videoInfo: VideoInfo;
 }
 

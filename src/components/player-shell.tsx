@@ -56,6 +56,8 @@ interface PlayerShellProps {
   overlay?: React.ReactNode;
   /** 这一集的片头片尾（绝对秒数）；auto = 进入区间自动跳，否则只显示按钮 */
   skip?: { intro?: SkipSegment; outro?: SkipSegment; introJump?: number; auto: boolean };
+  /** 你手动标的广告位置：播到就自动跳过 */
+  adSkips?: SkipSegment[];
   /** 播放器里的一张小卡（例如「刚才跳过了 1:30–3:00，记成片头？」），全屏时也看得到 */
   prompt?: { text: string; actions: { label: string; onClick: () => void; primary?: boolean }[] } | null;
   /** 用户自己拖进度条 / 往前跳（不含播放器自己的跳转）：父级拿来学片头片尾位置 */
@@ -82,6 +84,7 @@ export function PlayerShell({
   onNextPrefetchState,
   overlay,
   skip,
+  adSkips,
   prompt,
   onUserSeek,
   onNextEpisode,
@@ -102,12 +105,12 @@ export function PlayerShell({
   const propsRef = useRef({
     url, title, adFilter, autoplayNext, episodeKey, nextUrl, nextEpisodeKey,
     getRestorePosition, onTimeUpdate, onEnded, onPause, onRequestSwitchSource, onNextPrefetchState,
-    skip, onUserSeek, onNextEpisode, positionRef,
+    skip, onUserSeek, onNextEpisode, positionRef, adSkips,
   });
   propsRef.current = {
     url, title, adFilter, autoplayNext, episodeKey, nextUrl, nextEpisodeKey,
     getRestorePosition, onTimeUpdate, onEnded, onPause, onRequestSwitchSource, onNextPrefetchState,
-    skip, onUserSeek, onNextEpisode, positionRef,
+    skip, onUserSeek, onNextEpisode, positionRef, adSkips,
   };
 
   // 跨集共享、每次换集重置的播放链路状态
@@ -479,6 +482,13 @@ export function PlayerShell({
       const d = art.duration;
       if (propsRef.current.positionRef) propsRef.current.positionRef.current = { time: t, duration: d };
       if (!art.video.seeking) lastTimeRef.current = t;
+      // 你标过的广告：播到就跳过（拖进去也跳）
+      const ad = propsRef.current.adSkips?.find((r) => t >= r.start && t < r.end - 0.5);
+      if (ad && !art.video.seeking) {
+        seekTo(ad.end);
+        showHint('已跳过你标的广告');
+        return;
+      }
       // 片头片尾：落在区间里显示按钮；这部剧开了自动跳过就直接跳（每集每段只跳一次）
       const sk = propsRef.current.skip;
       let active: 'intro' | 'outro' | 'jump' | null = null;
