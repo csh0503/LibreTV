@@ -341,3 +341,25 @@ describe('TOP 10 上升势头', () => {
     expect(pickBaseline([at(0.5)], now)).toBeUndefined();
   });
 });
+
+describe('片库融合：状态有依据的优先', () => {
+  it('豆瓣按年份猜的「完结」不覆盖 B站明确的「连载」；都有依据时完结优先', async () => {
+    const { fuseCatalogItems } = await import('./douban');
+    const [a] = fuseCatalogItems(
+      [
+        [{ id: 'db', title: '某新番', cover: 'c', status: 'ended', statusGuessed: true }],
+        [{ id: 'bili', title: '某新番', cover: 'c', status: 'airing', remarks: '更新至第3话' }],
+      ],
+      10,
+    );
+    expect(a.status).toBe('airing');
+    const [b] = fuseCatalogItems(
+      [
+        [{ id: 'db', title: '迷宫饭', cover: 'c', status: 'airing', remarks: '更新至14集' }],
+        [{ id: 'bili', title: '迷宫饭', cover: 'c', status: 'ended', remarks: '全24话' }],
+      ],
+      10,
+    );
+    expect(b.status).toBe('ended');
+  });
+});

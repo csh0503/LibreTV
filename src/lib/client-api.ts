@@ -177,7 +177,15 @@ export const api = {
   },
 
   douban: (
-    query: { kind: 'movie' | 'tv'; tags: string[]; sort: string; score: string; pageStart?: number; pageSize?: number },
+    query: {
+      kind: 'movie' | 'tv';
+      tags: string[];
+      sort: string;
+      score: string;
+      pageStart?: number;
+      pageSize?: number;
+      status?: 'airing' | 'ended';
+    },
     signal?: AbortSignal
   ) => {
     const sp = new URLSearchParams({
@@ -188,6 +196,7 @@ export const api = {
       pageStart: String(query.pageStart ?? 0),
       pageSize: String(query.pageSize ?? 20),
     });
+    if (query.status) sp.set('status', query.status);
     return request<DoubanResponse>(`/api/douban?${sp.toString()}`, { signal });
   },
 

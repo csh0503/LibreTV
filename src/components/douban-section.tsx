@@ -89,7 +89,7 @@ export function RecommendSection({
   );
 
   const doubanQuery = useInfiniteQuery({
-    queryKey: ['douban-hall', request?.kind, request?.tags.join(','), request?.sort, request?.score],
+    queryKey: ['douban-hall', request?.kind, request?.tags.join(','), request?.sort, request?.score, request?.status],
     queryFn: ({ pageParam, signal }) =>
       api.douban({ ...request!, pageStart: pageParam, pageSize: HALL_PAGE_SIZE }, signal),
     initialPageParam: 0,
@@ -99,8 +99,8 @@ export function RecommendSection({
       if (prev?.items[0]?.id && prev.items[0].id === last.items[0]?.id) return undefined;
       // 偏移按「第几页 × 每页条数」算，不能用已加载的卡片数：每页是豆瓣 / B站 / TMDB / Bangumi
       // 各取一页融合出来的，常常比一页多，拿它当偏移会让各来源跳过中间整页
+      // 不按豆瓣给的总数停：豆瓣翻完了，B站 / TMDB / Bangumi 往往还有很多；一页凑不满才算到底
       const nextStart = allPages.length * HALL_PAGE_SIZE;
-      if (typeof last.total === 'number' && nextStart >= last.total) return undefined;
       if (last.items.length < HALL_PAGE_SIZE) return undefined;
       return nextStart;
     },
@@ -164,8 +164,11 @@ export function RecommendSection({
       (area === '全部' || area === '日本') &&
       (year === '全部' || year === String(nowYear) || year === String(nowYear - 1));
     // 默认「全部」视图只混入评分 ≥ 6.8 的高人气当季在播番，避免 3~5 分冷门泡面番霸占第一排
+    // 「连载中」就是要看当季在播的：整份放送表都放进来；其余视图只混入高分的，免得冷门泡面番占满第一排
     const popularCalendar = mergeCalendar
-      ? allCalendar.filter((c) => parseFloat(c.rating ?? '0') >= 6.8)
+      ? status === 'airing'
+        ? allCalendar
+        : allCalendar.filter((c) => parseFloat(c.rating ?? '0') >= 6.8)
       : [];
     const merged = mergeAiringCalendar(playableDouban, popularCalendar, nowYear);
     const filtered = filterHallItems(merged, {

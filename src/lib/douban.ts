@@ -110,7 +110,9 @@ async function fetchBiliSeasonIndex(query: DoubanFetchQuery): Promise<DoubanItem
   const yearTag = tags.find((t) => /^\d{4}$/.test(t));
   const yearParam = yearTag ? `&year=${encodeURIComponent(`[${yearTag},${Number(yearTag) + 1})`)}` : '';
 
-  const url = `https://api.bilibili.com/pgc/season/index/result?st=${seasonType}&season_type=${seasonType}&page=${page}&pagesize=${query.pageSize}&order=${order}&type=1${yearParam}`;
+  // 连载中 / 已完结直接让 B站筛（is_finish：0 连载、1 完结），不在前端从热门里挑
+  const finishParam = query.status === 'airing' ? '&is_finish=0' : query.status === 'ended' ? '&is_finish=1' : '';
+  const url = `https://api.bilibili.com/pgc/season/index/result?st=${seasonType}&season_type=${seasonType}&page=${page}&pagesize=${query.pageSize}&order=${order}&type=1${yearParam}${finishParam}`;
   const res = await fetchUpstream(url, {
     timeoutMs: 6500,
     headers: { 'User-Agent': UA, Referer: 'https://www.bilibili.com/', Accept: 'application/json' },
@@ -235,6 +237,14 @@ async function fetchTmdbDiscoverCatalog(query: DoubanFetchQuery): Promise<Douban
   // 只要已经播出 / 上映的，未播出的交给「即将播出」
   const todayStr = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
   params.set(isTv ? 'first_air_date.lte' : 'primary_release_date.lte', todayStr);
+  // 连载中：仍在更新（Returning Series）且近两个月有新集；已完结：完结或停播
+  if (isTv && query.status === 'airing') {
+    params.set('with_status', '0');
+    params.set('air_date.gte', new Date(Date.now() - 60 * 86_400_000).toISOString().slice(0, 10));
+    params.set('air_date.lte', todayStr);
+  } else if (isTv && query.status === 'ended') {
+    params.set('with_status', '3|4');
+  }
 
   const isBearer = apiKey.length > 40 && apiKey.includes('.');
   if (!isBearer) params.set('api_key', apiKey);
@@ -274,6 +284,8 @@ async function fetchTmdbDiscoverCatalog(query: DoubanFetchQuery): Promise<Douban
       year,
       area,
       genres,
+      // 按状态筛过的就知道状态，否则前端的「连载中 / 已完结」会把 TMDB 的条目全滤掉
+      ...(isTv && query.status ? { status: query.status } : {}),
       sourceLabel: 'TMDB',
     });
   }
@@ -302,9 +314,14 @@ export function fuseCatalogItems(lists: DoubanItem[][], limit: number): DoubanIt
         byKey.set(key, { ...item });
         orderKeys.push(key);
       } else {
-        // B站片库或 Bangumi 的 ended 状态优先覆盖豆瓣滞后的 airing 状态
-        const authoritativeEnded =
-          existing.status === 'ended' || item.status === 'ended' ? 'ended' : existing.status || item.status;
+        // 有依据的状态（完结标记、更新说明、首播日期）优先于只按年份猜的；
+        // 都有依据时 ended 优先——B站 / Bangumi 的完结会覆盖豆瓣滞后的「更新至N集」
+        const firm = [existing, item].filter((x) => x.status && !x.statusGuessed);
+        const pool = firm.length > 0 ? firm : [existing, item].filter((x) => x.status);
+        const authoritativeEnded = pool.some((x) => x.status === 'ended')
+          ? 'ended'
+          : pool.find((x) => x.status)?.status;
+        const guessed = firm.length === 0 && Boolean(authoritativeEnded);
         const authoritativeRemarks =
           item.status === 'ended' && item.remarks
             ? item.remarks
@@ -321,6 +338,7 @@ export function fuseCatalogItems(lists: DoubanItem[][], limit: number): DoubanIt
           area: existing.area || item.area,
           genres: existing.genres || item.genres,
           status: authoritativeEnded,
+          statusGuessed: guessed || undefined,
           remarks: authoritativeRemarks,
         });
       }
@@ -332,7 +350,7 @@ export function fuseCatalogItems(lists: DoubanItem[][], limit: number): DoubanIt
 
 export async function fetchDoubanRecommend(query: DoubanFetchQuery): Promise<{ items: DoubanItem[]; total?: number }> {
   const hasTmdb = Boolean(getTmdbApiKey());
-  const cacheKey = `douban:v3:${hasTmdb ? 'tmdb:' : ''}${query.kind}:${query.tags.join(',')}:${query.sort}:${query.score}:${query.pageStart}:${query.pageSize}`;
+  const cacheKey = `douban:v4:${hasTmdb ? 'tmdb:' : ''}${query.kind}:${query.tags.join(',')}:${query.sort}:${query.score}:${query.status ?? 'all'}:${query.pageStart}:${query.pageSize}`;
   const cached = getCache<{ items: DoubanItem[]; total?: number }>(cacheKey);
   if (cached) return cached;
 
@@ -352,6 +370,7 @@ export async function fetchDoubanRecommend(query: DoubanFetchQuery): Promise<{ i
           score: query.score,
           pageStart: query.pageStart,
           pageSize: query.pageSize,
+          status: query.status,
         })
       : Promise.resolve([]),
     fetchBiliSeasonIndex(query),

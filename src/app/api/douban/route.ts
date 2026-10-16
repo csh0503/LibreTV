@@ -29,7 +29,19 @@ export async function GET(req: Request) {
   const pageSize = Math.min(50, Math.max(1, parseInt(url.searchParams.get('pageSize') || '24', 10) || 24));
 
   try {
-    const { items, total } = await fetchDoubanRecommend({ kind, tags, sort, score, yearRange: null, minScore: null, pageStart, pageSize });
+    const statusParam = url.searchParams.get('status');
+    const status = statusParam === 'airing' || statusParam === 'ended' ? statusParam : undefined;
+    const { items, total } = await fetchDoubanRecommend({
+      kind,
+      tags,
+      sort,
+      score,
+      yearRange: null,
+      minScore: null,
+      pageStart,
+      pageSize,
+      ...(status ? { status } : {}),
+    });
     // 片库变化慢：边缘节点共享 30 分钟，翻页、换筛选回来都更快
     return NextResponse.json(
       { items, total },

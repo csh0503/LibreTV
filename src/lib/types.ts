@@ -104,6 +104,8 @@ export interface DoubanItem {
    * 完结来自「全N集 / 完结」，或上映年早于今年。
    */
   status?: 'airing' | 'ended';
+  /** status 只是按年份推断的（没有任何更新说明或完结标记），合并时让位给有依据的来源 */
+  statusGuessed?: boolean;
   /** 原始更新说明，如「更新至18集」或实时热度 */
   remarks?: string;
   /** 简短看点、主演阵容、播放热度或剧情简介，用于首页大图与实时榜单展示 */

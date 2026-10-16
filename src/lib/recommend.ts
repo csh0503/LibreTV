@@ -35,6 +35,8 @@ export interface DoubanRequest {
   score: string;
   yearRange: [number, number] | null;
   minScore: number | null;
+  /** 只要连载中 / 已完结的：交给各来源在服务端筛（B站 is_finish、TMDB with_status、Bangumi 首播日期） */
+  status?: 'airing' | 'ended';
 }
 
 const AREA_GROUPS: Record<string, string[]> = {
@@ -91,6 +93,7 @@ export function buildDoubanRequest(sel: HallSelection): DoubanRequest | null {
   // 豆瓣不认「热门」这个标签，会返回 0 条。电影频道没有基础标签时用「电影」。
   if (tags.length === 0) tags.push('电影');
   const score = scoreRange(sel.score);
+  const hasStatus = sel.channel === 'anime' || sel.channel === 'tv' || sel.channel === 'show';
   return {
     kind,
     tags,
@@ -98,6 +101,7 @@ export function buildDoubanRequest(sel: HallSelection): DoubanRequest | null {
     score: score.param,
     yearRange: year.range,
     minScore: score.min,
+    ...(hasStatus && sel.status !== 'all' ? { status: sel.status } : {}),
   };
 }
 
@@ -156,6 +160,8 @@ export function rexxarToItem(raw: unknown, isTv: boolean, nowYear: number): Doub
   const ratingValue = (row.rating as { value?: unknown } | undefined)?.value;
   const rating =
     typeof ratingValue === 'number' && ratingValue > 0 ? String(ratingValue) : undefined;
+  // 电影没有连载概念，不打完结角标
+  const status = isTv ? deriveStatus({ episodesInfo: episodes, year, hasRating: rating !== undefined }, nowYear) : undefined;
 
   return {
     id,
@@ -167,8 +173,8 @@ export function rexxarToItem(raw: unknown, isTv: boolean, nowYear: number): Doub
     area,
     genres,
     remarks: episodes || undefined,
-    // 电影没有连载概念，不打完结角标
-    status: isTv ? deriveStatus({ episodesInfo: episodes, year, hasRating: rating !== undefined }, nowYear) : undefined,
+    status,
+    ...(status && !episodes ? { statusGuessed: true } : {}),
   };
 }
 

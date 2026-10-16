@@ -158,8 +158,9 @@ export async function fetchBangumiCatalog(opts: {
   score: string;
   pageStart: number;
   pageSize: number;
+  status?: 'airing' | 'ended';
 }): Promise<DoubanItem[]> {
-  const cacheKey = `bgm-catalog:${opts.tags.join(',')}:${opts.sort}:${opts.score}:${opts.pageStart}:${opts.pageSize}`;
+  const cacheKey = `bgm-catalog:${opts.tags.join(',')}:${opts.sort}:${opts.score}:${opts.status ?? 'all'}:${opts.pageStart}:${opts.pageSize}`;
   const cached = getCache<DoubanItem[]>(cacheKey);
   if (cached) return cached;
 
@@ -182,6 +183,11 @@ export async function fetchBangumiCatalog(opts: {
     }
     bgmTags.push(BANGUMI_GENRE_MAP[tag] || tag);
   }
+
+  // 连载中 = 首播在 120 天内（与 title-status 的「当季」一致）；已完结 = 首播早于那之前
+  const seasonCutoff = new Date(Date.now() + 8 * 3600_000 - 120 * 86_400_000).toISOString().slice(0, 10);
+  if (opts.status === 'airing') yearFilter = [...(yearFilter ?? []), `>=${seasonCutoff}`];
+  if (opts.status === 'ended') yearFilter = [...(yearFilter ?? []), `<${seasonCutoff}`];
 
   const [minScoreStr] = opts.score.split(',');
   const minScore = parseFloat(minScoreStr || '0');
