@@ -4,6 +4,7 @@ import { rexxarToItem, type DoubanRequest } from './recommend';
 import { fetchBangumiCatalog } from './bangumi';
 import { canonicalTitle } from './title-aliases';
 import { getTmdbApiKey, TMDB_CODE_TO_AREA, TMDB_ID_TO_GENRE } from './douban-weekly';
+import { dropUnreleased, fetchUnreleasedIndex } from './unreleased';
 
 /**
  * 多源权威片库引擎（服务端直连 + 内存缓存 + 多源元数据融合）：
@@ -11,6 +12,7 @@ import { getTmdbApiKey, TMDB_CODE_TO_AREA, TMDB_ID_TO_GENRE } from './douban-wee
  * 2. Bangumi 番组计划 v0 官方番剧检索库（免 Key，动漫频道权威补充）
  * 3. Bilibili PGC 官方片库索引（免 Key，含番剧/国创/纪录片/电影/剧集的精准 is_finish 连载/完结状态）
  * 4. TMDB 官方中文 Discover 片库（当配置 TMDB_API_KEY 时自动启用，提供全球权威评分与高清海报）
+ * 融合后再用 unreleased 开播日期索引剔除还没播出的条目。
  */
 
 const REXXAR_API = 'https://m.douban.com/rexxar/api/v2';
@@ -329,7 +331,7 @@ export function fuseCatalogItems(lists: DoubanItem[][], limit: number): DoubanIt
 
 export async function fetchDoubanRecommend(query: DoubanFetchQuery): Promise<{ items: DoubanItem[]; total?: number }> {
   const hasTmdb = Boolean(getTmdbApiKey());
-  const cacheKey = `douban:v2:${hasTmdb ? 'tmdb:' : ''}${query.kind}:${query.tags.join(',')}:${query.sort}:${query.score}:${query.pageStart}:${query.pageSize}`;
+  const cacheKey = `douban:v3:${hasTmdb ? 'tmdb:' : ''}${query.kind}:${query.tags.join(',')}:${query.sort}:${query.score}:${query.pageStart}:${query.pageSize}`;
   const cached = getCache<{ items: DoubanItem[]; total?: number }>(cacheKey);
   if (cached) return cached;
 
@@ -340,7 +342,7 @@ export async function fetchDoubanRecommend(query: DoubanFetchQuery): Promise<{ i
   const rexxar = `${REXXAR_API}/${query.kind}/recommend?start=${query.pageStart}&count=${query.pageSize}&tags=${encodeURIComponent(tags)}&sort=${query.sort}&score_range=${query.score}&uncollect=false`;
 
   // 并发请求：豆瓣 rexxar + Bangumi v0（动漫频道）+ B站 PGC 官方片库 + TMDB Discover（若配置 Key）
-  const [rexxarRes, bgmRes, biliRes, tmdbRes] = await Promise.allSettled([
+  const [rexxarRes, bgmRes, biliRes, tmdbRes, unreleasedRes] = await Promise.allSettled([
     readJson(rexxar, 'https://movie.douban.com/explore'),
     isAnime
       ? fetchBangumiCatalog({
@@ -353,6 +355,7 @@ export async function fetchDoubanRecommend(query: DoubanFetchQuery): Promise<{ i
       : Promise.resolve([]),
     fetchBiliSeasonIndex(query),
     fetchTmdbDiscoverCatalog(query),
+    fetchUnreleasedIndex(),
   ]);
 
   const rexxarJson =
@@ -400,7 +403,9 @@ export async function fetchDoubanRecommend(query: DoubanFetchQuery): Promise<{ i
     throw new Error('片库推荐获取失败');
   }
 
-  const items = fuseCatalogItems(candidateLists, query.pageSize * 2);
+  // 豆瓣 / B站不过滤未播出的年番和定档作品，用开播日期索引统一剔除，它们只在「即将播出」里出现
+  const fused = fuseCatalogItems(candidateLists, query.pageSize * 2);
+  const items = unreleasedRes.status === 'fulfilled' ? dropUnreleased(fused, unreleasedRes.value) : fused;
   const payload = { items, total };
   setCache(cacheKey, payload, CACHE_TTL);
   return payload;

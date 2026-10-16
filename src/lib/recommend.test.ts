@@ -79,6 +79,14 @@ describe('rexxarToItem / deriveStatus', () => {
     expect(deriveStatus({ episodesInfo: '更新至12集', year: '2026' }, 2026)).toBe('airing');
     expect(deriveStatus({ year: '2016' }, 2026)).toBe('ended');
   });
+
+  it('今年没集数也没评分的剧集是未开播预告，不标「已完结」', () => {
+    expect(deriveStatus({ year: '2026', hasRating: false }, 2026)).toBeUndefined();
+    expect(deriveStatus({ year: '2026', hasRating: true }, 2026)).toBe('ended');
+    expect(deriveStatus({ year: '2016', hasRating: false }, 2026)).toBe('ended');
+    const upcoming = { id: 9, title: '年番', card_subtitle: '2026 / 中国大陆 / 动画', episodes_info: '', pic: { large: 'https://img/b.jpg' }, rating: { value: 0 } };
+    expect(rexxarToItem(upcoming, true, 2026)?.status).toBeUndefined();
+  });
 });
 
 describe('filterHallItems', () => {

@@ -116,7 +116,7 @@ export function areaMatches(filter: string, itemArea: string): boolean {
 }
 
 export function deriveStatus(
-  input: { episodesInfo?: string; year?: string; fromCalendar?: boolean },
+  input: { episodesInfo?: string; year?: string; fromCalendar?: boolean; hasRating?: boolean },
   nowYear: number
 ): 'airing' | 'ended' | undefined {
   if (input.fromCalendar) return 'airing';
@@ -134,6 +134,8 @@ export function deriveStatus(
     return 'airing';
   }
   if (!Number.isFinite(year) || year < 1900 || year > nowYear + 5) return undefined;
+  // 今年及以后、没有集数信息、也还没有评分：多半是没开播的预告 / 年番，不能当成「已完结」
+  if (year >= nowYear && input.hasRating === false) return undefined;
   // 没有「更新至」的年份条目算已完结，包括今年。
   // 若把今年一律当成连载，「2026 + 已完结」会整页被滤空，而「连载中」却全是这些片子。
   return 'ended';
@@ -172,7 +174,7 @@ export function rexxarToItem(raw: unknown, isTv: boolean, nowYear: number): Doub
     genres,
     remarks: episodes || undefined,
     // 电影没有连载概念，不打完结角标
-    status: isTv ? deriveStatus({ episodesInfo: episodes, year }, nowYear) : undefined,
+    status: isTv ? deriveStatus({ episodesInfo: episodes, year, hasRating: rating !== undefined }, nowYear) : undefined,
   };
 }
 

@@ -1158,6 +1158,48 @@ export function formatAiringLabel(airingAt: number, timeKnown: boolean, now = Da
   return `${day} ${hh}:${mm}`;
 }
 
+const pad2 = (n: number) => String(n).padStart(2, '0');
+
+/** 本地时区的 YYYY-MM-DD */
+function localDateKey(ms: number): string {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
+/** 条目归到哪一天：有精确时间按观看者本地日期；只知道日期的（TMDB）按北京时间日期，避免跨时区漂移 */
+export function upcomingDayKey(item: Pick<UpcomingItem, 'airingAt' | 'timeKnown'>): string {
+  return item.timeKnown ? localDateKey(item.airingAt) : new Date(item.airingAt + 8 * 3_600_000).toISOString().slice(0, 10);
+}
+
+export interface UpcomingDay {
+  key: string;
+  /** 今天 / 明天 / 周X */
+  label: string;
+  /** 3/21 */
+  date: string;
+  count: number;
+}
+
+/** 从今天起连续 7 天（真实日期），统计每天的条目数 */
+export function buildUpcomingDays(items: Pick<UpcomingItem, 'airingAt' | 'timeKnown'>[], now = Date.now()): UpcomingDay[] {
+  const counts = new Map<string, number>();
+  for (const i of items) {
+    const k = upcomingDayKey(i);
+    counts.set(k, (counts.get(k) ?? 0) + 1);
+  }
+  return Array.from({ length: 7 }, (_, offset) => {
+    const d = new Date(now);
+    d.setDate(d.getDate() + offset);
+    const key = localDateKey(d.getTime());
+    return {
+      key,
+      label: offset === 0 ? '今天' : offset === 1 ? '明天' : WEEKDAY_CN[d.getDay()],
+      date: `${d.getMonth() + 1}/${d.getDate()}`,
+      count: counts.get(key) ?? 0,
+    };
+  });
+}
+
 /**
  * 首页「即将播出」：接下来 7 天还没播出的内容。
  * 首播/首映：点击加入片单（现在还搜不到）；连载中的新集：点击先看已经播出的集数。
@@ -1168,6 +1210,8 @@ export function UpcomingRow({ onPick }: { onPick: (title: string) => void }) {
   const profileId = useProfile().id;
   const { toast } = useToast();
   const [tab, setTab] = useState<'all' | UpcomingKind>('all');
+  /** null = 还没选过，自动落在第一个有内容的日子 */
+  const [dayPick, setDayPick] = useState<string | 'all' | null>(null);
 
   const query = useQuery({
     queryKey: ['upcoming'],
@@ -1184,14 +1228,21 @@ export function UpcomingRow({ onPick }: { onPick: (title: string) => void }) {
       ),
     [query.data, yellowFilter],
   );
+  // 未来 7 天，每天一个标签：今天 / 明天 / 周X（含日期）
+  const days = useMemo(() => buildUpcomingDays(all), [all]);
+  const activeDay = dayPick ?? days.find((d) => d.count > 0)?.key ?? 'all';
+  const inDay = useMemo(
+    () => (activeDay === 'all' ? all : all.filter((i) => upcomingDayKey(i) === activeDay)),
+    [all, activeDay],
+  );
   const counts = useMemo(() => {
-    const c: Record<string, number> = { all: all.length, anime: 0, tv: 0, movie: 0 };
-    for (const i of all) c[i.kind] += 1;
+    const c: Record<string, number> = { all: inDay.length, anime: 0, tv: 0, movie: 0 };
+    for (const i of inDay) c[i.kind] += 1;
     return c;
-  }, [all]);
+  }, [inDay]);
   const visible = useMemo(
-    () => (tab === 'all' ? all : all.filter((i) => i.kind === tab)).slice(0, 30),
-    [all, tab],
+    () => (tab === 'all' ? inDay : inDay.filter((i) => i.kind === tab)).slice(0, 40),
+    [inDay, tab],
   );
 
   if (!doubanEnabled) return null;
@@ -1218,25 +1269,49 @@ export function UpcomingRow({ onPick }: { onPick: (title: string) => void }) {
       title="即将播出"
       badge="未来 7 天"
       headerExtra={
-        <div className="flex items-center gap-1 overflow-x-auto scrollbar-none min-w-0">
-          {UPCOMING_TABS.map((t) =>
-            t.id !== 'all' && counts[t.id] === 0 ? null : (
+        <div className="flex flex-col items-end gap-1.5 min-w-0 max-w-full">
+          <div className="flex items-center gap-1 overflow-x-auto scrollbar-none max-w-full" role="tablist" aria-label="播出日期">
+            {[{ key: 'all', label: '全部', date: '', count: all.length }, ...days].map((d) => (
               <button
-                key={t.id}
+                key={d.key}
                 type="button"
-                onClick={() => setTab(t.id)}
+                role="tab"
+                aria-selected={activeDay === d.key}
+                disabled={d.count === 0}
+                onClick={() => setDayPick(d.key)}
                 className={cn(
-                  'px-2.5 py-1 rounded-full text-xs transition-colors cursor-pointer shrink-0',
-                  tab === t.id
+                  'px-2.5 py-1 rounded-full text-xs transition-colors shrink-0 leading-tight text-center',
+                  d.count === 0 ? 'opacity-35 cursor-default' : 'cursor-pointer',
+                  activeDay === d.key
                     ? 'bg-accent text-on-accent font-medium shadow-sm'
                     : 'bg-chip text-muted hover:text-content hover:bg-hover',
                 )}
               >
-                {t.label}
-                {counts[t.id] > 0 && <span className="ml-1 opacity-70">{counts[t.id]}</span>}
+                {d.label}
+                {d.date && <span className="ml-1 opacity-70">{d.date}</span>}
               </button>
-            ),
-          )}
+            ))}
+          </div>
+          <div className="flex items-center gap-1 overflow-x-auto scrollbar-none max-w-full">
+            {UPCOMING_TABS.map((t) =>
+              t.id !== 'all' && counts[t.id] === 0 ? null : (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setTab(t.id)}
+                  className={cn(
+                    'px-2 py-0.5 rounded-full text-[11px] transition-colors cursor-pointer shrink-0',
+                    tab === t.id
+                      ? 'bg-content/15 text-content font-medium'
+                      : 'text-muted hover:text-content hover:bg-hover',
+                  )}
+                >
+                  {t.label}
+                  {counts[t.id] > 0 && <span className="ml-1 opacity-70">{counts[t.id]}</span>}
+                </button>
+              ),
+            )}
+          </div>
         </div>
       }
     >

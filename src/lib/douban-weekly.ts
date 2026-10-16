@@ -2,6 +2,7 @@ import type { DoubanItem } from './types';
 import { fetchUpstream, getCache, setCache } from './fetch-utils';
 import { canonicalTitle } from './title-aliases';
 import { fetchBangumiHotAiring } from './bangumi';
+import { dropUnreleased, fetchUnreleasedIndex } from './unreleased';
 
 /**
  * 全网实时影视热榜聚合（多源合一 + 自动降级）：
@@ -990,6 +991,14 @@ export async function fetchHotList(id: HotListId): Promise<DoubanItem[]> {
   }
 
   if (items.length === 0) throw new Error('榜单数据为空');
+
+  // 热榜里偶尔混入定档 / 预告作品，剔除后若整榜被清空则保留原样
+  try {
+    const kept = dropUnreleased(items, await fetchUnreleasedIndex());
+    if (kept.length > 0) items = kept;
+  } catch {
+    // 索引取不到时不影响榜单
+  }
 
   setCache(cacheKey, items, ttl);
   return items;

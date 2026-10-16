@@ -1,5 +1,6 @@
 import { fetchUpstream, getCache, setCache } from './fetch-utils';
 import { getTmdbApiKey } from './douban-weekly';
+import { fetchBangumiSoon } from './unreleased';
 
 /**
  * 「即将播出」：接下来 7 天还没播出的内容。
@@ -95,6 +96,17 @@ async function fetchBangumiNativeMap(): Promise<Map<string, ChineseMeta>> {
   } catch {
     // 映射失败时退回 AniList 自带的中文别名
   }
+  // 还没开播的（首播在未来几天）不在 calendar 里，用开播日期索引补上；
+  // 它的 name 可能是英文 / 罗马音（Netflix 等），照样按 name 建键，AniList 的 romaji / english 也能对上
+  try {
+    for (const s of await fetchBangumiSoon()) {
+      if (!s.nameCn) continue;
+      const k = normalizeNative(s.name);
+      if (k && !map.has(k)) map.set(k, { title: s.nameCn, cover: s.cover, rating: s.rating });
+    }
+  } catch {
+    // 补充失败不影响 calendar 映射
+  }
   setCache(key, [...map.entries()], CACHE_TTL);
   return map;
 }
@@ -129,13 +141,33 @@ async function searchBangumiChinese(native: string): Promise<ChineseMeta | undef
   return found;
 }
 
+/** 前缀命中时，多出来的部分若是季数 / 序号（「2」「第二季」「Season 2」），说明是另一季，不能当成同一部 */
+const SEASON_SUFFIX = /^(\d|第|season|part|s\d|[ⅰⅱⅲⅳⅴⅵ])/i;
+
 export function lookupChinese(map: Map<string, ChineseMeta>, native: string): ChineseMeta | undefined {
   const n = normalizeNative(native);
   if (!n) return undefined;
   const exact = map.get(n);
   if (exact) return exact;
   for (const [k, v] of map) {
-    if (k.length >= 4 && (n.startsWith(k) || k.startsWith(n))) return v;
+    if (k.length < 4) continue;
+    const longer = n.length >= k.length ? n : k;
+    const shorter = n.length >= k.length ? k : n;
+    if (longer.startsWith(shorter) && !SEASON_SUFFIX.test(longer.slice(shorter.length))) return v;
+  }
+  return undefined;
+}
+
+/** AniList 同一部作品有日文原名、罗马音、英文名三种写法，依次精确匹配，最后才回退到前缀匹配 */
+export function lookupChineseByNames(map: Map<string, ChineseMeta>, names: (string | undefined)[]): ChineseMeta | undefined {
+  const list = names.filter((n): n is string => Boolean(n && n.trim()));
+  for (const name of list) {
+    const exact = map.get(normalizeNative(name));
+    if (exact) return exact;
+  }
+  for (const name of list) {
+    const hit = lookupChinese(map, name);
+    if (hit) return hit;
   }
   return undefined;
 }
@@ -147,7 +179,7 @@ interface AniListSchedule {
   episode: number;
   media?: {
     id: number;
-    title?: { native?: string; romaji?: string };
+    title?: { native?: string; romaji?: string; english?: string };
     synonyms?: string[];
     coverImage?: { extraLarge?: string; large?: string };
     popularity?: number;
@@ -166,7 +198,7 @@ const ANILIST_QUERY = `query ($start: Int, $end: Int, $page: Int) {
       episode
       media {
         id
-        title { native romaji }
+        title { native romaji english }
         synonyms
         coverImage { extraLarge large }
         popularity
@@ -248,7 +280,7 @@ async function fetchAnimeUpcoming(now: number): Promise<UpcomingItem[]> {
       items.push(toItem(s, { title: native }));
       continue;
     }
-    const meta = lookupChinese(bgmMap, native);
+    const meta = lookupChineseByNames(bgmMap, [native, m.title?.romaji, m.title?.english]);
     if (meta) {
       items.push(toItem(s, meta));
       continue;
@@ -260,8 +292,13 @@ async function fetchAnimeUpcoming(now: number): Promise<UpcomingItem[]> {
   unresolved.sort((a, b) => (b.media!.popularity ?? 0) - (a.media!.popularity ?? 0));
   const searched = await Promise.all(
     unresolved.slice(0, 16).map(async (s) => {
-      const native = s.media!.title?.native || '';
-      const meta = native ? await searchBangumiChinese(native) : undefined;
+      const t = s.media!.title;
+      let meta: ChineseMeta | undefined;
+      for (const name of [t?.native, t?.romaji, t?.english]) {
+        if (!name) continue;
+        meta = await searchBangumiChinese(name);
+        if (meta) break;
+      }
       if (meta) return toItem(s, meta);
       const zhSyn = (s.media!.synonyms ?? []).find((x) => hasCJK(x) && !/[\u3040-\u30ff]/.test(x));
       return zhSyn ? toItem(s, { title: zhSyn }) : undefined;
