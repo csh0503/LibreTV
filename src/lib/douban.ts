@@ -77,7 +77,8 @@ interface BiliIndexItemRaw {
   cover?: string;
   score?: string;
   index_show?: string;
-  is_finish?: number;
+  /** 有的接口返回数字，有的返回字符串 */
+  is_finish?: number | string;
   order?: string;
 }
 
@@ -112,7 +113,9 @@ async function fetchBiliSeasonIndex(query: DoubanFetchQuery): Promise<DoubanItem
 
   // 连载中 / 已完结直接让 B站筛（is_finish：0 连载、1 完结），不在前端从热门里挑
   const finishParam = query.status === 'airing' ? '&is_finish=0' : query.status === 'ended' ? '&is_finish=1' : '';
-  const url = `https://api.bilibili.com/pgc/season/index/result?st=${seasonType}&season_type=${seasonType}&page=${page}&pagesize=${query.pageSize}&order=${order}&type=1${yearParam}${finishParam}`;
+  // 按状态筛时 B站的「连载」里混着大量「即将开播」和标错的完结番，多要一倍再自己过滤
+  const pageSize = query.status ? query.pageSize * 2 : query.pageSize;
+  const url = `https://api.bilibili.com/pgc/season/index/result?st=${seasonType}&season_type=${seasonType}&page=${page}&pagesize=${pageSize}&order=${order}&type=1${yearParam}${finishParam}`;
   const res = await fetchUpstream(url, {
     timeoutMs: 6500,
     headers: { 'User-Agent': UA, Referer: 'https://www.bilibili.com/', Accept: 'application/json' },
@@ -134,11 +137,15 @@ async function fetchBiliSeasonIndex(query: DoubanFetchQuery): Promise<DoubanItem
 
     const scoreNum = parseFloat((row.score || '').replace(/分$/, ''));
     const rating = Number.isFinite(scoreNum) && scoreNum > 0 ? scoreNum.toFixed(1) : undefined;
+    const finishFlag = row.is_finish === undefined || row.is_finish === '' ? NaN : Number(row.is_finish);
     const status = judgeStatus({
       isTv,
-      finished: row.is_finish === 1 ? true : row.is_finish === 0 ? false : undefined,
+      // 更新说明写着「全N话」却标着未完结的，以更新说明为准（B站部分老番的 is_finish 不可靠）
+      finished: finishFlag === 1 ? true : finishFlag === 0 && !/全\s*\d+|完结/.test(row.index_show ?? '') ? false : undefined,
       text: row.index_show,
     });
+    // 按状态筛时只留真的符合的
+    if (query.status && isTv && status !== query.status) continue;
 
     items.push({
       id: `bili_idx_${row.season_id}`,
@@ -230,6 +237,8 @@ async function fetchTmdbDiscoverCatalog(query: DoubanFetchQuery): Promise<Douban
   });
   if (genreIds.size > 0) params.set('with_genres', [...genreIds].join(','));
   if (originCountry) params.set('with_origin_country', originCountry);
+  // 动漫频道没选地区时只要日本 / 中国：否则连载中会被辛普森、南方公园这类美国长寿动画占满
+  else if (query.tags.includes('动画') && isTv) params.set('with_origin_country', 'JP|CN');
   if (yearFilter) {
     params.set(isTv ? 'first_air_date_year' : 'primary_release_year', yearFilter);
   }

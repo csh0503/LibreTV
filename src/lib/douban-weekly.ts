@@ -784,7 +784,11 @@ async function fetchBiliRankRaw(opts: {
   area?: string;
   genres?: string;
 }): Promise<DoubanItem[]> {
-  const url = `https://api.bilibili.com/pgc/web/rank/list?day=3&season_type=${opts.seasonType}`;
+  // 热播榜接口没有综艺（season_type=7 返回空），综艺改用片库索引按热度排（order=2）
+  const useIndex = opts.seasonType === 7;
+  const url = useIndex
+    ? `https://api.bilibili.com/pgc/season/index/result?st=7&season_type=7&page=1&pagesize=30&order=2&type=1`
+    : `https://api.bilibili.com/pgc/web/rank/list?day=3&season_type=${opts.seasonType}`;
   const res = await fetchUpstream(url, {
     timeoutMs: 8000,
     headers: {
@@ -800,7 +804,18 @@ async function fetchBiliRankRaw(opts: {
     data?: { list?: BiliRankItemRaw[] };
   };
   const rawList = json.result?.list || json.data?.list;
-  const rows = assertArray<BiliRankItemRaw>(rawList, 'B站热播榜');
+  const rows = useIndex
+    ? assertArray<{ season_id?: number | string; title?: string; cover?: string; score?: string; index_show?: string }>(
+        rawList,
+        'B站综艺片库',
+      ).map((r): BiliRankItemRaw => ({
+        season_id: r.season_id,
+        title: r.title,
+        cover: r.cover,
+        rating: r.score,
+        new_ep: { index_show: r.index_show },
+      }))
+    : assertArray<BiliRankItemRaw>(rawList, 'B站热播榜');
   const rawItems = rows
     .slice(0, 50)
     .map((row) => biliRankToItem(row, opts))
@@ -809,7 +824,8 @@ async function fetchBiliRankRaw(opts: {
   const curated = curateRealtimeList(rawItems, {
     filterEvergreen: true,
     dropEndedCatalog: opts.seasonType === 1,
-    maxEpisodes: opts.seasonType === 4 ? 260 : 95,
+    // 综艺的「更新至20251016期」是日期不是集数，不设集数上限
+    maxEpisodes: opts.seasonType === 7 ? Number.MAX_SAFE_INTEGER : opts.seasonType === 4 ? 260 : 95,
   });
   // 番剧榜剔除已完结的旧番后常常只剩两三部（B站近 3 天热播多是补番），太少会让日漫在综合榜里几乎没有票：
   // 不够 8 部时改为「在播的排前面，热度高的完结番接在后面」
@@ -817,7 +833,7 @@ async function fetchBiliRankRaw(opts: {
 
   const fallback = curateRealtimeList(rawItems, {
     filterEvergreen: true,
-    maxEpisodes: opts.seasonType === 4 ? 260 : 120,
+    maxEpisodes: opts.seasonType === 7 ? Number.MAX_SAFE_INTEGER : opts.seasonType === 4 ? 260 : 120,
   });
   if (fallback.length === 0) {
     if (curated.length > 0) return curated;
@@ -1079,7 +1095,8 @@ export async function fetchHotListWithMeta(id: HotListId): Promise<{ items: Doub
         { name: 'B站综艺', weight: 1.05, run: () => fetchBiliRankRaw(BILI_SEASON_TYPE_MAP.bili_show!) },
         { name: '国内口碑', weight: 1.05, run: () => fetchDoubanWithFallback('douban_show_chinese') },
         { name: '海外口碑', weight: 0.9, run: () => fetchDoubanWithFallback('douban_show_global') },
-      ]);
+        // 综艺的「更新至20251016期」是日期不是集数，不能按集数上限剔除
+      ], { maxEpisodes: Number.MAX_SAFE_INTEGER });
       break;
     }
 

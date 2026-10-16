@@ -363,3 +363,12 @@ describe('片库融合：状态有依据的优先', () => {
     expect(b.status).toBe('ended');
   });
 });
+
+describe('综艺不按集数上限剔除', () => {
+  it('「更新至20251016期」在综艺榜里保留', async () => {
+    const { fuseMultiSourceRankings } = await import('./douban-weekly');
+    const items = [{ id: 'v', title: '某综艺', cover: 'c', remarks: '更新至20251016期' }];
+    expect(fuseMultiSourceRankings([{ name: '热门综艺', items }])).toHaveLength(0);
+    expect(fuseMultiSourceRankings([{ name: '热门综艺', items }], { maxEpisodes: Number.MAX_SAFE_INTEGER })).toHaveLength(1);
+  });
+});
