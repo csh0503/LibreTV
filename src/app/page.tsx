@@ -16,7 +16,8 @@ import {
 } from '@/components/home-rows';
 import { DetailModal } from '@/components/detail-modal';
 import { TitleModal } from '@/components/title-modal';
-import { AggregatedCard, aggregateResults } from '@/components/video-card';
+import { favoriteIdOf } from '@/lib/db';
+import { aggregateResults, DoubanCard, type AggregatedGroup } from '@/components/video-card';
 import { useAppStore, isInDisabledSubscription, isSourceDisabled } from '@/lib/store';
 import { sourceIsAdult } from '@/lib/adult-sources';
 import { useLoadMore } from '@/components/use-load-more';
@@ -69,6 +70,8 @@ function HomeContent() {
   const [detailItem, setDetailItem] = useState<SearchResultItem | null>(null);
   /** 作品详情弹窗（Netflix 式「更多信息」）当前展示的作品 */
   const [titlePick, setTitlePick] = useState<TitlePick | null>(null);
+  /** 从搜索结果打开时，弹窗直接用这张卡的片源 */
+  const [presetItems, setPresetItems] = useState<SearchResultItem[] | undefined>(undefined);
   /** 「浏览全部」筛选墙默认收起，首页以 Netflix 式的行为主 */
   const [browseAll, setBrowseAll] = useState(false);
   /** 从货架末尾点「浏览全部」时落在哪个频道；每点一次 nonce +1，用来重建筛选区并滚过去 */
@@ -124,7 +127,20 @@ function HomeContent() {
   const pickTitle = (title: string, pick?: TitlePick) => {
     const full = { ...pick, title };
     pickedTitles.set(title.trim().slice(0, 100), full);
+    setPresetItems(undefined);
     setTitlePick(full);
+  };
+
+  /** 搜索结果卡片点开：同一个详情弹窗，片源直接用这张卡聚合到的，不再搜一遍 */
+  const openGroup = (group: AggregatedGroup) => {
+    setPresetItems(group.items);
+    setTitlePick({
+      title: group.name,
+      cover: group.pic,
+      year: group.year,
+      genres: group.typeName,
+      remarks: group.remarks,
+    });
   };
 
   const closeTitleModal = useCallback(() => setTitlePick(null), []);
@@ -384,11 +400,7 @@ function HomeContent() {
                 <p className="mb-3 text-sm text-muted">
                   原名没有找到，按别名<span className="text-content font-medium">《{fallback.foundVia}》</span>找到：
                 </p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 items-start">
-                  {fallback.groups.map((group) => (
-                    <AggregatedCard key={group.key} group={group} onOpen={(item) => setDetailItem(item)} />
-                  ))}
-                </div>
+                <SearchPosterGrid groups={fallback.groups} onOpen={openGroup} />
                 {list.length > 0 && <h3 className="mt-6 text-sm text-faint">名称相近的其他结果</h3>}
               </div>
             )}
@@ -408,15 +420,7 @@ function HomeContent() {
                     onRetry={() => void searchQuery.refetch()}
                   />
                 )}
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 items-start">
-                  {visibleGroups.map((group) => (
-                    <AggregatedCard
-                      key={group.key}
-                      group={group}
-                      onOpen={(item) => setDetailItem(item)}
-                    />
-                  ))}
-                </div>
+                <SearchPosterGrid groups={visibleGroups} onOpen={openGroup} />
                 {hasMoreResults && <div ref={resultSentinel} className="h-8" />}
               </>
             ) : isSearching ? (
@@ -488,6 +492,7 @@ function HomeContent() {
 
       <TitleModal
         pick={titlePick}
+        presetItems={presetItems}
         onClose={closeTitleModal}
         onOpenSource={(item) => {
           setTitlePick(null);
@@ -534,6 +539,31 @@ function NoSourceGuide({ hasSources = false }: { hasSources?: boolean }) {
           </>
         )}
       </p>
+    </div>
+  );
+}
+
+/** 搜索结果：和首页一样的海报卡片，一部一张，点开是同一个详情弹窗 */
+function SearchPosterGrid({ groups, onOpen }: { groups: AggregatedGroup[]; onOpen: (group: AggregatedGroup) => void }) {
+  return (
+    <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 gap-3">
+      {groups.map((group) => {
+        const sources = new Set(group.items.map((i) => i.sourceKey)).size;
+        const remarks = group.remarks?.trim();
+        return (
+          <DoubanCard
+            key={group.key}
+            item={{
+              title: group.name,
+              cover: group.pic ?? '',
+              meta: [group.year, group.typeName, `${sources} 个源`].filter(Boolean).join(' · '),
+              badge: remarks && remarks.length <= 12 ? { text: remarks, tone: 'ok' } : undefined,
+              favorite: { localId: favoriteIdOf({ title: group.name }), title: group.name, pic: group.pic, year: group.year },
+            }}
+            onClick={() => onOpen(group)}
+          />
+        );
+      })}
     </div>
   );
 }

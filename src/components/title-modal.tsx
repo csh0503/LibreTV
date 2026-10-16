@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { recallAlias } from '@/lib/alias-memory';
-import { db, favoriteIdOf, toggleFavorite } from '@/lib/db';
+import { addSearchHistory, db, favoriteIdOf, toggleFavorite } from '@/lib/db';
 import { describeContinueWatching } from '@/lib/home-features';
 import { resolveSource, useAppStore } from '@/lib/store';
 import { aggregateResults, canonicalTitle, matchingGroups, type AggregatedGroup } from '@/lib/title-aliases';
@@ -36,13 +36,16 @@ const MAX_GROUPS = 6;
  */
 export function TitleModal({
   pick,
+  presetItems,
   onClose,
   onOpenSource,
   onShowResults,
 }: {
   pick: TitlePick | null;
+  /** 搜索结果页点开时已经有这部的片源，直接用，不再搜一遍 */
+  presetItems?: SearchResultItem[];
   onClose: () => void;
-  /** 选定某个源 → 打开该源的选集弹窗 */
+  /** 弹窗里取不到剧集时的退路：打开该源的选集弹窗 */
   onOpenSource: (item: SearchResultItem) => void;
   /** 去搜索结果页看全部（含名称相近的） */
   onShowResults: (title: string) => void;
@@ -53,6 +56,7 @@ export function TitleModal({
     <TitleModalBody
       key={pick.title}
       pick={pick}
+      presetItems={presetItems}
       onClose={onClose}
       onOpenSource={onOpenSource}
       onShowResults={onShowResults}
@@ -62,11 +66,13 @@ export function TitleModal({
 
 function TitleModalBody({
   pick,
+  presetItems,
   onClose,
   onOpenSource,
   onShowResults,
 }: {
   pick: TitlePick;
+  presetItems?: SearchResultItem[];
   onClose: () => void;
   onOpenSource: (item: SearchResultItem) => void;
   onShowResults: (title: string) => void;
@@ -82,11 +88,17 @@ function TitleModalBody({
   const [heroFailed, setHeroFailed] = useState(false);
   const [posterFailed, setPosterFailed] = useState(false);
 
-  const { searchQuery, selectedSources, streamedOutcomes, isSearching, settled, list, failures } = useSourceSearch(
-    pick.title,
-  );
+  const live = useSourceSearch(pick.title, !presetItems);
+  const { searchQuery, selectedSources, streamedOutcomes, failures } = live;
+  const list = presetItems ?? live.list;
+  const settled = presetItems ? true : live.settled;
+  const isSearching = presetItems ? false : live.isSearching;
   const groups = useMemo(() => aggregateResults(list, pick.title), [list, pick.title]);
-  const matched = useMemo(() => matchingGroups(groups, pick.title), [groups, pick.title]);
+  // 从搜索结果点开的就是这张卡本身（解说类等匹配不上的也照样列出来）
+  const matched = useMemo(() => {
+    const m = matchingGroups(groups, pick.title);
+    return presetItems && m.length === 0 ? groups : m;
+  }, [groups, pick.title, presetItems]);
   const othersCount = groups.length - matched.length;
 
   // 原名全部源都没有 → 查这部作品的其他中文名，逐个再搜
@@ -168,12 +180,43 @@ function TitleModalBody({
   );
   const best = ranked[0]?.items[0];
 
+  // 选集：默认用推荐的源，点别的源就换成那个源的剧集
+  const [selected, setSelected] = useState<SearchResultItem | null>(null);
+  const current = selected ?? best;
+  const currentSrc = current
+    ? resolveSource({ customAPIs, envSources }, current.sourceKey, { url: current.sourceUrl })
+    : undefined;
+  const episodesQuery = useQuery({
+    queryKey: ['detail-info', current?.sourceKey, current?.vodId],
+    queryFn: ({ signal }) => api.detail(current!.vodId, currentSrc!, signal),
+    enabled: Boolean(current && currentSrc) && searchDone,
+    staleTime: 30 * 60_000,
+    retry: 0,
+  });
+  const episodes = episodesQuery.data?.episodes ?? [];
+  const [reversed, setReversed] = useState(false);
+  const watchedIndex =
+    history && current && history.sourceKey === current.sourceKey && history.vodId === current.vodId
+      ? history.episodeIndex
+      : undefined;
+  const playEpisode = (index: number) => {
+    if (!current) return;
+    addSearchHistory(current.name).catch(() => {});
+    router.push(
+      buildWatchUrl({ sourceKey: current.sourceKey, vodId: current.vodId, index, title: current.name, sourceUrl: current.sourceUrl }),
+    );
+  };
+
   const primary = (() => {
     if (history && resumeView) return { label: `继续播放 · ${resumeView.posterLabel}`, onClick: resume };
     if (best) {
       const q = qualityMap[qualityKey(best)];
       const tag = q?.ok && q.height ? ` · ${q.estimated ? '约' : ''}${qualityLabel(q.height)}` : '';
-      return { label: `播放${tag}`, onClick: () => onOpenSource(best) };
+      // 剧集取到了就直接播第 1 集；还没取到 / 取不到时退回选集弹窗
+      return {
+        label: `播放${tag}`,
+        onClick: () => (current && episodes.length > 0 ? playEpisode(0) : onOpenSource(current ?? best)),
+      };
     }
     if (noSourcesConfigured) return { label: '先添加点播源', disabled: true };
     if (!settled || lookingUpAliases) return { label: '查找片源中…', disabled: true, busy: true };
@@ -337,7 +380,8 @@ function TitleModalBody({
                   <SourceGroupRow
                     key={g.key}
                     group={g}
-                    onOpenSource={onOpenSource}
+                    onSelect={setSelected}
+                    currentKey={current ? qualityKey(current) : undefined}
                     recommended={gi === 0}
                     quality={qualityMap}
                   />
@@ -367,6 +411,54 @@ function TitleModalBody({
             )}
           </section>
 
+          {current && (
+            <section aria-label="选集" className="space-y-2.5">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <h3 className="text-base font-bold text-content">
+                  选集
+                  <span className="ml-2 text-xs font-normal text-faint">
+                    {current.sourceName}
+                    {current.name !== pick.title ? ` · ${current.name}` : ''}
+                    {episodes.length > 0 ? ` · 共 ${episodes.length} 集` : ''}
+                  </span>
+                </h3>
+                {episodes.length > 1 && (
+                  <button type="button" onClick={() => setReversed((v) => !v)} className="text-xs text-accent hover:underline">
+                    {reversed ? '正序' : '倒序'}
+                  </button>
+                )}
+              </div>
+              {episodesQuery.isLoading ? (
+                <div className="grid grid-cols-5 sm:grid-cols-8 gap-1.5" aria-hidden>
+                  {Array.from({ length: 8 }).map((_, i) => (
+                    <div key={i} className="h-8 rounded-lg bg-chip animate-pulse" />
+                  ))}
+                </div>
+              ) : episodes.length > 0 ? (
+                <div className="grid grid-cols-5 sm:grid-cols-8 md:grid-cols-10 gap-1.5 max-h-64 overflow-y-auto pr-1">
+                  {(reversed ? [...episodes.keys()].reverse() : [...episodes.keys()]).map((i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => playEpisode(i)}
+                      className={cn(
+                        'h-8 rounded-lg text-xs border transition-colors',
+                        i === watchedIndex
+                          ? 'border-accent bg-accent/15 text-content font-medium'
+                          : 'border-line bg-surface text-muted hover:text-content hover:border-accent/60',
+                      )}
+                      title={i === watchedIndex ? '上次看到这一集' : undefined}
+                    >
+                      {i + 1}
+                    </button>
+                  ))}
+                </div>
+              ) : episodesQuery.isError || episodesQuery.isSuccess ? (
+                <p className="text-sm text-muted">这个源取不到剧集，换上面另一个源试试。</p>
+              ) : null}
+            </section>
+          )}
+
           {pick.sourceLabel && <p className="text-[11px] text-faint">热度来源：{pick.sourceLabel}</p>}
         </div>
       </div>
@@ -376,12 +468,15 @@ function TitleModalBody({
 
 function SourceGroupRow({
   group,
-  onOpenSource,
+  onSelect,
+  currentKey,
   recommended,
   quality,
 }: {
   group: AggregatedGroup;
-  onOpenSource: (item: SearchResultItem) => void;
+  /** 点源 → 下方选集换成这个源 */
+  onSelect: (item: SearchResultItem) => void;
+  currentKey?: string;
   /** 这一组的第一个源就是「播放」会用的那个 */
   recommended?: boolean;
   quality: Record<string, SourceQuality | undefined>;
@@ -402,11 +497,16 @@ function SourceGroupRow({
           <button
             key={`${item.sourceKey}_${item.vodId}`}
             type="button"
-            onClick={() => onOpenSource(item)}
+            onClick={() => onSelect(item)}
+            aria-pressed={qualityKey(item) === currentKey}
             title={item.remarks ? `${item.sourceName} · ${item.remarks}` : item.sourceName}
             className={cn(
-              'px-2.5 py-1 rounded-lg text-xs bg-surface border text-muted hover:text-content hover:border-accent/60 transition-colors',
-              recommended && i === 0 ? 'border-accent/60 text-content' : 'border-line',
+              'px-2.5 py-1 rounded-lg text-xs border text-muted hover:text-content hover:border-accent/60 transition-colors',
+              qualityKey(item) === currentKey
+                ? 'border-accent bg-accent/15 text-content'
+                : recommended && i === 0
+                  ? 'bg-surface border-accent/60 text-content'
+                  : 'bg-surface border-line',
             )}
           >
             {recommended && i === 0 && <span className="mr-1 text-accent font-medium">推荐</span>}

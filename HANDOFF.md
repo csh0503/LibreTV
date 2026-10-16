@@ -1,6 +1,6 @@
 # 交接说明（给接手的会话）
 
-> **部署规则（用户要求）**：每次改完、测试通过并推送分支后，**直接部署**，不要让用户自己去 Vercel 按 Redeploy。做法：把 main 快进到工作分支（`git push origin HEAD:main`，main 是线性历史，只快进、不强推），Vercel 会自动部署 Production；页脚的提交短哈希可确认线上版本。出问题可在 Vercel 的 Deployments 里 Promote 上一个版本回滚。
+> **部署规则（用户要求）**：每次改完、测试通过并推送分支后，**直接部署**，不要让用户自己去 Vercel 按 Redeploy。做法：把 main 快进到工作分支（`git push origin HEAD:main`，main 是线性历史，只快进、不强推），Vercel 会自动部署 Production；页脚的提交短哈希可确认线上版本。用户不要 Preview：`vercel.json` 里 `git.deploymentEnabled` 关掉了 `claude/*` 分支的部署，推分支不会再生成 Preview，只有 main 部署。出问题可在 Vercel 的 Deployments 里 Promote 上一个版本回滚。
 >
 > 先读完这份再动手。用户用中文（繁体/简体混用）沟通；`PASSWORD` 环境变量未设置时所有 `/api/*` 返回 503，本地调试需要自建 `.env.local`（已被 git 忽略）。
 
@@ -20,6 +20,9 @@
 | `51aa338` | 「即将播出」按真实日期分 7 天；新增 `src/lib/unreleased.ts`（Bangumi + TMDB 开播日期索引）统一剔除未播出条目；`deriveStatus` 不再把未开播剧集标「已完结」；AniList 罗马音/英文名参与中文名匹配 |
 | `dc95feb` | Bangumi 放送表按 `air_date` 剔除未开播定档作品（《边缘行者 2》曾因客户端 `mergeAiringCalendar` 混进片库「连载」） |
 | `7b64a9b` | Netflix 式货架：`/api/shelf?id=`（`src/lib/shelves.ts` + `shelf-defs.ts`）、客户端 `src/components/shelf-rows.tsx`、首页接入；筛选墙收进「浏览全部」按钮 |
+
+- **搜索结果页**：和首页一样的海报卡片（`page.tsx` 的 `SearchPosterGrid`，一部一张，角标是更新状态、下方「年份 · 类型 · N 个源」），点开是同一个作品详情弹窗（`TitleModal` 传 `presetItems`，直接用这张卡聚合到的片源，不再搜一遍）。
+- **详情弹窗里直接选集**：点某个源 → 下方「选集」换成该源的剧集（倒序、上次看到的那集高亮），点集数直接进播放页；「播放」播推荐源第 1 集。旧的 `DetailModal` 只在剧集取不到时、片单和「浏览全部」里还用。
 
 ## 架构要点
 
