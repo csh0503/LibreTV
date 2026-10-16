@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { pickAniListMedia, pickBangumiHit, pickSkipTimes, splitSeason } from './skip-times';
-import { classifySkip, resolveEpisodeSkip } from './skip-marks';
+import { classifySkip, parseClock, resolveEpisodeSkip } from './skip-marks';
 
 describe('pickSkipTimes', () => {
   const r = (skipType: string, startTime: number, endTime: number, episodeLength: number) => ({
@@ -114,5 +114,31 @@ describe('大概位置排在你记下的后面', () => {
     const got = resolveEpisodeSkip(remote, undefined, 1440);
     expect(got.intro).toEqual({ start: 80, end: 170, approx: true });
     expect(got.remote.intro).toBe(false);
+  });
+});
+
+describe('手动设置', () => {
+  it('手动设的比 AniSkip 优先，没设的那段照样用 AniSkip', () => {
+    const remote = { intro: { start: 0, end: 90 }, outro: { start: 1335, end: 1425 } };
+    const got = resolveEpisodeSkip(remote, { manual: true, intro: { start: 30, end: 120 }, updatedAt: 0 }, 1440);
+    expect(got.intro).toEqual({ start: 30, end: 120 });
+    expect(got.source).toEqual({ intro: 'manual', outro: 'aniskip' });
+  });
+
+  it('只填片头长度：没有片头位置时给 introJump', () => {
+    const got = resolveEpisodeSkip(undefined, { manual: true, introLength: 90, updatedAt: 0 }, 1440);
+    expect(got.intro).toBeUndefined();
+    expect(got.introJump).toBe(90);
+    expect(got.source.intro).toBe('manual');
+  });
+
+  it('parseClock 认 1:30 / 01:02:03 / 90 / 全角冒号', () => {
+    expect(parseClock('1:30')).toBe(90);
+    expect(parseClock('01:02:03')).toBe(3723);
+    expect(parseClock('90')).toBe(90);
+    expect(parseClock('22：15')).toBe(1335);
+    expect(parseClock('1:75')).toBeUndefined();
+    expect(parseClock('abc')).toBeUndefined();
+    expect(parseClock('')).toBeUndefined();
   });
 });

@@ -16,6 +16,13 @@ export interface LearnedSkip {
   intro?: SkipSegment;
   /** 片尾离结尾多远：开始于 duration - fromEnd，结束于 duration - toEnd（0 = 一直到结尾） */
   outro?: { fromEnd: number; toEnd: number };
+  /**
+   * 只知道片头多长（片头前的剧情每集长度不同、位置不固定时用）：
+   * 开头附近显示「跳过 1:30」，从按下的位置往后跳这么多秒。
+   */
+  introLength?: number;
+  /** 片头片尾是你手动设的：比 AniSkip 优先 */
+  manual?: boolean;
   /** 这部剧自动跳过 */
   auto?: boolean;
   /** 你说 AniSkip 的时间点不准：这部剧不再用它，只用你自己跳过时记下的 */
@@ -81,19 +88,25 @@ export function classifySkip(
   return null;
 }
 
+export type SkipSource = 'manual' | 'aniskip' | 'aniskip-approx' | 'learned';
+
 export interface EpisodeSkip {
   intro?: SkipSegment;
   outro?: SkipSegment;
+  /** 没有片头位置、只知道片头长度时：开头附近按一下往后跳这么多秒 */
+  introJump?: number;
   auto: boolean;
-  /** 哪段用的是 AniSkip 的准确时间（这段不再学你的跳过） */
+  /** 哪段用的是 AniSkip 的准确时间（这段不再问你要不要记） */
   remote: { intro: boolean; outro: boolean };
+  /** 每段的来源 */
+  source: { intro?: SkipSource; outro?: SkipSource };
   /** 没有某段时的原因（AniSkip 那边） */
   missing: NonNullable<SkipTimes['missing']>;
 }
 
 /**
- * 这一集实际用的片头片尾（绝对秒数）：
- * AniSkip 的准确时间 > 你自己跳过时记下的 > AniSkip 只有别的版本时的大概位置。
+ * 这一集实际用的片头片尾（绝对秒数），优先顺序：
+ * 你手动设的 > AniSkip 的准确时间 > 你跳过后确认记下的 > AniSkip 只有别的版本时的大概位置。
  */
 export function resolveEpisodeSkip(remote: SkipTimes | undefined, learned: LearnedSkip | undefined, duration: number): EpisodeSkip {
   const valid = (s?: SkipSegment) =>
@@ -105,13 +118,39 @@ export function resolveEpisodeSkip(remote: SkipTimes | undefined, learned: Learn
   const r = learned?.ignoreRemote ? undefined : remote;
   const exact = (s?: SkipSegment) => (s && !s.approx ? valid(s) : undefined);
   const approx = (s?: SkipSegment) => (s?.approx ? valid(s) : undefined);
-  const intro = exact(r?.intro) ?? valid(learned?.intro) ?? approx(r?.intro);
-  const outro = exact(r?.outro) ?? learnedOutro ?? approx(r?.outro);
+  const mine = learned?.manual ? 'manual' : 'learned';
+  const pick = (
+    own: SkipSegment | undefined,
+    fromRemote: SkipSegment | undefined,
+  ): { seg?: SkipSegment; source?: SkipSource } => {
+    const candidates: [SkipSegment | undefined, SkipSource][] = learned?.manual
+      ? [[own, 'manual'], [exact(fromRemote), 'aniskip'], [approx(fromRemote), 'aniskip-approx']]
+      : [[exact(fromRemote), 'aniskip'], [own, mine], [approx(fromRemote), 'aniskip-approx']];
+    const hit = candidates.find(([seg]) => seg);
+    return hit ? { seg: hit[0], source: hit[1] } : {};
+  };
+  const intro = pick(valid(learned?.intro), r?.intro);
+  const outro = pick(learnedOutro, r?.outro);
+  const introJump = !intro.seg && learned?.introLength && learned.introLength > 0 ? learned.introLength : undefined;
   return {
-    intro,
-    outro,
+    intro: intro.seg,
+    outro: outro.seg,
+    introJump,
     auto: Boolean(learned?.auto),
-    remote: { intro: Boolean(exact(r?.intro)), outro: Boolean(exact(r?.outro)) },
+    remote: { intro: intro.source === 'aniskip', outro: outro.source === 'aniskip' },
+    source: { intro: intro.seg ? intro.source : introJump ? mine : undefined, outro: outro.source },
     missing: r?.missing ?? {},
   };
+}
+
+/** 「1:30」「01:02:03」「90」→ 秒；看不懂返回 undefined */
+export function parseClock(text: string): number | undefined {
+  const t = text.trim();
+  if (!t) return undefined;
+  if (/^\d+(\.\d+)?$/.test(t)) return Math.round(parseFloat(t));
+  const m = t.match(/^(?:(\d+)[:：])?(\d{1,2})[:：](\d{1,2})$/);
+  if (!m) return undefined;
+  const [h, mm, ss] = [parseInt(m[1] ?? '0', 10), parseInt(m[2], 10), parseInt(m[3], 10)];
+  if (ss >= 60 || (m[1] && mm >= 60)) return undefined;
+  return h * 3600 + mm * 60 + ss;
 }

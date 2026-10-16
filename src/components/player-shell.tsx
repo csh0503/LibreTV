@@ -55,7 +55,9 @@ interface PlayerShellProps {
   /** 播放器表面浮层（如播完时的下一集倒计时大卡、「还在看吗？」询问卡），支持全屏内展示 */
   overlay?: React.ReactNode;
   /** 这一集的片头片尾（绝对秒数）；auto = 进入区间自动跳，否则只显示按钮 */
-  skip?: { intro?: SkipSegment; outro?: SkipSegment; auto: boolean };
+  skip?: { intro?: SkipSegment; outro?: SkipSegment; introJump?: number; auto: boolean };
+  /** 播放器里的一张小卡（例如「刚才跳过了 1:30–3:00，记成片头？」），全屏时也看得到 */
+  prompt?: { text: string; actions: { label: string; onClick: () => void; primary?: boolean }[] } | null;
   /** 用户自己拖进度条 / 往前跳（不含播放器自己的跳转）：父级拿来学片头片尾位置 */
   onUserSeek?: (from: number, to: number, duration: number) => void;
   /** 片尾一直到结尾时，「跳过片尾」直接进下一集 */
@@ -80,6 +82,7 @@ export function PlayerShell({
   onNextPrefetchState,
   overlay,
   skip,
+  prompt,
   onUserSeek,
   onNextEpisode,
   positionRef,
@@ -130,7 +133,8 @@ export function PlayerShell({
   const stallTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const startTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 跳过片头片尾：当前落在哪一段、这一集已经跳过哪些（自动跳过只跳一次，往回拖不会再跳）
-  const [activeSkip, setActiveSkip] = useState<'intro' | 'outro' | null>(null);
+  // jump = 只知道片头长度：开头附近显示「跳过 1:30」，从当前位置往后跳
+  const [activeSkip, setActiveSkip] = useState<'intro' | 'outro' | 'jump' | null>(null);
   const skippedRef = useRef(new Set<'intro' | 'outro'>());
   // 上一次的播放位置（判断用户从哪跳到哪）；播放器自己跳时不算用户跳
   const lastTimeRef = useRef(0);
@@ -145,8 +149,17 @@ export function PlayerShell({
     art.currentTime = time;
   };
 
-  const doSkip = (kind: 'intro' | 'outro', auto: boolean) => {
+  const doSkip = (kind: 'intro' | 'outro' | 'jump', auto: boolean) => {
     const art = artRef.current;
+    if (kind === 'jump') {
+      const len = propsRef.current.skip?.introJump ?? 0;
+      if (!art || len <= 0) return;
+      skippedRef.current.add('intro');
+      setActiveSkip(null);
+      seekTo(Math.min(art.currentTime + len, Math.max(0, (art.duration || Infinity) - 1)));
+      showHint(`已往后跳 ${formatTime(len)}`);
+      return;
+    }
     const seg = kind === 'intro' ? propsRef.current.skip?.intro : propsRef.current.skip?.outro;
     if (!art || !seg) return;
     skippedRef.current.add(kind);
@@ -468,10 +481,13 @@ export function PlayerShell({
       if (!art.video.seeking) lastTimeRef.current = t;
       // 片头片尾：落在区间里显示按钮；这部剧开了自动跳过就直接跳（每集每段只跳一次）
       const sk = propsRef.current.skip;
-      let active: 'intro' | 'outro' | null = null;
+      let active: 'intro' | 'outro' | 'jump' | null = null;
       if (sk?.intro && t >= sk.intro.start && t < sk.intro.end - 1) active = 'intro';
       else if (sk?.outro && t >= sk.outro.start && t < sk.outro.end - 1) active = 'outro';
-      if (active && skippedRef.current.has(active) && !sk?.auto) {
+      else if (!sk?.intro && sk?.introJump && t > 1 && t < Math.min(600, d * 0.35) && !skippedRef.current.has('intro')) active = 'jump';
+      if (active === 'jump') {
+        // 只知道长度的片头不会自动跳：位置不固定，要你在片头开始时按
+      } else if (active && skippedRef.current.has(active) && !sk?.auto) {
         // 手动跳过之后又拖回来：按钮照样显示
       } else if (
         active &&
@@ -712,7 +728,9 @@ export function PlayerShell({
         createPortal(
           <SkipButton
             label={
-              activeSkip === 'intro'
+              activeSkip === 'jump'
+                ? `跳过片头 ${formatTime(skip?.introJump ?? 0)}`
+                : activeSkip === 'intro'
                 ? '跳过片头'
                 : skip?.outro && artRef.current?.duration && skip.outro.end >= artRef.current.duration - 3 && nextUrl && onNextEpisode
                   ? '下一集'
@@ -720,6 +738,29 @@ export function PlayerShell({
             }
             onClick={() => doSkip(activeSkip, false)}
           />,
+          overlayHost,
+        )}
+      {prompt && !error && !overlay && overlayHost &&
+        createPortal(
+          <div className="pointer-events-auto absolute top-3 right-3 max-w-[min(22rem,calc(100%-1.5rem))] rounded-xl border border-white/20 bg-black/75 text-white p-3 shadow-xl backdrop-blur-sm space-y-2 animate-fade-in">
+            <p className="text-xs sm:text-sm leading-snug">{prompt.text}</p>
+            <div className="flex flex-wrap gap-1.5">
+              {prompt.actions.map((a) => (
+                <button
+                  key={a.label}
+                  type="button"
+                  onClick={a.onClick}
+                  className={
+                    a.primary
+                      ? 'px-3 py-1 rounded-lg bg-white text-slate-950 text-xs font-semibold hover:bg-slate-100 cursor-pointer'
+                      : 'px-3 py-1 rounded-lg border border-white/30 text-xs hover:bg-white/15 cursor-pointer'
+                  }
+                >
+                  {a.label}
+                </button>
+              ))}
+            </div>
+          </div>,
           overlayHost,
         )}
       {autoplayNext && !error && !overlay && !activeSkip && (
