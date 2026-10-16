@@ -209,6 +209,12 @@ export const api = {
     return request<DoubanResponse>(`/api/hot-list?${sp.toString()}`, { signal });
   },
 
+  /** 首页货架（Netflix 式的行），一次一行 */
+  shelf: (id: string, signal?: AbortSignal) => {
+    const sp = new URLSearchParams({ id });
+    return request<DoubanResponse>(`/api/shelf?${sp.toString()}`, { signal });
+  },
+
   /** 即将播出：接下来 7 天的未播出内容 */
   upcoming: (signal?: AbortSignal) =>
     request<{ items: import('./upcoming').UpcomingItem[] }>('/api/upcoming', { signal }),

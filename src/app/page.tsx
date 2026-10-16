@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Header } from '@/components/header';
 import { RecommendSection } from '@/components/douban-section';
 import { ForYouRows } from '@/components/for-you';
+import { ShelfRows } from '@/components/shelf-rows';
 import {
   ContinueWatchingRow,
   HeroBillboard,
@@ -57,6 +58,8 @@ function HomeContent() {
   const subscriptions = useAppStore((s) => s.subscriptions);
   const [input, setInput] = useState(urlQuery);
   const [detailItem, setDetailItem] = useState<SearchResultItem | null>(null);
+  /** 「浏览全部」筛选墙默认收起，首页以 Netflix 式的行为主 */
+  const [browseAll, setBrowseAll] = useState(false);
   /** 流式搜索中已结算的源（data 就绪前用于增量渲染） */
   const [streamedOutcomes, setStreamedOutcomes] = useState<SourceSearchOutcome[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -414,7 +417,7 @@ function HomeContent() {
           </section>
         )}
 
-        {/* 首页大盘（有搜索时隐藏）：主推大图 -> 继续观看 / 我的片单 -> 个性化推荐 -> 本周前十 -> 分类片库 */}
+        {/* 首页大盘（有搜索时隐藏）：主推大图 -> 继续观看 / 我的片单 -> 个性化推荐 -> 本周前十 -> 即将播出 -> 货架（按行）-> 浏览全部（筛选） */}
         {!urlQuery && (
           <div className="space-y-7">
             <HeroBillboard
@@ -454,14 +457,33 @@ function HomeContent() {
                 window.scrollTo({ top: 0, behavior: 'smooth' });
               }}
             />
-            <RecommendSection
+            <ShelfRows
               onPick={(title) => {
                 setInput(title);
                 runSearch(title);
                 window.scrollTo({ top: 0, behavior: 'smooth' });
               }}
-              onOpen={(item) => setDetailItem(item)}
             />
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={() => setBrowseAll((v) => !v)}
+                aria-expanded={browseAll}
+                className="w-full sm:w-auto px-4 py-2 rounded-xl border border-line bg-surface/80 text-sm text-muted hover:text-content hover:bg-hover transition-colors cursor-pointer"
+              >
+                {browseAll ? '收起筛选' : '浏览全部 · 按题材 / 地区 / 年份筛选'}
+              </button>
+            </div>
+            {browseAll && (
+              <RecommendSection
+                onPick={(title) => {
+                  setInput(title);
+                  runSearch(title);
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+                onOpen={(item) => setDetailItem(item)}
+              />
+            )}
           </div>
         )}
       </main>
