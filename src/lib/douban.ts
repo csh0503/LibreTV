@@ -107,7 +107,8 @@ async function fetchBiliSeasonIndex(query: DoubanFetchQuery): Promise<DoubanItem
 
   const page = Math.floor(query.pageStart / Math.max(1, query.pageSize)) + 1;
   // order: 2=播放量/热度, 4=最高评分, 0=更新时间
-  const order = query.sort === 'S' ? 4 : query.sort === 'R' ? 0 : 2;
+  // 「连载中」按热度排时前面多是挂着「连载」标记的老番，改按最近更新排，当季在更新的才会在前面
+  const order = query.sort === 'S' ? 4 : query.sort === 'R' || query.status === 'airing' ? 0 : 2;
   const yearTag = tags.find((t) => /^\d{4}$/.test(t));
   const yearParam = yearTag ? `&year=${encodeURIComponent(`[${yearTag},${Number(yearTag) + 1})`)}` : '';
 
@@ -131,7 +132,7 @@ async function fetchBiliSeasonIndex(query: DoubanFetchQuery): Promise<DoubanItem
     const title = typeof row.title === 'string' ? row.title.trim() : '';
     const cover = typeof row.cover === 'string' ? row.cover.trim().replace(/^http:\/\//i, 'https://') : '';
     if (!row.season_id || !title || !cover) continue;
-    if (/[（(][^）)]*(?:中配|中文|配音)[^）)]*[）)]/.test(title)) continue;
+    if (/[（(][^）)]*(?:中配|中文|配音)[^）)]*[）)]|中文配音|中配版/.test(title)) continue;
     // B站自己标着「即将开播」的（多是没登记开播日期的国创年番）还没有片源，交给「即将播出」
     if (looksUnreleased(row.index_show)) continue;
 
@@ -249,6 +250,8 @@ async function fetchTmdbDiscoverCatalog(query: DoubanFetchQuery): Promise<Douban
   // 连载中：仍在更新（Returning Series）且近两个月有新集；已完结：完结或停播
   if (isTv && query.status === 'airing') {
     params.set('with_status', '0');
+    // 哆啦A梦、樱桃小丸子这类开播几十年的长寿番在 TMDB 上也是「仍在更新」，只要近两年开播的
+    if (!yearFilter) params.set('first_air_date.gte', new Date(Date.now() - 2 * 365 * 86_400_000).toISOString().slice(0, 10));
     params.set('air_date.gte', new Date(Date.now() - 60 * 86_400_000).toISOString().slice(0, 10));
     params.set('air_date.lte', todayStr);
   } else if (isTv && query.status === 'ended') {
