@@ -1,5 +1,5 @@
 import type { DoubanItem } from './types';
-import { judgeStatus } from './title-status';
+import { judgeStatus, looksUnreleased } from './title-status';
 import { isAdultContent } from './cms-parser';
 import { canonicalTitle } from './title-aliases';
 
@@ -152,6 +152,7 @@ export function rexxarToItem(raw: unknown, isTv: boolean, nowYear: number): Doub
   const area = parts[1] || undefined;
   const genres = parts[2] || undefined;
   const episodes = typeof row.episodes_info === 'string' ? row.episodes_info.trim() : '';
+  if (looksUnreleased(episodes)) return undefined;
   const ratingValue = (row.rating as { value?: unknown } | undefined)?.value;
   const rating =
     typeof ratingValue === 'number' && ratingValue > 0 ? String(ratingValue) : undefined;

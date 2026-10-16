@@ -1,5 +1,5 @@
 import type { DoubanItem } from './types';
-import { judgeStatus } from './title-status';
+import { judgeStatus, looksUnreleased } from './title-status';
 import { fetchUpstream, getCache, setCache } from './fetch-utils';
 import { canonicalTitle } from './title-aliases';
 import { fetchBangumiHotAiring } from './bangumi';
@@ -44,6 +44,7 @@ export const HOT_LIST_IDS = [
   'bili_doc',
   'bili_tv',
   'bili_movie',
+  'bili_show',
   'tmdb_trending',
   'douban_movie_weekly',
   'douban_tv_chinese',
@@ -87,7 +88,7 @@ const DOUBAN_WEEKLY_CATEGORY: Partial<Record<HotListId, string>> = {
   douban_show_global: 'show_global',
 };
 
-/** B站 PGC 排行榜 season_type 映射：1=番剧, 2=电影, 3=纪录片, 4=国创, 5=电视剧 */
+/** B站 PGC 排行榜 season_type 映射：1=番剧, 2=电影, 3=纪录片, 4=国创, 5=电视剧, 7=综艺 */
 const BILI_SEASON_TYPE_MAP: Partial<
   Record<HotListId, { seasonType: number; isTv: boolean; label: string; area?: string; genres?: string }>
 > = {
@@ -96,6 +97,7 @@ const BILI_SEASON_TYPE_MAP: Partial<
   bili_doc: { seasonType: 3, isTv: true, label: 'B站纪录片榜', genres: '纪录片' },
   bili_tv: { seasonType: 5, isTv: true, label: 'B站热播剧集', genres: '剧情' },
   bili_movie: { seasonType: 2, isTv: false, label: 'B站热播电影' },
+  bili_show: { seasonType: 7, isTv: true, label: 'B站综艺热播', genres: '综艺' },
 };
 
 // —— 原始接口结构 ——
@@ -254,6 +256,7 @@ export function doubanCollectionToItem(
     typeof ratingVal === 'number' && ratingVal > 0 ? Number(ratingVal.toFixed(1)).toString() : undefined;
 
   const episodes = typeof raw.episodes_info === 'string' ? raw.episodes_info.trim() : '';
+  if (looksUnreleased(episodes)) return undefined;
   const status = judgeStatus({ text: episodes, isTv, year });
 
   const subtitle =
@@ -294,6 +297,7 @@ export function biliRankToItem(
   const rating = Number.isFinite(ratingNum) && ratingNum > 0 ? ratingNum.toFixed(1) : undefined;
 
   const indexShow = raw.new_ep?.index_show?.trim() || '';
+  if (looksUnreleased(indexShow)) return undefined;
   const status = judgeStatus({ text: indexShow, isTv: opts.isTv });
 
   const stats: string[] = [];
@@ -807,14 +811,19 @@ async function fetchBiliRankRaw(opts: {
     dropEndedCatalog: opts.seasonType === 1,
     maxEpisodes: opts.seasonType === 4 ? 260 : 95,
   });
-  if (curated.length > 0) return curated;
+  // 番剧榜剔除已完结的旧番后常常只剩两三部（B站近 3 天热播多是补番），太少会让日漫在综合榜里几乎没有票：
+  // 不够 8 部时改为「在播的排前面，热度高的完结番接在后面」
+  if (curated.length >= 8) return curated;
 
   const fallback = curateRealtimeList(rawItems, {
     filterEvergreen: true,
     maxEpisodes: opts.seasonType === 4 ? 260 : 120,
   });
-  if (fallback.length === 0) throw new Error('B站热播榜为空');
-  return fallback;
+  if (fallback.length === 0) {
+    if (curated.length > 0) return curated;
+    throw new Error('B站热播榜为空');
+  }
+  return [...fallback.filter((i) => i.status !== 'ended'), ...fallback.filter((i) => i.status === 'ended')];
 }
 
 async function fetchBaiduTeleplayList(): Promise<DoubanItem[]> {
@@ -1067,6 +1076,7 @@ export async function fetchHotListWithMeta(id: HotListId): Promise<{ items: Doub
     case 'douban_show_hot': {
       items = await collectAndFuse(report, [
         { name: '热门综艺', weight: 1.2, run: () => fetchDoubanWithFallback('douban_show_hot') },
+        { name: 'B站综艺', weight: 1.05, run: () => fetchBiliRankRaw(BILI_SEASON_TYPE_MAP.bili_show!) },
         { name: '国内口碑', weight: 1.05, run: () => fetchDoubanWithFallback('douban_show_chinese') },
         { name: '海外口碑', weight: 0.9, run: () => fetchDoubanWithFallback('douban_show_global') },
       ]);

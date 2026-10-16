@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { judgeStatus } from './title-status';
+import { judgeStatus, looksUnreleased } from './title-status';
 
 const NOW = Date.parse('2026-10-16T12:00:00+08:00');
 
@@ -34,5 +34,15 @@ describe('judgeStatus：连载 / 完结的唯一判定', () => {
     expect(judgeStatus({ year: '2020' }, NOW)).toBeUndefined();
     expect(judgeStatus({ year: '2020', inferFromYear: true }, NOW)).toBe('ended');
     expect(judgeStatus({ year: '2026', inferFromYear: true, hasRating: false }, NOW)).toBeUndefined();
+  });
+});
+
+describe('looksUnreleased', () => {
+  it('来源自己写着还没播的', () => {
+    expect(looksUnreleased('即将开播')).toBe(true);
+    expect(looksUnreleased('敬请期待')).toBe(true);
+    expect(looksUnreleased('10月20日定档')).toBe(true);
+    expect(looksUnreleased('更新至第3话')).toBe(false);
+    expect(looksUnreleased(undefined)).toBe(false);
   });
 });

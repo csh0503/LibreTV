@@ -1,5 +1,5 @@
 import type { DoubanItem } from './types';
-import { judgeStatus } from './title-status';
+import { judgeStatus, looksUnreleased } from './title-status';
 import { fetchUpstream, getCache, setCache } from './fetch-utils';
 import { rexxarToItem, type DoubanRequest } from './recommend';
 import { fetchBangumiCatalog } from './bangumi';
@@ -127,6 +127,8 @@ async function fetchBiliSeasonIndex(query: DoubanFetchQuery): Promise<DoubanItem
     const cover = typeof row.cover === 'string' ? row.cover.trim().replace(/^http:\/\//i, 'https://') : '';
     if (!row.season_id || !title || !cover) continue;
     if (/[（(][^）)]*(?:中配|中文|配音)[^）)]*[）)]/.test(title)) continue;
+    // B站自己标着「即将开播」的（多是没登记开播日期的国创年番）还没有片源，交给「即将播出」
+    if (looksUnreleased(row.index_show)) continue;
 
     const scoreNum = parseFloat((row.score || '').replace(/分$/, ''));
     const rating = Number.isFinite(scoreNum) && scoreNum > 0 ? scoreNum.toFixed(1) : undefined;

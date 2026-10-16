@@ -20,7 +20,7 @@ export const SHELF_DEFS: ShelfDef[] = [
   { id: 'guoman', title: '国漫热播', hint: 'B站 · 豆瓣综合', channel: 'anime' },
   { id: 'kr-jp-tv', title: '日韩剧集', channel: 'tv' },
   { id: 'us-tv', title: '欧美剧集', channel: 'tv' },
-  { id: 'variety', title: '综艺热播', hint: '豆瓣热门 · 口碑综艺', channel: 'show' },
+  { id: 'variety', title: '综艺热播', hint: '豆瓣 · B站 · TMDB', channel: 'show' },
   { id: 'acclaimed', title: '口碑佳作', hint: '本周豆瓣口碑榜', channel: 'movie' },
   { id: 'g-crime', title: '悬疑 · 犯罪', hint: 'TMDB 按题材', channel: 'tv' },
   { id: 'g-scifi', title: '科幻 · 奇幻', hint: 'TMDB 按题材', channel: 'tv' },

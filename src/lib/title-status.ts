@@ -69,3 +69,13 @@ export function judgeStatus(clues: StatusClues, now = Date.now()): TitleStatus |
   // 没有「更新至」的年份条目算已完结，包括今年；否则「2026 + 已完结」会整页被滤空
   return 'ended';
 }
+
+const UNRELEASED_TEXT = /即将(?:开播|上线|播出|上映|开分)|敬请期待|未开播|定档/;
+
+/**
+ * 来源自己的更新说明就写着还没播（B站「即将开播」、豆瓣「敬请期待」）。
+ * 用来补开播日期索引（unreleased.ts）查不到的条目，比如没登记日期的国创年番。
+ */
+export function looksUnreleased(text?: string): boolean {
+  return Boolean(text && UNRELEASED_TEXT.test(text));
+}
