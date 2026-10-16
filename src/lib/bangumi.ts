@@ -22,7 +22,8 @@ interface BangumiSubject {
   name?: string;
   name_cn?: string;
   images?: { large?: string; common?: string; medium?: string; small?: string; grid?: string };
-  rating?: { score?: number };
+  rating?: { score?: number; total?: number };
+  collection?: { doing?: number };
 }
 
 interface BangumiCalendarDay {
@@ -69,7 +70,23 @@ export async function fetchBangumiCalendar(): Promise<Record<number, DoubanItem[
   if (!res.ok) throw new Error(`Bangumi 接口响应异常 (${res.status})`);
 
   const raw = (await res.json()) as BangumiCalendarDay[];
-  const days = groupCalendarByWeekday(Array.isArray(raw) ? raw : []);
+  // 过滤掉无人问津/尚未正式开播的极冷门词条（如仅几人打分的实验短片），并按在看+评分热度降序排列
+  const cleanedRaw = (Array.isArray(raw) ? raw : []).map((day) => ({
+    ...day,
+    items: (day.items ?? [])
+      .filter((item) => {
+        const votes = item.rating?.total ?? 0;
+        const doing = item.collection?.doing ?? 0;
+        return Boolean(item.name_cn) && (votes >= 40 || doing >= 80);
+      })
+      .sort((a, b) => {
+        const popA = (a.collection?.doing ?? 0) + (a.rating?.total ?? 0) * 2;
+        const popB = (b.collection?.doing ?? 0) + (b.rating?.total ?? 0) * 2;
+        return popB - popA;
+      }),
+  }));
+
+  const days = groupCalendarByWeekday(cleanedRaw);
   if (Object.keys(days).length === 0) throw new Error('Bangumi 放送表数据为空');
 
   setCache(BANGUMI_API, days, CACHE_TTL);

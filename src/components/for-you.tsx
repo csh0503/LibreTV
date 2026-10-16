@@ -1,13 +1,13 @@
 'use client';
 
 import { useMemo } from 'react';
-import { useQueries } from '@tanstack/react-query';
+import { useQueries, useQuery } from '@tanstack/react-query';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { api } from '@/lib/client-api';
 import { isAdultContent } from '@/lib/cms-parser';
 import { db, favoriteIdOf } from '@/lib/db';
 import { buildSingleAnchorFallback } from '@/lib/home-features';
-import { buildDoubanRequest, HALL_PAGE_SIZE } from '@/lib/recommend';
+import { buildDoubanRequest, HALL_PAGE_SIZE, reconcileStatusWithCalendar } from '@/lib/recommend';
 import { useAppStore } from '@/lib/store';
 import { assembleTaste, rankTaste, type TasteChannel } from '@/lib/taste';
 import { rememberDoubanItem } from '@/lib/taste-store';
@@ -119,6 +119,12 @@ export function ForYouRows({ onPick }: { onPick: (title: string) => void }) {
     }),
   });
 
+  const bangumiQuery = useQuery({
+    queryKey: ['bangumi-calendar'],
+    queryFn: ({ signal }) => api.bangumiCalendar(signal),
+    enabled: doubanEnabled,
+  });
+
   if (!doubanEnabled || !profileId || !history || !favorites || !tastes) return null;
 
   const open = (item: DoubanItem, channel?: TasteChannel) => {
@@ -147,12 +153,17 @@ export function ForYouRows({ onPick }: { onPick: (title: string) => void }) {
     );
   }
 
+  const nowYear = new Date().getFullYear();
+  const calendarItems = bangumiQuery.data?.days.flatMap((d) => d.items) ?? [];
   const userPool: DoubanItem[] = [];
   const anchorPool: DoubanItem[] = [];
   const channels = new Map<string, TasteChannel>();
   jobs.forEach((job, index) => {
     const channel = job.selection.channel === 'adult' ? undefined : job.selection.channel;
-    for (const item of queries[index]?.data?.items ?? []) {
+    const rawItems = queries[index]?.data?.items ?? [];
+    const items =
+      channel === 'anime' ? reconcileStatusWithCalendar(rawItems, calendarItems, nowYear) : rawItems;
+    for (const item of items) {
       if (channel && !channels.has(item.id)) channels.set(item.id, channel);
       if (job.forUser) userPool.push(item);
       if (job.forAnchor) anchorPool.push(item);

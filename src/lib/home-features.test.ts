@@ -185,3 +185,80 @@ describe('点播详情口味提取与单部「因为你看过」兜底', () => {
     expect(fallback?.selection.area).toBe('日本');
   });
 });
+
+describe('搜索结果智能聚合与连载状态多重核验', () => {
+  it('aggregateResults 能把黑色五叶草/四叶草、空格/标点/剧场版差异聚合为精简卡片，并将解说沉底', async () => {
+    const { aggregateResults } = await import('./title-aliases');
+    const mockItem = (name: string, year: string, sourceKey: string) => ({
+      sourceKey,
+      sourceName: sourceKey,
+      vodId: `${sourceKey}-${name}-${year}`,
+      name,
+      year,
+      pic: 'https://img/p.jpg',
+    });
+
+    const raw = [
+      mockItem('黑色五叶草', '2017-', 's1'),
+      mockItem('黑色四叶草', '2017', 's2'),
+      mockItem('黑色五叶草 第二季', '2018', 's1'),
+      mockItem('黑色五叶草第二季', '2018', 's2'),
+      mockItem('黑色五叶草 剧场版 魔法帝之剑', '2023', 's1'),
+      mockItem('黑色五叶草：魔法帝之剑', '2023', 's2'),
+      mockItem('黑色五叶草剧场版魔法帝之剑', '2023', 's3'),
+      mockItem('Q版！黑色五叶草', '2019', 's1'),
+      mockItem('Q版! 黑色五叶草', '2020', 's2'),
+      mockItem('[电影解说]黑色五叶草 剧场版 魔法帝之剑', '2023', 's4'),
+    ];
+
+    const groups = aggregateResults(raw, '黑色五叶草');
+    // 应聚合成 5 组：正片第1季、正片第2季、剧场版魔法帝之剑、Q版、以及沉底的[电影解说]
+    expect(groups).toHaveLength(5);
+    expect(groups[0].items.length).toBe(2); // 黑色五叶草(2017-) + 黑色四叶草(2017)
+    const movieGroup = groups.find((g) => g.name.includes('魔法帝之剑') && !g.name.includes('解说'));
+    expect(movieGroup?.items.length).toBe(3);
+    const chibiGroup = groups.find((g) => g.name.includes('Q版'));
+    expect(chibiGroup?.items.length).toBe(2);
+    // 解说排在最后
+    expect(groups[groups.length - 1].name).toContain('[电影解说]');
+  });
+
+  it('reconcileStatusWithCalendar 能将豆瓣滞后标为更新至N集的非在播番剧修正为已完结', async () => {
+    const { deriveStatus, reconcileStatusWithCalendar } = await import('./recommend');
+    // 2023 年《迷宫饭》豆瓣仍返回「更新至14集」
+    expect(deriveStatus({ episodesInfo: '更新至14集', year: '2023' }, 2026)).toBe('ended');
+    // 2024 年完结番即使年份在 2 年内，只要不在 Bangumi 每日放送表里且 <60 集，也会被修正为 ended
+    const reconciled = reconcileStatusWithCalendar(
+      [
+        {
+          id: '1',
+          title: '迷宫饭',
+          cover: 'https://img/1.jpg',
+          year: '2024',
+          remarks: '更新至24集',
+          status: 'airing',
+        },
+        {
+          id: '2',
+          title: '杖与剑的剑姬谭 第二季',
+          cover: 'https://img/2.jpg',
+          year: '2026',
+          remarks: '更新至02集',
+          status: 'airing',
+        },
+      ],
+      [
+        {
+          id: 'bgm-2',
+          title: '杖与剑的剑姬谭 第二季',
+          cover: 'https://img/2.jpg',
+          status: 'airing',
+        },
+      ],
+      2026,
+    );
+    expect(reconciled[0].status).toBe('ended');
+    expect(reconciled[1].status).toBe('airing');
+  });
+});
+

@@ -1,5 +1,6 @@
 import type { DoubanItem } from './types';
 import { isAdultContent } from './cms-parser';
+import { canonicalTitle } from './title-aliases';
 
 /**
  * 首页推荐大厅的筛选如何变成豆瓣请求。
@@ -120,10 +121,18 @@ export function deriveStatus(
 ): 'airing' | 'ended' | undefined {
   if (input.fromCalendar) return 'airing';
   const text = input.episodesInfo ?? '';
-  if (/更新|连载/.test(text)) return 'airing';
   // 「47集全」是豆瓣常见的完结写法，不只「全47集」
-  if (/完结|已完结|全集|全\d+\s*集|\d+\s*集全/.test(text)) return 'ended';
+  if (/完结|已完结|全集|全\d+\s*[集话期]|\d+\s*[集话期]全/.test(text)) return 'ended';
   const year = parseInt(input.year ?? '', 10);
+  if (/更新|连载/.test(text)) {
+    // 豆瓣很多旧番（如 2023《迷宫饭》）的 episodes_info 长期停留在「更新至14集」未改。
+    // 若距今已 ≥3 年且集数 <60（非柯南/海贼王这类常青长篇），必已完结。
+    if (Number.isFinite(year) && year <= nowYear - 3) {
+      const epNum = parseInt(text.match(/(\d+)/)?.[1] ?? '0', 10);
+      if (epNum > 0 && epNum < 60) return 'ended';
+    }
+    return 'airing';
+  }
   if (!Number.isFinite(year) || year < 1900 || year > nowYear + 5) return undefined;
   // 没有「更新至」的年份条目算已完结，包括今年。
   // 若把今年一律当成连载，「2026 + 已完结」会整页被滤空，而「连载中」却全是这些片子。
@@ -209,10 +218,39 @@ export function filterHallItems(items: DoubanItem[], filter: HallFilter): Douban
   });
 }
 
-/** 本周放送插到豆瓣结果前面，同名去掉。缺少年份的条目视为今年正在播。 */
+/**
+ * 用 Bangumi 当周实际放送表交叉校准豆瓣条目的「连载 / 完结」状态：
+ * - 在当周放送表中的番剧 → 必为 airing；
+ * - 豆瓣标了 airing（残留「更新至N集」），但上映年份早于今年、集数 <60 且已不在当周放送表中 → 修正为 ended。
+ */
+export function reconcileStatusWithCalendar(
+  items: DoubanItem[],
+  calendar: DoubanItem[],
+  nowYear: number
+): DoubanItem[] {
+  if (calendar.length === 0) return items;
+  const airingKeys = new Set(calendar.map((c) => canonicalTitle(c.title)).filter(Boolean));
+  return items.map((item) => {
+    const key = canonicalTitle(item.title);
+    if (key && airingKeys.has(key)) {
+      return item.status === 'airing' ? item : { ...item, status: 'airing' };
+    }
+    if (item.status === 'airing') {
+      const year = parseInt(item.year ?? '', 10);
+      const epNum = parseInt(item.remarks?.match(/(\d+)/)?.[1] ?? '0', 10);
+      if (Number.isFinite(year) && year < nowYear && epNum < 60) {
+        return { ...item, status: 'ended' };
+      }
+    }
+    return item;
+  });
+}
+
+/** 本周放送去重后与豆瓣结果融合，并用放送表交叉校准连载状态。 */
 export function mergeAiringCalendar(douban: DoubanItem[], calendar: DoubanItem[], nowYear: number): DoubanItem[] {
   if (calendar.length === 0) return douban;
-  const seen = new Set(douban.map((item) => item.title.trim()));
+  const reconciledDouban = reconcileStatusWithCalendar(douban, calendar, nowYear);
+  const seen = new Set(reconciledDouban.map((item) => item.title.trim()));
   const extra = calendar
     .filter((item) => !seen.has(item.title.trim()))
     .map((item) => ({
@@ -222,7 +260,7 @@ export function mergeAiringCalendar(douban: DoubanItem[], calendar: DoubanItem[]
       year: item.year || String(nowYear),
       isTv: true,
     }));
-  return [...extra, ...douban];
+  return [...extra, ...reconciledDouban];
 }
 
 export function sortHallItems<T extends { title?: string; name?: string; rating?: string; year?: string }>(

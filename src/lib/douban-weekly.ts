@@ -235,11 +235,9 @@ export function doubanCollectionToItem(
     else if (/^全\s*\d+|完结/.test(episodes)) status = 'ended';
   }
 
-  const commentText = raw.comments?.[0]?.comment?.replace(/\s*--.*$/, '').trim();
   const subtitle =
     (typeof raw.description === 'string' && raw.description.trim()) ||
     (typeof raw.recommended_reason === 'string' && raw.recommended_reason.trim()) ||
-    commentText ||
     castOrStaff ||
     undefined;
 
@@ -328,7 +326,140 @@ export function tmdbTrendingToItem(raw: TmdbTrendingRaw): DoubanItem | undefined
   };
 }
 
-/** 将多个实时榜按名次交叉穿插并按归一化标题去重，让综合榜兼顾热剧、大片、国漫与日番 */
+const CN_NUM_MAP: Record<string, number> = {
+  一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10,
+  'Ⅰ': 1, 'Ⅱ': 2, 'Ⅲ': 3, 'Ⅳ': 4, 'Ⅴ': 5, 'Ⅵ': 6,
+};
+
+/**
+ * 提取剧集/番剧的系列主名（剥离「第一季 / 第二季 / Season 2 / Part 2 / 中配版」等后缀），
+ * 用于将《咒术回战》《咒术回战 第二季》《咒术回战 第三季》折叠为同一系列。
+ */
+export function extractSeriesStem(title: string): string {
+  const cleaned = title
+    .replace(/[（(][^）)]*(?:中配|中文|日语|粤语|配音|版)[^）)]*[）)]/g, '')
+    .replace(/\s+(?:中配版|中文配音|普通话版|日语版)$/g, '')
+    .replace(/\s*第[一二三四五六七八九十百\d]+[季部篇期]/g, '')
+    .replace(/\s*(?:Season|Part)\s*\d+/gi, '')
+    .replace(/[ⅠⅡⅢⅣⅤⅥ]+$/g, '')
+    .trim();
+  return canonicalTitle(cleaned) || canonicalTitle(title);
+}
+
+/** 提取标题中的季数序号（默认第 1 季为 1），用于同系列多季同榜时优先推举最新一季 */
+export function extractSeasonNumber(title: string): number {
+  const cnMatch = title.match(/第([一二三四五六七八九十\d]+)[季部篇期]/);
+  if (cnMatch) {
+    const token = cnMatch[1];
+    if (/^\d+$/.test(token)) return parseInt(token, 10);
+    if (CN_NUM_MAP[token]) return CN_NUM_MAP[token];
+  }
+  const enMatch = title.match(/(?:Season|Part)\s*(\d+)/i);
+  if (enMatch) return parseInt(enMatch[1], 10);
+  const romanMatch = title.match(/([ⅠⅡⅢⅣⅤⅥ])/);
+  if (romanMatch && CN_NUM_MAP[romanMatch[1]]) return CN_NUM_MAP[romanMatch[1]];
+  return 1;
+}
+
+/** 常年霸榜的经典长青老番黑名单（在「实时风向」中剔除，避免常年霸占新番热榜） */
+const EVERGREEN_SERIES_STEMS = new Set(
+  [
+    '名侦探柯南',
+    '蜡笔小新',
+    '航海王',
+    '海贼王',
+    '火影忍者',
+    '博人传',
+    '银魂',
+    '犬夜叉',
+    '家庭教师',
+    '黑色五叶草',
+    '黑色四叶草',
+    '死神',
+    '龙珠',
+    '七龙珠',
+    '哆啦A梦',
+    '宝可梦',
+    '数码宝贝',
+    '全职猎人',
+    '妖精的尾巴',
+    '网球王子',
+    '乌龙派出所',
+    '海绵宝宝',
+    '猫和老鼠',
+    '熊出没',
+    '喜羊羊与灰太狼',
+    'JOJO的奇妙冒险',
+    '新世纪福音战士',
+  ].map((name) => canonicalTitle(name))
+);
+
+/**
+ * Netflix 风格「实时风向」精选与系列折叠算法：
+ * 1. 剔除配音重复版（如「名侦探柯南（中配）」「明日方舟 中配版」）；
+ * 2. 可选剔除常年连载/经典老番（如柯南、蜡笔小新、银魂、黑色五叶草）及超长集数作品（>maxEpisodes）；
+ * 3. 可选剔除已完结老旧库存番（如 B站番剧榜里混入的《全24话》旧番）；
+ * 4. 同系列多季折叠（如《咒术回战》第一、二、三季同在榜时，在最高名次坑位仅保留最新一季）。
+ */
+export function curateRealtimeList(
+  items: DoubanItem[],
+  opts: {
+    filterEvergreen?: boolean;
+    dropEndedCatalog?: boolean;
+    maxEpisodes?: number;
+  } = {}
+): DoubanItem[] {
+  const maxEp = opts.maxEpisodes ?? 100;
+  const filtered = items.filter((item) => {
+    // 1. 剔除中配/配音重复版
+    if (/[（(][^）)]*(?:中配|中文|配音)[^）)]*[）)]|\s(?:中配版|中文配音)/.test(item.title)) {
+      return false;
+    }
+    const stem = extractSeriesStem(item.title);
+    // 2. 剔除常青老番
+    if (opts.filterEvergreen && EVERGREEN_SERIES_STEMS.has(stem)) {
+      return false;
+    }
+    // 3. 集数上限门禁（过滤 1276 话柯南、873 话小新等超长篇）
+    if (item.remarks) {
+      const epMatch = item.remarks.match(/(\d+)\s*[集话期]/);
+      if (epMatch) {
+        const epNum = parseInt(epMatch[1], 10);
+        if (epNum > maxEp) return false;
+      }
+    }
+    // 4. 剔除旧完结库存番（保留连载中或无完结标记的新作）
+    if (opts.dropEndedCatalog && item.status === 'ended') {
+      return false;
+    }
+    return true;
+  });
+
+  // 5. 系列级合并：同一 IP 只保留一个坑位（取最高排名位置），但展示最新一季/连载中的那一季
+  const groups = new Map<string, { firstIndex: number; bestItem: DoubanItem; bestScore: number }>();
+  filtered.forEach((item, idx) => {
+    const stem = extractSeriesStem(item.title) || canonicalTitle(item.title);
+    if (!stem) return;
+    const seasonNum = extractSeasonNumber(item.title);
+    const airingBonus = item.status === 'airing' ? 100 : 0;
+    const yearBonus = parseInt(item.year ?? '0', 10) || 0;
+    const candidateScore = airingBonus + seasonNum * 10 + (yearBonus >= 2025 ? 5 : 0);
+
+    const existing = groups.get(stem);
+    if (!existing) {
+      groups.set(stem, { firstIndex: idx, bestItem: item, bestScore: candidateScore });
+    } else if (candidateScore > existing.bestScore) {
+      existing.bestItem = item;
+      existing.bestScore = candidateScore;
+    }
+  });
+
+  return [...groups.values()]
+    .sort((a, b) => a.firstIndex - b.firstIndex)
+    .map((g) => g.bestItem);
+}
+
+/** 将多个实时榜按名次交叉穿插并按系列主名去重，让综合榜兼顾热剧、大片、国漫与日番 */
 export function interleaveAndDedupeLists(lists: DoubanItem[][], limit = 24): DoubanItem[] {
   const result: DoubanItem[] = [];
   const seen = new Set<string>();
@@ -338,7 +469,7 @@ export function interleaveAndDedupeLists(lists: DoubanItem[][], limit = 24): Dou
     for (const list of lists) {
       const item = list[i];
       if (!item) continue;
-      const key = canonicalTitle(item.title);
+      const key = extractSeriesStem(item.title);
       if (!key || seen.has(key)) continue;
       seen.add(key);
       result.push(item);
@@ -391,9 +522,10 @@ async function fetchDoubanCollection(
   if (!res.ok) throw new Error(`豆瓣实时榜单响应异常 (${res.status})`);
   const json = (await res.json()) as { subject_collection_items?: DoubanCollectionItemRaw[] };
   const rows = assertArray<DoubanCollectionItemRaw>(json.subject_collection_items, '豆瓣实时榜单');
-  const items = rows
+  const rawItems = rows
     .map((row) => doubanCollectionToItem(row, isTv, sourceLabel))
     .filter((item): item is DoubanItem => item !== undefined);
+  const items = curateRealtimeList(rawItems, { filterEvergreen: true, maxEpisodes: 120 });
   if (items.length === 0) throw new Error('豆瓣榜单数据为空');
   return items;
 }
@@ -422,12 +554,36 @@ async function fetchBiliRank(opts: {
   };
   const rawList = json.result?.list || json.data?.list;
   const rows = assertArray<BiliRankItemRaw>(rawList, 'B站热播榜');
-  const items = rows
-    .slice(0, 30)
+  const rawItems = rows
+    .slice(0, 50)
     .map((row) => biliRankToItem(row, opts))
     .filter((item): item is DoubanItem => item !== undefined);
-  if (items.length === 0) throw new Error('B站热播榜为空');
-  return items;
+
+  // 日番榜（seasonType=1）剔除已完结的陈年老番与柯南/小新等超长篇，并补充豆瓣当季热门新番
+  if (opts.seasonType === 1) {
+    const freshBili = curateRealtimeList(rawItems, {
+      filterEvergreen: true,
+      dropEndedCatalog: true,
+      maxEpisodes: 90,
+    });
+    try {
+      const doubanAnime = await fetchDoubanCollection('tv_animation', true, '当季新番', 20);
+      const merged = interleaveAndDedupeLists([freshBili, doubanAnime], 24);
+      if (merged.length >= 6) return merged;
+    } catch {
+      // 豆瓣补充失败时退回过滤后的 B站列表
+    }
+    const fallbackCurated = curateRealtimeList(rawItems, { filterEvergreen: true, maxEpisodes: 90 });
+    if (fallbackCurated.length > 0) return fallbackCurated;
+  }
+
+  // 国创榜（seasonType=4）允许年番（如凡人修仙传 ≤260 话），但折叠多季（如灵笼第一季/第二季）与中配版
+  const curated = curateRealtimeList(rawItems, {
+    filterEvergreen: true,
+    maxEpisodes: opts.seasonType === 4 ? 260 : 120,
+  });
+  if (curated.length === 0) throw new Error('B站热播榜为空');
+  return curated;
 }
 
 async function fetchTmdbTrending(): Promise<DoubanItem[]> {
@@ -461,7 +617,7 @@ async function fetchTmdbTrending(): Promise<DoubanItem[]> {
     .map((row) => tmdbTrendingToItem(row))
     .filter((item): item is DoubanItem => item !== undefined);
   if (items.length === 0) throw new Error('TMDB 趋势榜为空');
-  return items;
+  return curateRealtimeList(items, { filterEvergreen: true });
 }
 
 export async function fetchHotList(id: HotListId): Promise<DoubanItem[]> {
@@ -483,7 +639,10 @@ export async function fetchHotList(id: HotListId): Promise<DoubanItem[]> {
     const lists = settled
       .filter((r): r is PromiseFulfilledResult<DoubanItem[]> => r.status === 'fulfilled')
       .map((r) => r.value);
-    items = interleaveAndDedupeLists(lists, 24);
+    items = curateRealtimeList(interleaveAndDedupeLists(lists, 24), {
+      filterEvergreen: true,
+      maxEpisodes: 260,
+    });
     if (items.length === 0) throw new Error('全网实时热榜聚合失败');
   } else if (BILI_SEASON_TYPE_MAP[id]) {
     items = await fetchBiliRank(BILI_SEASON_TYPE_MAP[id]!);

@@ -82,7 +82,7 @@ export function ShelfRow({
   return (
     <section aria-label={title} className={cn('space-y-2.5', className)}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="min-w-0 flex items-center gap-2 flex-wrap">
+        <div className="min-w-0 flex items-center gap-2 flex-wrap shrink-0">
           <h2 className="text-base sm:text-lg font-bold text-content tracking-tight">{title}</h2>
           {badge && (
             <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-accent/15 text-accent">
@@ -91,16 +91,16 @@ export function ShelfRow({
           )}
           {hint && <span className="text-xs text-faint hidden sm:inline">{hint}</span>}
         </div>
-        <div className="flex items-center gap-2 ml-auto">
+        <div className="flex items-center gap-2 min-w-0 flex-1 sm:flex-initial justify-end ml-auto">
           {headerExtra}
-          {(canLeft || canRight) && (
-            <div className="hidden sm:flex items-center gap-1">
+          {!headerExtra && (canLeft || canRight) && (
+            <div className="hidden sm:flex items-center gap-1 shrink-0">
               <button
                 type="button"
                 onClick={() => scrollByPage(-1)}
                 disabled={!canLeft}
                 aria-label={`向左滚动${title}`}
-                className="w-7 h-7 rounded-full border border-line bg-surface/80 text-muted hover:text-content hover:bg-hover disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center transition-colors"
+                className="w-7 h-7 rounded-full border border-line bg-surface/80 text-muted hover:text-content hover:bg-hover disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center transition-colors cursor-pointer"
               >
                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
@@ -111,7 +111,7 @@ export function ShelfRow({
                 onClick={() => scrollByPage(1)}
                 disabled={!canRight}
                 aria-label={`向右滚动${title}`}
-                className="w-7 h-7 rounded-full border border-line bg-surface/80 text-muted hover:text-content hover:bg-hover disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center transition-colors"
+                className="w-7 h-7 rounded-full border border-line bg-surface/80 text-muted hover:text-content hover:bg-hover disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center transition-colors cursor-pointer"
               >
                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
@@ -122,11 +122,37 @@ export function ShelfRow({
         </div>
       </div>
       {hint && <p className="text-xs text-faint sm:hidden -mt-1">{hint}</p>}
-      <div
-        ref={scrollerRef}
-        className="flex gap-3 overflow-x-auto scrollbar-none pb-1 pt-0.5 scroll-smooth"
-      >
-        {children}
+      <div className="relative group/shelf">
+        {canLeft && (
+          <button
+            type="button"
+            onClick={() => scrollByPage(-1)}
+            aria-label={`向左翻页${title}`}
+            className="hidden sm:flex absolute left-1 top-1/2 -translate-y-1/2 z-20 w-9 h-9 rounded-full bg-black/70 text-white border border-white/15 shadow-lg items-center justify-center opacity-0 group-hover/shelf:opacity-100 hover:bg-black/90 hover:scale-105 transition-all cursor-pointer"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M15 19l-7-7 7-7" />
+            </svg>
+          </button>
+        )}
+        {canRight && (
+          <button
+            type="button"
+            onClick={() => scrollByPage(1)}
+            aria-label={`向右翻页${title}`}
+            className="hidden sm:flex absolute right-1 top-1/2 -translate-y-1/2 z-20 w-9 h-9 rounded-full bg-black/70 text-white border border-white/15 shadow-lg items-center justify-center opacity-0 group-hover/shelf:opacity-100 hover:bg-black/90 hover:scale-105 transition-all cursor-pointer"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+        )}
+        <div
+          ref={scrollerRef}
+          className="flex gap-3 overflow-x-auto scrollbar-none pb-1 pt-0.5 scroll-smooth"
+        >
+          {children}
+        </div>
       </div>
     </section>
   );
@@ -214,6 +240,7 @@ export function HeroBillboard({ onPick }: { onPick: (title: string) => void }) {
   const [activeIndex, setActiveIndex] = useState(0);
   const [imgFailed, setImgFailed] = useState(false);
   const [backdropFailed, setBackdropFailed] = useState(false);
+  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     if (activeIndex >= featuredList.length) setActiveIndex(0);
@@ -224,6 +251,16 @@ export function HeroBillboard({ onPick }: { onPick: (title: string) => void }) {
     setImgFailed(false);
     setBackdropFailed(false);
   }, [current?.cover, current?.backdrop]);
+
+  const goPrev = useCallback(() => {
+    if (featuredList.length <= 1) return;
+    setActiveIndex((i) => (i - 1 + featuredList.length) % featuredList.length);
+  }, [featuredList.length]);
+
+  const goNext = useCallback(() => {
+    if (featuredList.length <= 1) return;
+    setActiveIndex((i) => (i + 1) % featuredList.length);
+  }, [featuredList.length]);
 
   // 自动轮播：每 8 秒温和切换主推影片
   useEffect(() => {
@@ -316,10 +353,31 @@ export function HeroBillboard({ onPick }: { onPick: (title: string) => void }) {
     });
   };
 
+  const handleTouchStart = (e: React.TouchEvent) => {
+    const touch = e.touches[0];
+    if (!touch) return;
+    touchStartRef.current = { x: touch.clientX, y: touch.clientY };
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    const start = touchStartRef.current;
+    touchStartRef.current = null;
+    const touch = e.changedTouches[0];
+    if (!start || !touch) return;
+    const dx = touch.clientX - start.x;
+    const dy = touch.clientY - start.y;
+    if (Math.abs(dx) > 42 && Math.abs(dx) > Math.abs(dy) * 1.2) {
+      if (dx < 0) goNext();
+      else goPrev();
+    }
+  };
+
   return (
     <section
       aria-label="今日主推影片"
-      className="relative mb-7 rounded-2xl overflow-hidden border border-line bg-[#0b111e] text-white shadow-xl"
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+      className="group/hero relative mb-7 rounded-2xl overflow-hidden border border-line bg-[#0b111e] text-white shadow-xl select-none"
     >
       {/* 背景大图氛围层：有 16:9 横版海报时高清展示，仅竖版海报时作高斯模糊氛围背景 */}
       {bgUrl && (!imgFailed || hasWidescreenBackdrop) && (
@@ -349,7 +407,33 @@ export function HeroBillboard({ onPick }: { onPick: (title: string) => void }) {
         className="absolute inset-0 pointer-events-none bg-gradient-to-t from-[#070b14] via-transparent to-black/25"
       />
 
-      <div className="relative z-10 p-5 sm:p-7 md:p-8 flex items-center justify-between gap-6">
+      {/* 左右切换箭头（桌面端悬停浮现，移动端亦可点击或直接左右滑动） */}
+      {featuredList.length > 1 && (
+        <>
+          <button
+            type="button"
+            onClick={goPrev}
+            aria-label="上一部主推影片"
+            className="absolute left-2 sm:left-3 top-1/2 -translate-y-1/2 z-20 w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-black/50 hover:bg-black/80 text-white/90 hover:text-white border border-white/15 backdrop-blur-sm flex items-center justify-center opacity-70 sm:opacity-0 sm:group-hover/hero:opacity-100 transition-all cursor-pointer"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M15 19l-7-7 7-7" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            onClick={goNext}
+            aria-label="下一部主推影片"
+            className="absolute right-2 sm:right-3 top-1/2 -translate-y-1/2 z-20 w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-black/50 hover:bg-black/80 text-white/90 hover:text-white border border-white/15 backdrop-blur-sm flex items-center justify-center opacity-70 sm:opacity-0 sm:group-hover/hero:opacity-100 transition-all cursor-pointer"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+        </>
+      )}
+
+      <div className="relative z-10 px-6 py-5 sm:px-12 sm:py-7 md:px-14 md:py-8 flex items-center justify-between gap-6">
         <div className="min-w-0 flex-1 max-w-2xl space-y-3">
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-red-600/90 text-white font-semibold tracking-wide shadow-sm">
@@ -438,20 +522,23 @@ export function HeroBillboard({ onPick }: { onPick: (title: string) => void }) {
 
       {/* 主推切换指示器 */}
       {featuredList.length > 1 && (
-        <div className="relative z-10 px-5 sm:px-7 pb-3.5 flex items-center justify-end gap-1.5">
-          {featuredList.map((item, idx) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => setActiveIndex(idx)}
-              aria-label={`切换到主推：${item.title}`}
-              title={item.title}
-              className={cn(
-                'h-1.5 rounded-full transition-all cursor-pointer',
-                idx === activeIndex ? 'w-6 bg-white' : 'w-2 bg-white/35 hover:bg-white/60',
-              )}
-            />
-          ))}
+        <div className="relative z-10 px-6 sm:px-12 pb-3.5 flex items-center justify-between sm:justify-end gap-1.5">
+          <span className="text-[11px] text-white/45 sm:hidden">左右滑动切换主推</span>
+          <div className="flex items-center gap-1.5 ml-auto">
+            {featuredList.map((item, idx) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setActiveIndex(idx)}
+                aria-label={`切换到主推：${item.title}`}
+                title={item.title}
+                className={cn(
+                  'h-1.5 rounded-full transition-all cursor-pointer',
+                  idx === activeIndex ? 'w-6 bg-white' : 'w-2 bg-white/35 hover:bg-white/60',
+                )}
+              />
+            ))}
+          </div>
         </div>
       )}
     </section>
@@ -846,6 +933,35 @@ export function TopTenRow({ onPick }: { onPick: (title: string) => void }) {
   const doubanEnabled = useAppStore((s) => s.doubanEnabled);
   const [tab, setTab] = useState<HotListId>('realtime_all');
   const { items, isLoading } = useTopRankItems(tab, doubanEnabled);
+  const tabScrollerRef = useRef<HTMLDivElement>(null);
+  const [canTabLeft, setCanTabLeft] = useState(false);
+  const [canTabRight, setCanTabRight] = useState(false);
+
+  const updateTabScroll = useCallback(() => {
+    const el = tabScrollerRef.current;
+    if (!el) return;
+    setCanTabLeft(el.scrollLeft > 4);
+    setCanTabRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 4);
+  }, []);
+
+  useEffect(() => {
+    const el = tabScrollerRef.current;
+    if (!el) return;
+    updateTabScroll();
+    el.addEventListener('scroll', updateTabScroll, { passive: true });
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(updateTabScroll) : null;
+    ro?.observe(el);
+    return () => {
+      el.removeEventListener('scroll', updateTabScroll);
+      ro?.disconnect();
+    };
+  }, [updateTabScroll, doubanEnabled]);
+
+  const scrollTabs = (dir: -1 | 1) => {
+    const el = tabScrollerRef.current;
+    if (!el) return;
+    el.scrollBy({ left: dir * Math.max(180, Math.round(el.clientWidth * 0.65)), behavior: 'smooth' });
+  };
 
   if (!doubanEnabled) return null;
 
@@ -856,22 +972,55 @@ export function TopTenRow({ onPick }: { onPick: (title: string) => void }) {
       title="实时风向 · TOP 10"
       badge="多源实时"
       headerExtra={
-        <div className="flex items-center gap-1 overflow-x-auto scrollbar-none max-w-full pb-0.5">
-          {TOP_TEN_TABS.map((t) => (
+        <div className="flex items-center gap-1.5 min-w-0 max-w-full">
+          {(canTabLeft || canTabRight) && (
             <button
-              key={t.id}
               type="button"
-              onClick={() => setTab(t.id)}
-              className={cn(
-                'px-2.5 py-1 rounded-full text-xs transition-colors cursor-pointer shrink-0',
-                tab === t.id
-                  ? 'bg-accent text-on-accent font-medium shadow-sm'
-                  : 'bg-chip text-muted hover:text-content hover:bg-hover',
-              )}
+              onClick={() => scrollTabs(-1)}
+              disabled={!canTabLeft}
+              aria-label="向左滚动分类标签"
+              title="向左滚动分类标签"
+              className="w-6 h-6 rounded-full border border-line bg-surface/90 text-muted hover:text-content hover:bg-hover disabled:opacity-25 disabled:pointer-events-none flex items-center justify-center shrink-0 transition-colors cursor-pointer"
             >
-              {t.label}
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M15 19l-7-7 7-7" />
+              </svg>
             </button>
-          ))}
+          )}
+          <div
+            ref={tabScrollerRef}
+            className="flex items-center gap-1 overflow-x-auto scrollbar-none min-w-0 flex-1 pb-0.5 scroll-smooth"
+          >
+            {TOP_TEN_TABS.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => setTab(t.id)}
+                className={cn(
+                  'px-2.5 py-1 rounded-full text-xs transition-colors cursor-pointer shrink-0',
+                  tab === t.id
+                    ? 'bg-accent text-on-accent font-medium shadow-sm'
+                    : 'bg-chip text-muted hover:text-content hover:bg-hover',
+                )}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+          {(canTabLeft || canTabRight) && (
+            <button
+              type="button"
+              onClick={() => scrollTabs(1)}
+              disabled={!canTabRight}
+              aria-label="向右滚动分类标签"
+              title="向右滚动分类标签"
+              className="w-6 h-6 rounded-full border border-line bg-surface/90 text-muted hover:text-content hover:bg-hover disabled:opacity-25 disabled:pointer-events-none flex items-center justify-center shrink-0 transition-colors cursor-pointer"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M9 5l7 7-7 7" />
+              </svg>
+            </button>
+          )}
         </div>
       }
     >

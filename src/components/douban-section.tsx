@@ -12,6 +12,7 @@ import {
   buildDoubanRequest,
   filterHallItems,
   mergeAiringCalendar,
+  reconcileStatusWithCalendar,
   sortHallItems,
   type HallChannel,
   type HallScore,
@@ -136,14 +137,29 @@ export function RecommendSection({
         doubanItems.push(item);
       }
     }
+    const allCalendar = channel === 'anime' ? bangumiQuery.data?.days.flatMap((d) => d.items) ?? [] : [];
+    const reconciledDouban =
+      channel === 'anime' ? reconcileStatusWithCalendar(doubanItems, allCalendar, nowYear) : doubanItems;
+
+    // 过滤掉豆瓣里今年刚立项官宣、尚无评分也无集数且不在当周放送表中的「未开播空气词条」
+    const playableDouban = reconciledDouban.filter((item) => {
+      if (item.year === String(nowYear) && !item.rating && !item.remarks && item.status !== 'airing') {
+        return false;
+      }
+      return true;
+    });
+
     const mergeCalendar =
       channel === 'anime' &&
       status !== 'ended' &&
       genre === '全部' &&
       (area === '全部' || area === '日本') &&
       (year === '全部' || year === String(nowYear) || year === String(nowYear - 1));
-    const calendar = mergeCalendar ? bangumiQuery.data?.days.flatMap((d) => d.items) ?? [] : [];
-    const merged = mergeAiringCalendar(doubanItems, calendar, nowYear);
+    // 默认「全部」视图只混入评分 ≥ 6.8 的高人气当季在播番，避免 3~5 分冷门泡面番霸占第一排
+    const popularCalendar = mergeCalendar
+      ? allCalendar.filter((c) => parseFloat(c.rating ?? '0') >= 6.8)
+      : [];
+    const merged = mergeAiringCalendar(playableDouban, popularCalendar, nowYear);
     const filtered = filterHallItems(merged, {
       genre,
       area,

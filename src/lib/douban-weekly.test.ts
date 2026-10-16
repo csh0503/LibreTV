@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   baiduTeleplayToItem,
   biliRankToItem,
+  curateRealtimeList,
   doubanCollectionToItem,
   doubanWeeklyToItem,
   interleaveAndDedupeLists,
@@ -91,7 +92,7 @@ describe('baiduTeleplayToItem', () => {
 });
 
 describe('doubanCollectionToItem & biliRankToItem & tmdbTrendingToItem', () => {
-  it('解析豆瓣 subject_collection 实时条目（含年份、地区、题材、短评看点）', () => {
+  it('解析豆瓣 subject_collection 实时条目（含年份、地区、题材、演职员，不取单条网友差评）', () => {
     const item = doubanCollectionToItem(
       {
         id: '37191789',
@@ -101,6 +102,7 @@ describe('doubanCollectionToItem & biliRankToItem & tmdbTrendingToItem', () => {
         episodes_info: '更新至12集',
         pic: { large: 'https://img3.doubanio.com/view/photo/m_ratio_poster/public/p1.jpg' },
         rating: { value: 8.3 },
+        comments: [{ comment: '女主为了演出恶女，用力很过猛了-- Mn' }],
       },
       true,
       '豆瓣实时剧集'
@@ -146,6 +148,27 @@ describe('doubanCollectionToItem & biliRankToItem & tmdbTrendingToItem', () => {
     });
   });
 
+  it('curateRealtimeList：剔除柯南/小新/银魂等常青老番与中配版，同系列多季折叠并推举最新季', () => {
+    const raw = [
+      { id: '1', title: '名侦探柯南', cover: 'c', remarks: '更新至第1276话', status: 'airing' as const },
+      { id: '2', title: '蜡笔小新 第二季（中文）', cover: 'c', remarks: '全873话', status: 'ended' as const },
+      { id: '3', title: '银魂', cover: 'c', remarks: '全200话', status: 'ended' as const },
+      { id: '4', title: '黑色四叶草', cover: 'c', remarks: '全171话', status: 'ended' as const },
+      { id: '5', title: '咒术回战', cover: 'c', remarks: '全24话', status: 'ended' as const },
+      { id: '6', title: '致不灭的你 第三季', cover: 'c', remarks: '更新至第8话', status: 'airing' as const },
+      { id: '7', title: '咒术回战 第二季', cover: 'c', remarks: '全23话', status: 'ended' as const },
+      { id: '8', title: '咒术回战 第三季', cover: 'c', remarks: '更新至第3话', status: 'airing' as const },
+      { id: '9', title: '明日方舟：焰烬曙明', cover: 'c', remarks: '全10话', status: 'ended' as const },
+      { id: '10', title: '明日方舟：焰烬曙明 中配版', cover: 'c', remarks: '全10话', status: 'ended' as const },
+    ];
+    const curated = curateRealtimeList(raw, { filterEvergreen: true, maxEpisodes: 100 });
+    expect(curated.map((x) => x.title)).toEqual([
+      '咒术回战 第三季',
+      '致不灭的你 第三季',
+      '明日方舟：焰烬曙明',
+    ]);
+  });
+
   it('解析 TMDB 趋势条目并支持多榜交叉去重', () => {
     const tmdb = tmdbTrendingToItem({
       id: 999,
@@ -167,10 +190,10 @@ describe('doubanCollectionToItem & biliRankToItem & tmdbTrendingToItem', () => {
     });
 
     const merged = interleaveAndDedupeLists([
-      [{ id: '1', title: '海贼王', cover: 'c1' }, { id: '2', title: '灵笼', cover: 'c2' }],
-      [{ id: '3', title: '航海王', cover: 'c3' }, { id: '4', title: '嫁金钗', cover: 'c4' }],
+      [{ id: '1', title: '海贼王', cover: 'c1' }, { id: '2', title: '灵笼 第二季', cover: 'c2' }],
+      [{ id: '3', title: '航海王', cover: 'c3' }, { id: '4', title: '灵笼 第一季', cover: 'c4' }],
     ]);
-    // 海贼王与航海王按 normalizeTitleKey 视为同一部，不重复出现
-    expect(merged.map((m) => m.title)).toEqual(['海贼王', '灵笼', '嫁金钗']);
+    // 海贼王与航海王、灵笼第一季与第二季均按系列主名视为同一部，不重复出现
+    expect(merged.map((m) => m.title)).toEqual(['海贼王', '灵笼 第二季']);
   });
 });
