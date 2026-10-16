@@ -12,6 +12,8 @@ import {
   type AggregatedGroup,
 } from '@/lib/title-aliases';
 import { FavoriteButton } from './favorite-button';
+import { QualityTag, useSourceQuality } from './use-source-quality';
+import { qualityKey, rankSources } from '@/lib/source-rank';
 import type { FavoriteDraft } from '@/lib/db';
 
 export { aggregateResults, buildGroupTitleKey, normalizeYearToken, type AggregatedGroup };
@@ -36,6 +38,13 @@ export function AggregatedCard({
 
   const multi = group.items.length > 1;
   const adult = useMemo(() => group.items.some((i) => i.isAdult), [group.items]);
+  // 展开时才质检（清晰度 / 插入广告），按「没出错 → 清晰 → 集数 → 广告少 → 快」排，第一个标推荐
+  const sourceHealth = useAppStore((s) => s.sourceHealth);
+  const { qualityMap, isFetching: qualityFetching } = useSourceQuality(group.items, multi && expanded);
+  const rankedItems = useMemo(
+    () => rankSources(group.items, sourceHealth, qualityMap),
+    [group.items, sourceHealth, qualityMap],
+  );
 
   const activate = () => {
     if (multi) setExpanded((v) => !v);
@@ -121,15 +130,18 @@ export function AggregatedCard({
 
       {multi && expanded && (
         <div className="border-t border-line p-2.5 animate-fade-in">
-          <p className="text-[10px] text-faint mb-1.5">选择来源播放</p>
+          <p className="text-[10px] text-faint mb-1.5">
+            选择来源播放{qualityFetching ? ' · 正在测清晰度和广告…' : ''}
+          </p>
           <div className="flex flex-wrap gap-1.5">
-            {group.items.map((item) => (
+            {rankedItems.map((item, i) => (
               <button
                 key={`${item.sourceKey}_${item.vodId}`}
                 className={cn(
                   'group inline-flex items-center gap-1.5 max-w-full rounded-lg border px-2.5 py-1.5',
                   'text-xs transition-all cursor-pointer',
                   'border-line bg-chip hover:border-accent hover:bg-accent/10',
+                  i === 0 && Object.keys(qualityMap).length > 0 && 'border-accent/60',
                   item.isAdult && 'border-pink-500/30'
                 )}
                 onClick={(e) => {
@@ -138,8 +150,10 @@ export function AggregatedCard({
                 }}
                 aria-label={`使用 ${item.sourceName} 播放`}
               >
+                {i === 0 && Object.keys(qualityMap).length > 0 && <span className="text-accent font-medium">推荐</span>}
                 <span className="font-medium text-content truncate max-w-[9em]">{item.sourceName}</span>
                 <span className="text-faint truncate max-w-[7em]">{item.remarks || '暂无介绍'}</span>
+                <QualityTag q={qualityMap[qualityKey(item)]} />
                 <svg
                   className="w-3.5 h-3.5 text-accent shrink-0 transition-transform group-hover:scale-110"
                   fill="currentColor"

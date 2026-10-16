@@ -19,8 +19,7 @@ import { useFocusTrap } from './use-focus-trap';
 import { useAliasFallback, useSourceSearch } from './use-source-search';
 import { qualityKey, rankSources } from '@/lib/source-rank';
 import { qualityLabel, type SourceQuality } from '@/lib/stream-quality';
-import { useQuery } from '@tanstack/react-query';
-import { api } from '@/lib/client-api';
+import { QualityTag, useSourceQuality } from './use-source-quality';
 
 /** 一组里最多直接列出几个源，其余折叠成「+N」 */
 const SOURCES_PER_GROUP = 6;
@@ -158,35 +157,9 @@ function TitleModalBody({
   // 每组里的源按「最近没出错 → 集数多 → 响应快」排，「播放」用排第一的
   const sourceHealth = useAppStore((st) => st.sourceHealth);
   // 片源质检：搜完后挑最靠前的几个源，让服务端看第 1 集的清晰度和插入广告
-  const healthRanked = useMemo(
-    () => shown.map((g) => ({ ...g, items: rankSources(g.items, sourceHealth) })),
-    [shown, sourceHealth],
-  );
-  const qualityCandidates = useMemo(
-    () =>
-      healthRanked
-        .flatMap((g) => g.items)
-        .slice(0, 8)
-        .flatMap((item) => {
-          const src = resolveSource({ customAPIs, envSources }, item.sourceKey, { url: item.sourceUrl });
-          return src
-            ? [{ key: qualityKey(item), sourceKey: item.sourceKey, sourceName: item.sourceName, sourceUrl: src.url, vodId: item.vodId }]
-            : [];
-        }),
-    [healthRanked, customAPIs, envSources],
-  );
+  const allShownItems = useMemo(() => shown.flatMap((g) => g.items), [shown]);
   const searchDone = !isSearching && !lookingUpAliases;
-  const qualityQuery = useQuery({
-    queryKey: ['quality', qualityCandidates.map((c) => c.key).join(',')],
-    queryFn: ({ signal }) => api.quality(qualityCandidates, signal),
-    enabled: searchDone && qualityCandidates.length > 0,
-    staleTime: 60 * 60_000,
-    retry: 0,
-  });
-  const qualityMap = useMemo(
-    () => Object.fromEntries((qualityQuery.data?.results ?? []).map((q) => [q.key, q])),
-    [qualityQuery.data],
-  );
+  const { qualityMap, isFetching: qualityFetching } = useSourceQuality(allShownItems, searchDone);
   const ranked = useMemo(
     () => shown.map((g) => ({ ...g, items: rankSources(g.items, sourceHealth, qualityMap) })),
     [shown, sourceHealth, qualityMap],
@@ -334,7 +307,7 @@ function TitleModalBody({
                       ? `正在查找 ${streamedOutcomes.length}/${selectedSources.length} 个点播源…`
                       : shown.length > 0
                         ? `${sourceTotal} 个点播源可看${foundVia ? ` · 按别名《${foundVia}》找到` : ''}${
-                            qualityQuery.isFetching ? ' · 正在测清晰度和广告…' : ''
+                            qualityFetching ? ' · 正在测清晰度和广告…' : ''
                           }`
                         : lookingUpAliases
                           ? alias
@@ -454,19 +427,3 @@ function SourceGroupRow({
   );
 }
 
-/** 源按钮上的质检小标签：「1080P」「约720P」「广告15秒·已跳过」「无广告」 */
-function QualityTag({ q }: { q?: SourceQuality }) {
-  if (!q) return null;
-  if (!q.ok) return <span className="ml-1 text-faint" title={q.error}>· 测不了</span>;
-  const label = q.height ? `${q.estimated ? '约' : ''}${qualityLabel(q.height)}` : '';
-  const ads = q.adSeconds && q.adSeconds > 0 ? `广告${q.adSeconds}秒·已跳过` : q.height || q.kbps ? '无插入广告' : '';
-  if (!label && !ads) return null;
-  return (
-    <span
-      className="ml-1 text-faint"
-      title={[q.kbps ? `约 ${(q.kbps / 1000).toFixed(1)} Mbps` : '', q.minutes ? `第 1 集 ${q.minutes} 分钟` : ''].filter(Boolean).join(' · ')}
-    >
-      · {[label, ads].filter(Boolean).join(' · ')}
-    </span>
-  );
-}
