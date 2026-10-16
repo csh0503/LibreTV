@@ -345,6 +345,9 @@ const ODD_AD_MAX_SECONDS = 60;
 /** 至少这么多分片时长一样，才算「切片很整齐的源」 */
 const ODD_UNIFORM_SHARE = 0.9;
 const ODD_MIN_SEGMENTS = 30;
+/** 一集里最多删几段、加起来最多删多少秒；超过就当成这个源的正常切法，不删 */
+const ODD_MAX_GROUPS = 4;
+const ODD_MAX_TOTAL_SECONDS = 180;
 
 /**
  * 切片整齐的源里，时长对不上的短插播段：
@@ -387,10 +390,14 @@ function stripOddDurationGroups(m3u8Content: string): string {
     if (idx === durs.length - 1) return; // 整集最后一片
     if (Math.abs(d.dur - mode) > 0.05) oddGroups.add(d.group);
   });
+  const targets = [...oddGroups]
+    .map((k) => groups[k])
+    .filter((g) => g.count > 0 && g.seconds > 0 && g.seconds <= ODD_AD_MAX_SECONDS);
+  // 一集里真正的插播广告一般就一两段：要删的太多，多半是这个源接缝处本来就会留零头，整条规则这集不用
+  const totalSeconds = targets.reduce((n, g) => n + g.seconds, 0);
+  if (targets.length > ODD_MAX_GROUPS || totalSeconds > ODD_MAX_TOTAL_SECONDS) return m3u8Content;
   const drop = new Array<boolean>(lines.length).fill(false);
-  for (const k of oddGroups) {
-    const g = groups[k];
-    if (g.count === 0 || g.seconds <= 0 || g.seconds > ODD_AD_MAX_SECONDS) continue;
+  for (const g of targets) {
     if (g.discLine >= 0) drop[g.discLine] = true;
     for (let i = g.start; i < g.end; i++) {
       const t = lines[i].trim();

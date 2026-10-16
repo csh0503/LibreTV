@@ -345,3 +345,14 @@ describe('stripAdGroups：切片整齐的源里时长对不上的插播段（最
     expect(stripAdGroups(mixed)).toMatch(/EXTINF:0\.1/);
   });
 });
+
+describe('stripAdGroups：零头规则的保险', () => {
+  it('一集里要删的零头段太多（> 4 段）就当成源的正常切法，一段都不删', () => {
+    let n = 0;
+    const g = (durs: number[]) => durs.map((d) => `#EXTINF:${d},\nhttps://v.test/hls/${String(n++).padStart(8, 'b')}.ts`).join('\n');
+    const parts: string[] = [];
+    for (let i = 0; i < 12; i++) parts.push(g(Array.from({ length: 20 }, () => 2)), g([2, 2, 2, 1.4]));
+    const src = ['#EXTM3U', ...parts.flatMap((p, i) => (i === 0 ? [p] : ['#EXT-X-DISCONTINUITY', p])), '#EXT-X-ENDLIST'].join('\n');
+    expect(stripAdGroups(src)).toBe(src);
+  });
+});
