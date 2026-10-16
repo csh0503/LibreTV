@@ -1,10 +1,8 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { api } from '@/lib/client-api';
 import { db, favoriteIdOf, toggleFavorite } from '@/lib/db';
 import { describeContinueWatching } from '@/lib/home-features';
 import { resolveSource, useAppStore } from '@/lib/store';
@@ -17,14 +15,12 @@ import { SmartImage } from './smart-image';
 import { Spinner } from './states';
 import { useToast } from './toast';
 import { useFocusTrap } from './use-focus-trap';
-import { useSourceSearch } from './use-source-search';
+import { useAliasFallback, useSourceSearch } from './use-source-search';
 
 /** 一组里最多直接列出几个源，其余折叠成「+N」 */
 const SOURCES_PER_GROUP = 6;
 /** 最多列出几组（各季 / 剧场版） */
 const MAX_GROUPS = 6;
-/** 原名搜不到时，最多再按几个别名（港台译名等）查 */
-const MAX_ALIAS_TRIES = 3;
 
 /**
  * 作品详情弹窗（Netflix 式「更多信息」）：首页任何一张卡片点开都先到这里。
@@ -89,40 +85,14 @@ function TitleModalBody({
 
   // 原名全部源都没有 → 查这部作品的其他中文名，逐个再搜
   const primaryMissing = settled && matched.length === 0 && selectedSources.length > 0;
-  const kind = pick.isTv === true ? 'tv' : pick.isTv === false ? 'movie' : undefined;
-  const tmdb = pick.id?.startsWith('tmdb_') ? pick.id.slice(5) : undefined;
-  const identityQuery = useQuery({
-    queryKey: ['identity', pick.title, pick.year, kind, tmdb],
-    queryFn: ({ signal }) => api.identity({ title: pick.title, year: pick.year, kind, tmdb }, signal),
-    enabled: primaryMissing,
-    staleTime: 24 * 3600_000,
-    retry: 0,
-  });
-  const aliasNames = useMemo(
-    () => (identityQuery.data?.identity?.names ?? []).slice(0, MAX_ALIAS_TRIES),
-    [identityQuery.data],
-  );
-  const [aliasIdx, setAliasIdx] = useState(0);
-  const alias = primaryMissing ? (aliasNames[aliasIdx] ?? '') : '';
-  const aliasSearch = useSourceSearch(alias, Boolean(alias));
-  const aliasGroups = useMemo(
-    () => (alias ? matchingGroups(aggregateResults(aliasSearch.list, alias), alias) : []),
-    [alias, aliasSearch.list],
-  );
-  const aliasExhausted = aliasIdx + 1 >= aliasNames.length;
-  useEffect(() => {
-    if (alias && aliasSearch.settled && aliasGroups.length === 0 && !aliasExhausted) setAliasIdx((i) => i + 1);
-  }, [alias, aliasSearch.settled, aliasGroups.length, aliasExhausted]);
-
+  const fallback = useAliasFallback(pick, primaryMissing);
+  const aliasNames = fallback.names;
+  const alias = fallback.alias;
   /** 实际展示的片源：原名优先，没有就用别名找到的 */
-  const shown = matched.length > 0 ? matched : aliasGroups;
-  const foundVia = matched.length === 0 && aliasGroups.length > 0 ? alias : undefined;
-  const lookingUpAliases =
-    primaryMissing &&
-    aliasGroups.length === 0 &&
-    (identityQuery.isLoading || (Boolean(alias) && (!aliasSearch.settled || !aliasExhausted)));
-  /** 原名、别名都查完了还是没有 */
-  const nothingFound = primaryMissing && !lookingUpAliases && aliasGroups.length === 0;
+  const shown = matched.length > 0 ? matched : fallback.groups;
+  const foundVia = matched.length === 0 ? fallback.foundVia : undefined;
+  const lookingUpAliases = fallback.lookingUp;
+  const nothingFound = fallback.nothingFound;
   const sourceTotal = useMemo(() => new Set(shown.flatMap((g) => g.items.map((i) => i.sourceKey))).size, [shown]);
 
   const localId = favoriteIdOf({ title: pick.title });

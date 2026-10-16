@@ -20,13 +20,13 @@ import { AggregatedCard, aggregateResults } from '@/components/video-card';
 import { useAppStore, isInDisabledSubscription, isSourceDisabled } from '@/lib/store';
 import { sourceIsAdult } from '@/lib/adult-sources';
 import { useLoadMore } from '@/components/use-load-more';
-import { useSourceSearch } from '@/components/use-source-search';
+import { useAliasFallback, useSourceSearch } from '@/components/use-source-search';
 import type { SearchResultItem, TitlePick } from '@/lib/types';
 import { hasTitleMatch } from '@/lib/title-aliases';
 import { SearchHistoryDropdown, useSearchHistory } from '@/components/search-history';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/components/toast';
-import { EmptyState } from '@/components/states';
+import { EmptyState, Spinner } from '@/components/states';
 import { NoSourceNotice } from '@/components/no-source';
 import { Icon } from '@/components/icon';
 import { SiteFooter } from '@/components/site-footer';
@@ -155,7 +155,11 @@ function HomeContent() {
   const groups = useMemo(() => aggregateResults(list, urlQuery), [list, urlQuery]);
   // 从首页卡片点进来、全部源都结算了还没有这部作品本身 → 「暂无片源」
   const picked = pickedTitles.get(urlQuery);
-  const pickMissing = Boolean(picked) && searchSettled && !hasTitleMatch(groups, urlQuery);
+  // 原名没搜到这部作品本身 → 按它的其他中文名（港台译名等）再查；手动输入的搜索也一样
+  const titleMissing = searchSettled && selectedSources.length > 0 && !hasTitleMatch(groups, urlQuery);
+  const fallback = useAliasFallback(picked ?? { title: urlQuery }, titleMissing);
+  // 别名也都没有，才给「暂无片源」
+  const pickMissing = Boolean(picked) && titleMissing && fallback.nothingFound;
 
   // 分批渲染：新一次搜索（groups 变化）时重置回首批
   const [visibleCount, setVisibleCount] = useState(RESULT_PAGE_SIZE);
@@ -367,6 +371,30 @@ function HomeContent() {
               </div>
             )}
 
+            {fallback.lookingUp && (
+              <div className="mb-4 flex items-center gap-2.5 rounded-xl border border-line bg-chip px-4 py-3 text-sm text-muted">
+                <Spinner size="sm" />
+                {fallback.alias
+                  ? `原名没有找到《${urlQuery}》本身，正在按别名《${fallback.alias}》查找…`
+                  : `原名没有找到《${urlQuery}》本身，正在查这部作品的其他译名…`}
+              </div>
+            )}
+            {fallback.foundVia && (
+              <div className="mb-6">
+                <p className="mb-3 text-sm text-muted">
+                  原名没有找到，按别名<span className="text-content font-medium">《{fallback.foundVia}》</span>找到：
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 items-start">
+                  {fallback.groups.map((group) => (
+                    <AggregatedCard key={group.key} group={group} onOpen={(item) => setDetailItem(item)} />
+                  ))}
+                </div>
+                {list.length > 0 && <h3 className="mt-6 text-sm text-faint">名称相近的其他结果</h3>}
+              </div>
+            )}
+            {fallback.nothingFound && fallback.names.length > 0 && (
+              <p className="mb-3 text-xs text-faint">也按别名《{fallback.names.join('》《')}》查过，都没有找到。</p>
+            )}
             {selectedSources.length === 0 ? (
               <NoSourceGuide hasSources={customAPIs.length > 0 || envSources.length > 0} />
             ) : list.length > 0 ? (
@@ -393,7 +421,7 @@ function HomeContent() {
               </>
             ) : isSearching ? (
               <ResultsSkeleton />
-            ) : pickMissing && picked ? (
+            ) : fallback.lookingUp || fallback.foundVia ? null : pickMissing && picked ? (
               <NoSourceNotice
                 variant="full"
                 pick={picked}

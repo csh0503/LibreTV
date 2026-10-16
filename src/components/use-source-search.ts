@@ -1,11 +1,12 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { sourceIsAdult } from '@/lib/adult-sources';
 import { api } from '@/lib/client-api';
 import { isInDisabledSubscription, isSourceDisabled, resolveSource, useAppStore } from '@/lib/store';
-import type { SourceSearchOutcome } from '@/lib/types';
+import { aggregateResults, matchingGroups } from '@/lib/title-aliases';
+import type { SourceSearchOutcome, TitlePick } from '@/lib/types';
 import { formatDisableTtl, validateSourceUrl } from '@/lib/utils';
 import { useToast } from './toast';
 
@@ -108,5 +109,65 @@ export function useSourceSearch(rawQuery: string, enabled = true) {
     list,
     failures,
     sourceName,
+  };
+}
+
+/** 原名搜不到时，最多再按几个别名（港台译名等）查 */
+const MAX_ALIAS_TRIES = 3;
+
+/**
+ * 原名在所有点播源都没有这部作品时（primaryMissing），向 /api/identity 要这部作品的其他中文名
+ * （TMDB 的港台译名、别名，转简体），逐个再搜，直到有一个找到或都试完。
+ * 作品详情弹窗和搜索结果页共用。
+ */
+export function useAliasFallback(pick: TitlePick, primaryMissing: boolean) {
+  const kind = pick.isTv === true ? 'tv' : pick.isTv === false ? 'movie' : undefined;
+  const tmdb = pick.id?.startsWith('tmdb_') ? pick.id.slice(5) : undefined;
+  const identityQuery = useQuery({
+    queryKey: ['identity', pick.title, pick.year, kind, tmdb],
+    queryFn: ({ signal }) => api.identity({ title: pick.title, year: pick.year, kind, tmdb }, signal),
+    enabled: primaryMissing,
+    staleTime: 24 * 3600_000,
+    retry: 0,
+  });
+  const names = useMemo(
+    () => (identityQuery.data?.identity?.names ?? []).slice(0, MAX_ALIAS_TRIES),
+    [identityQuery.data]
+  );
+  // 换片名时从第一个别名重新开始
+  const [cursor, setCursor] = useState({ title: pick.title, idx: 0 });
+  const idx = cursor.title === pick.title ? cursor.idx : 0;
+  const alias = primaryMissing ? (names[idx] ?? '') : '';
+  const search = useSourceSearch(alias, Boolean(alias));
+  const groups = useMemo(
+    () => (alias ? matchingGroups(aggregateResults(search.list, alias), alias) : []),
+    [alias, search.list]
+  );
+  const exhausted = idx + 1 >= names.length;
+  useEffect(() => {
+    if (alias && search.settled && groups.length === 0 && !exhausted) {
+      setCursor({ title: pick.title, idx: idx + 1 });
+    }
+  }, [alias, search.settled, groups.length, exhausted, pick.title, idx]);
+
+  const lookingUp =
+    primaryMissing &&
+    groups.length === 0 &&
+    (identityQuery.isLoading || (Boolean(alias) && (!search.settled || !exhausted)));
+
+  return {
+    /** 当前在试的别名 */
+    alias,
+    /** 准备试的全部别名 */
+    names,
+    /** 按别名找到的这部作品的分组 */
+    groups,
+    /** 别名搜索的原始结果（搜索结果页展示用） */
+    list: search.list,
+    /** 找到时用的是哪个别名 */
+    foundVia: groups.length > 0 ? alias : undefined,
+    lookingUp,
+    /** 原名、别名都查完了还是没有 */
+    nothingFound: primaryMissing && !lookingUp && groups.length === 0,
   };
 }
