@@ -15,9 +15,9 @@ import {
 export const runtime = 'nodejs';
 export const maxDuration = 30;
 
-/** 一次最多测几个源；每个源大约 3~4 个请求（详情、播放列表、可能的子列表、一个分片的大小） */
-const MAX_ITEMS = 8;
-const PER_ITEM_TIMEOUT_MS = 9000;
+/** 一次最多测几个源（全部并发）；每个源大约 3~4 个请求（详情、播放列表、可能的子列表、一个分片的大小） */
+const MAX_ITEMS = 30;
+const PER_ITEM_TIMEOUT_MS = 14000;
 const CACHE_TTL = 60 * 60 * 1000;
 
 interface QualityRequestItem {
@@ -61,7 +61,7 @@ async function segmentBytes(url: string): Promise<number> {
 }
 
 async function probe(item: QualityRequestItem): Promise<SourceQuality> {
-  const cacheKey = `quality:${item.sourceUrl}|${item.vodId}`;
+  const cacheKey = `quality:v2:${item.sourceUrl}|${item.vodId}`;
   const cached = getCache<SourceQuality>(cacheKey);
   if (cached) return { ...cached, key: item.key };
 
@@ -85,7 +85,7 @@ async function probe(item: QualityRequestItem): Promise<SourceQuality> {
     playlistUrl = makeAbsolute(best.uri, playlistUrl);
     content = await fetchText(playlistUrl);
   }
-  const info = analyzeMediaPlaylist(content);
+  const info = analyzeMediaPlaylist(content, playlistUrl);
   let kbps = 0;
   if (info.sampleSegment) {
     const bytes = await segmentBytes(makeAbsolute(info.sampleSegment.uri, playlistUrl));
@@ -99,6 +99,7 @@ async function probe(item: QualityRequestItem): Promise<SourceQuality> {
     estimated: estimated || undefined,
     kbps: kbps || undefined,
     adSeconds: info.adSeconds,
+    suspectSeconds: info.suspectSeconds || undefined,
     minutes: info.seconds > 0 ? Math.round(info.seconds / 60) : undefined,
   };
   setCache(cacheKey, result, CACHE_TTL);

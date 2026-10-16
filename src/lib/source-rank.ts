@@ -37,7 +37,8 @@ export function rankSources(
       failing,
       tier,
       eps: episodeCount(item.remarks),
-      ads: q?.adSeconds ?? 0,
+      // 新规则疑似的广告播放时还不跳过，比已跳过的更影响观看，加倍算
+      ads: (q?.adSeconds ?? 0) + 2 * (q?.suspectSeconds ?? 0),
       ms: h?.ok && h.ms ? h.ms : UNKNOWN_MS,
     };
   });

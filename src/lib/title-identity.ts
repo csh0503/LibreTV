@@ -11,11 +11,35 @@ import { tmdbGet } from './tmdb';
 
 export type IdentityKind = 'movie' | 'tv';
 
+export interface TitleInfo {
+  /** 中文剧情简介 */
+  overview?: string;
+  tagline?: string;
+  genres: string[];
+  /** 首播 / 上映日期 YYYY-MM-DD */
+  date?: string;
+  /** 电影片长（分钟） */
+  runtime?: number;
+  /** 剧集：总集数 / 季数 */
+  episodes?: number;
+  seasons?: number;
+  /** 剧集：在播 / 完结（中文） */
+  status?: string;
+  /** TMDB 评分（0~10）与评分人数 */
+  rating?: number;
+  votes?: number;
+  directors: string[];
+  cast: string[];
+  networks: string[];
+}
+
 export interface TitleIdentity {
   tmdbId: number;
   kind: IdentityKind;
   /** 除了查询用的片名之外的其他中文名（已转简体、去重），按可信度排序 */
   names: string[];
+  /** 作品资讯（来自 TMDB 中文资料）；查别名时顺带取回 */
+  info?: TitleInfo;
 }
 
 const IDENTITY_TTL = 24 * 3600 * 1000;
@@ -70,6 +94,21 @@ export function pickBestMatch(
 export interface TmdbDetailWithNames {
   title?: string;
   name?: string;
+  overview?: string;
+  tagline?: string;
+  genres?: { name?: string }[];
+  release_date?: string;
+  first_air_date?: string;
+  runtime?: number;
+  number_of_episodes?: number;
+  number_of_seasons?: number;
+  status?: string;
+  in_production?: boolean;
+  vote_average?: number;
+  vote_count?: number;
+  networks?: { name?: string }[];
+  created_by?: { name?: string }[];
+  credits?: { cast?: { name?: string }[]; crew?: { name?: string; job?: string }[] };
   original_title?: string;
   original_name?: string;
   original_language?: string;
@@ -117,6 +156,40 @@ export function collectChineseNames(detail: TmdbDetailWithNames, exclude: string
   return out.slice(0, MAX_NAMES);
 }
 
+const TMDB_STATUS_CN: Record<string, string> = {
+  'Returning Series': '连载中',
+  Ended: '已完结',
+  Canceled: '已停播',
+  'In Production': '制作中',
+  Planned: '筹备中',
+  Released: '已上映',
+};
+
+/** TMDB 详情 → 作品资讯（简介、类型、日期、集数、主创） */
+export function extractTitleInfo(detail: TmdbDetailWithNames, kind: IdentityKind): TitleInfo {
+  const names = (list?: { name?: string }[], n = 6) =>
+    (list ?? []).map((x) => x.name?.trim() ?? '').filter(Boolean).slice(0, n);
+  const directors =
+    kind === 'movie'
+      ? names((detail.credits?.crew ?? []).filter((c) => c.job === 'Director'), 3)
+      : names(detail.created_by, 3);
+  return {
+    overview: detail.overview?.trim() || undefined,
+    tagline: detail.tagline?.trim() || undefined,
+    genres: names(detail.genres, 4),
+    date: (kind === 'movie' ? detail.release_date : detail.first_air_date) || undefined,
+    runtime: kind === 'movie' && detail.runtime ? detail.runtime : undefined,
+    episodes: kind === 'tv' ? detail.number_of_episodes || undefined : undefined,
+    seasons: kind === 'tv' ? detail.number_of_seasons || undefined : undefined,
+    status: detail.status ? TMDB_STATUS_CN[detail.status] : undefined,
+    rating: detail.vote_average && detail.vote_count && detail.vote_count >= 10 ? Math.round(detail.vote_average * 10) / 10 : undefined,
+    votes: detail.vote_count || undefined,
+    directors,
+    cast: names(detail.credits?.cast, 6),
+    networks: names(detail.networks, 3),
+  };
+}
+
 /** null = TMDB 确认查不到这部；undefined = 暂时查不了（没有 key / 请求失败），不要缓存 */
 export async function resolveTitleIdentity(input: {
   title: string;
@@ -126,7 +199,7 @@ export async function resolveTitleIdentity(input: {
 }): Promise<TitleIdentity | null | undefined> {
   const title = input.title.trim().slice(0, 100);
   if (!title) return null;
-  const cacheKey = `identity:${input.tmdbId ?? ''}:${input.kind ?? ''}:${title}:${input.year ?? ''}`;
+  const cacheKey = `identity:v2:${input.tmdbId ?? ''}:${input.kind ?? ''}:${title}:${input.year ?? ''}`;
   const cached = getCache<TitleIdentity | null>(cacheKey);
   if (cached !== undefined) return cached;
 
@@ -140,10 +213,15 @@ export async function resolveTitleIdentity(input: {
   let identity: TitleIdentity | null = null;
   if (target) {
     const detail = await tmdbGet<TmdbDetailWithNames>(`/${target.kind}/${target.id}`, {
-      append_to_response: 'alternative_titles,translations',
+      append_to_response: 'alternative_titles,translations,credits',
     });
     if (!detail) return undefined;
-    identity = { tmdbId: target.id, kind: target.kind, names: collectChineseNames(detail, title) };
+    identity = {
+      tmdbId: target.id,
+      kind: target.kind,
+      names: collectChineseNames(detail, title),
+      info: extractTitleInfo(detail, target.kind),
+    };
   }
   setCache(cacheKey, identity, IDENTITY_TTL);
   return identity;

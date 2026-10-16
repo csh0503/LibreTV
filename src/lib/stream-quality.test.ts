@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { analyzeMediaPlaylist, bestVariant, heightFromKbps, parseMasterPlaylist, qualityLabel, qualityTier } from './stream-quality';
+import { analyzeMediaPlaylist, bestVariant, filenameShape, suspectAdSeconds, heightFromKbps, parseMasterPlaylist, qualityLabel, qualityTier } from './stream-quality';
 
 describe('片源质检', () => {
   it('主播放列表挑最高一档', () => {
@@ -35,5 +35,33 @@ describe('片源质检', () => {
     expect(qualityTier({ key: 'a', ok: true, height: 1080 })).toBe(3);
     expect(qualityTier({ key: 'a', ok: false })).toBe(0);
     expect(qualityTier(undefined)).toBe(1);
+  });
+});
+
+describe('新规则：网站 / 文件名和正片不同的短分组', () => {
+  const main = (from: number, to: number) => {
+    const out: string[] = [];
+    for (let i = from; i < to; i++) out.push('#EXTINF:10,', `https://cdn.main.com/v/${String(i).padStart(4, '0')}.ts`);
+    return out;
+  };
+
+  it('换了网站的短分组算疑似广告', () => {
+    const m3u8 = ['#EXTM3U', ...main(0, 20), '#EXT-X-DISCONTINUITY', '#EXTINF:8,', 'https://ad.other.net/x/9f8e7d6c.ts', '#EXTINF:7,', 'https://ad.other.net/x/1a2b3c4d.ts', '#EXT-X-DISCONTINUITY', ...main(20, 40)].join('\n');
+    expect(suspectAdSeconds(m3u8)).toBe(15);
+  });
+
+  it('同网站但文件名样式完全不同也算', () => {
+    const m3u8 = ['#EXTM3U', ...main(0, 20), '#EXT-X-DISCONTINUITY', '#EXTINF:10,', 'https://cdn.main.com/v/ad-promo.ts', '#EXT-X-DISCONTINUITY', ...main(20, 40)].join('\n');
+    expect(filenameShape('https://cdn.main.com/v/0001.ts')).toBe('0.a');
+    expect(suspectAdSeconds(m3u8)).toBe(10);
+  });
+
+  it('正片本身混着多个网站时不判断；长分组不算', () => {
+    const mixed: string[] = ['#EXTM3U'];
+    for (let i = 0; i < 20; i++) mixed.push('#EXTINF:10,', `https://cdn${i % 3}.x.com/${i}.ts`, '#EXT-X-DISCONTINUITY');
+    expect(suspectAdSeconds(mixed.join('\n'))).toBe(0);
+    const long = ['#EXTM3U', ...main(0, 20), '#EXT-X-DISCONTINUITY'];
+    for (let i = 0; i < 15; i++) long.push('#EXTINF:10,', `https://other.net/${i}.ts`);
+    expect(suspectAdSeconds(long.join('\n'))).toBe(0);
   });
 });

@@ -247,11 +247,12 @@ export const api = {
   /** 即将播出：接下来 7 天的未播出内容 */
   /** 作品的其他中文名（港台译名转简体等），找片源时当备用搜索词 */
   identity: (query: { title: string; year?: string; kind?: 'movie' | 'tv'; tmdb?: string }, signal?: AbortSignal) => {
-    const sp = new URLSearchParams({ title: query.title });
+    // v=2：返回里加了作品资讯，换个网址让边缘节点上旧格式的缓存不再命中
+    const sp = new URLSearchParams({ title: query.title, v: '2' });
     if (query.year) sp.set('year', query.year);
     if (query.kind) sp.set('kind', query.kind);
     if (query.tmdb) sp.set('tmdb', query.tmdb);
-    return request<{ identity: { tmdbId: number; kind: 'movie' | 'tv'; names: string[] } | null }>(
+    return request<{ identity: import('./title-identity').TitleIdentity | null }>(
       `/api/identity?${sp.toString()}`,
       { signal },
     );

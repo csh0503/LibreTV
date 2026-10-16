@@ -64,3 +64,48 @@ describe('collectChineseNames', () => {
     ).toEqual([]);
   });
 });
+
+describe('extractTitleInfo', () => {
+  it('剧集：简介、集数、状态、主创、平台', async () => {
+    const { extractTitleInfo } = await import('./title-identity');
+    const info = extractTitleInfo(
+      {
+        overview: ' 一段简介 ',
+        genres: [{ name: '动画' }, { name: '剧情' }],
+        first_air_date: '2026-10-03',
+        number_of_episodes: 24,
+        number_of_seasons: 2,
+        status: 'Returning Series',
+        vote_average: 8.26,
+        vote_count: 120,
+        created_by: [{ name: '某导演' }],
+        networks: [{ name: 'TOKYO MX' }],
+        credits: { cast: [{ name: '甲' }, { name: '乙' }] },
+      },
+      'tv',
+    );
+    expect(info).toMatchObject({
+      overview: '一段简介',
+      genres: ['动画', '剧情'],
+      date: '2026-10-03',
+      episodes: 24,
+      seasons: 2,
+      status: '连载中',
+      rating: 8.3,
+      directors: ['某导演'],
+      cast: ['甲', '乙'],
+      networks: ['TOKYO MX'],
+    });
+  });
+
+  it('电影：片长和导演，评分人数太少不显示评分', async () => {
+    const { extractTitleInfo } = await import('./title-identity');
+    const info = extractTitleInfo(
+      { runtime: 118, vote_average: 9, vote_count: 3, credits: { crew: [{ name: '导演甲', job: 'Director' }, { name: '编剧', job: 'Writer' }] } },
+      'movie',
+    );
+    expect(info.runtime).toBe(118);
+    expect(info.directors).toEqual(['导演甲']);
+    expect(info.rating).toBeUndefined();
+  });
+});

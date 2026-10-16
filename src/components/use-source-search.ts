@@ -121,16 +121,24 @@ const MAX_ALIAS_TRIES = 3;
  * （TMDB 的港台译名、别名，转简体），逐个再搜，直到有一个找到或都试完。
  * 作品详情弹窗和搜索结果页共用。
  */
-export function useAliasFallback(pick: TitlePick, primaryMissing: boolean) {
+/**
+ * 作品身份（TMDB）：其他中文名 + 简介、类型、集数等资讯。
+ * 详情弹窗一打开就查（显示资讯），别名查找也用同一份缓存。
+ */
+export function useTitleIdentity(pick: TitlePick, enabled: boolean) {
   const kind = pick.isTv === true ? 'tv' : pick.isTv === false ? 'movie' : undefined;
   const tmdb = pick.id?.startsWith('tmdb_') ? pick.id.slice(5) : undefined;
-  const identityQuery = useQuery({
+  return useQuery({
     queryKey: ['identity', pick.title, pick.year, kind, tmdb],
     queryFn: ({ signal }) => api.identity({ title: pick.title, year: pick.year, kind, tmdb }, signal),
-    enabled: primaryMissing,
+    enabled,
     staleTime: 24 * 3600_000,
     retry: 0,
   });
+}
+
+export function useAliasFallback(pick: TitlePick, primaryMissing: boolean) {
+  const identityQuery = useTitleIdentity(pick, primaryMissing);
   // 上次在这台设备上用哪个别名找到过：开局就和原名一起搜，不用等原名落空
   const [remembered, setRemembered] = useState<{ title: string; alias?: string }>({ title: '' });
   useEffect(() => setRemembered({ title: pick.title, alias: recallAlias(pick.title) }), [pick.title]);

@@ -16,10 +16,12 @@ import { SmartImage } from './smart-image';
 import { Spinner } from './states';
 import { useToast } from './toast';
 import { useFocusTrap } from './use-focus-trap';
-import { useAliasFallback, useSourceSearch } from './use-source-search';
+import { useAliasFallback, useSourceSearch, useTitleIdentity } from './use-source-search';
 import { qualityKey, rankSources } from '@/lib/source-rank';
 import { qualityLabel, type SourceQuality } from '@/lib/stream-quality';
 import { QualityTag, useSourceQuality } from './use-source-quality';
+import { useQuery } from '@tanstack/react-query';
+import { api } from '@/lib/client-api';
 
 /** 一组里最多直接列出几个源，其余折叠成「+N」 */
 const SOURCES_PER_GROUP = 6;
@@ -294,7 +296,7 @@ function TitleModalBody({
               )}
             </div>
           )}
-          {pick.subtitle && <p className="text-sm text-muted leading-relaxed line-clamp-4">{pick.subtitle}</p>}
+          <TitleSynopsisAndInfo pick={pick} best={best} enabled={searchDone} />
 
           <section aria-label="片源" className="space-y-3">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -427,3 +429,100 @@ function SourceGroupRow({
   );
 }
 
+
+/** 采集站的简介常带 HTML 标签和 &nbsp; */
+function cleanDesc(text?: string): string {
+  return (text ?? '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;|&#160;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** 「张三,李四/王五」→ 前几位，用「 / 」连起来 */
+function shortList(text: string | undefined, n: number): string {
+  return (text ?? '')
+    .split(/[,，/、]+/)
+    .map((x) => x.trim())
+    .filter(Boolean)
+    .slice(0, n)
+    .join(' / ');
+}
+
+/**
+ * 剧情简介 + 资讯。简介优先用 TMDB 的中文简介，没有就用排第一的片源详情里的简介；
+ * 导演、主演优先用片源详情（中文名更全），类型、首播、集数、状态用 TMDB。
+ */
+function TitleSynopsisAndInfo({
+  pick,
+  best,
+  enabled,
+}: {
+  pick: TitlePick;
+  best?: SearchResultItem;
+  enabled: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const customAPIs = useAppStore((s) => s.customAPIs);
+  const envSources = useAppStore((s) => s.envSources);
+  const info = useTitleIdentity(pick, true).data?.identity?.info;
+  const src = best ? resolveSource({ customAPIs, envSources }, best.sourceKey, { url: best.sourceUrl }) : undefined;
+  const detailQuery = useQuery({
+    queryKey: ['detail-info', best?.sourceKey, best?.vodId],
+    queryFn: ({ signal }) => api.detail(best!.vodId, src!, signal),
+    enabled: enabled && Boolean(best && src),
+    staleTime: 30 * 60_000,
+    retry: 0,
+  });
+  const vi = detailQuery.data?.videoInfo;
+
+  const synopsis =
+    info?.overview || cleanDesc(vi?.desc) || (pick.subtitle && pick.subtitle.length > 30 ? pick.subtitle : '');
+  const isMovie = pick.isTv === false;
+  const episodes = info?.episodes
+    ? `${info.episodes} 集${info.seasons && info.seasons > 1 ? ` · 共 ${info.seasons} 季` : ''}`
+    : '';
+  const rows: [string, string][] = [
+    ['类型', info?.genres.length ? info.genres.join(' / ') : vi?.typeName || pick.genres || ''],
+    [isMovie ? '上映' : '首播', info?.date || vi?.year || pick.year || ''],
+    [isMovie ? '片长' : '集数', isMovie ? (info?.runtime ? `${info.runtime} 分钟` : '') : episodes || cleanDesc(vi?.remarks)],
+    ['状态', info?.status || ''],
+    [isMovie ? '导演' : '主创', shortList(vi?.director, 3) || info?.directors.join(' / ') || ''],
+    ['主演', shortList(vi?.actor, 6) || info?.cast.join(' / ') || ''],
+    ['地区', vi?.area || pick.area || ''],
+    ['播出平台', info?.networks.join(' / ') || ''],
+    ['评分', [pick.rating && `综合 ${pick.rating}`, info?.rating && `TMDB ${info.rating}${info.votes ? `（${info.votes} 人）` : ''}`].filter(Boolean).join(' · ')],
+  ].filter((r): r is [string, string] => Boolean(r[1]));
+
+  if (!synopsis && rows.length === 0) return null;
+  return (
+    <div className="space-y-3">
+      {info?.tagline && <p className="text-sm text-content italic">「{info.tagline}」</p>}
+      {synopsis ? (
+        <div>
+          <p className={cn('text-sm text-muted leading-relaxed', !expanded && 'line-clamp-4')}>{synopsis}</p>
+          {synopsis.length > 120 && (
+            <button type="button" onClick={() => setExpanded((v) => !v)} className="mt-1 text-xs text-accent hover:underline">
+              {expanded ? '收起' : '展开简介'}
+            </button>
+          )}
+        </div>
+      ) : detailQuery.isFetching ? (
+        <div className="h-12 rounded-lg bg-chip animate-pulse" aria-hidden />
+      ) : null}
+      {rows.length > 0 && (
+        <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5 text-xs">
+          {rows.map(([k, v]) => (
+            <div key={k} className="flex gap-2 min-w-0">
+              <dt className="text-faint shrink-0 w-14">{k}</dt>
+              <dd className="text-muted truncate" title={v}>
+                {v}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      )}
+    </div>
+  );
+}

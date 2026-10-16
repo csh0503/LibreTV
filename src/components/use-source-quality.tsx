@@ -8,8 +8,8 @@ import { resolveSource, useAppStore } from '@/lib/store';
 import { qualityLabel, type SourceQuality } from '@/lib/stream-quality';
 import type { SearchResultItem } from '@/lib/types';
 
-/** 一次最多质检几个源（服务端上限也是 8） */
-const MAX_PROBE = 8;
+/** 一次最多质检几个源（服务端上限也是 30），全部并发 */
+const MAX_PROBE = 30;
 
 /**
  * 片源质检：对排在前面的几个源，让服务端看第 1 集的清晰度和可识别的插入广告。
@@ -53,7 +53,10 @@ export function QualityTag({ q }: { q?: SourceQuality }) {
   if (!q) return null;
   if (!q.ok) return <span className="ml-1 text-faint" title={q.error}>· 测不了</span>;
   const label = q.height ? `${q.estimated ? '约' : ''}${qualityLabel(q.height)}` : '';
-  const ads = q.adSeconds && q.adSeconds > 0 ? `广告${q.adSeconds}秒·已跳过` : q.height || q.kbps ? '无插入广告' : '';
+  const parts: string[] = [];
+  if (q.adSeconds && q.adSeconds > 0) parts.push(`广告${q.adSeconds}秒·已跳过`);
+  if (q.suspectSeconds && q.suspectSeconds > 0) parts.push(`疑似广告${q.suspectSeconds}秒`);
+  const ads = parts.length > 0 ? parts.join(' · ') : q.height || q.kbps ? '无插入广告' : '';
   if (!label && !ads) return null;
   return (
     <span
