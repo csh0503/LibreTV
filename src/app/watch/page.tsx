@@ -19,7 +19,7 @@ import { EmptyState, LoadingState, Spinner } from '@/components/states';
 import { SwitchSourceModal } from '@/components/switch-source';
 import { useAutoFailover, type FailoverState } from '@/components/use-auto-failover';
 import { useToast } from '@/components/toast';
-import { classifySkip, loadSkipMarks, resolveEpisodeSkip, saveSkipMarks, seriesKeyOf, type LearnedSkip } from '@/lib/skip-marks';
+import { classifySkip, loadSkipMarks, resolveEpisodeSkip, saveSkipMarks, seriesKeyOf, type EpisodeSkip, type LearnedSkip } from '@/lib/skip-marks';
 import { failoverQueryTitle } from '@/lib/failover';
 import { enqueueDownload } from '@/components/download-manager';
 import { FavoriteButton } from '@/components/favorite-button';
@@ -179,20 +179,50 @@ function WatchContent() {
     (patch: Partial<LearnedSkip> | null) => setLearned(saveSkipMarks(seriesKey, patch)),
     [seriesKey],
   );
-  /** 你自己跳了一大段：像片头 / 片尾就记下来（AniSkip 已有的那段不记） */
+  /**
+   * 你自己跳了一大段：像片头 / 片尾就记下来（AniSkip 已有的那段不记）。
+   * 跳过去之后要接着看 10 秒以上才算（拖来拖去找位置、跳过去又拖回来都不算）；
+   * 在片尾点「下一集」立即算。
+   */
+  const pendingLearnRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (pendingLearnRef.current) clearTimeout(pendingLearnRef.current);
+      pendingLearnRef.current = null;
+    },
+    [currentIndex, sourceKey, vodId],
+  );
   const learnSkip = useCallback(
-    (from: number, to: number, total: number) => {
+    (from: number, to: number, total: number, opts?: { immediate?: boolean }) => {
+      if (pendingLearnRef.current) clearTimeout(pendingLearnRef.current);
+      pendingLearnRef.current = null;
       const hit = classifySkip(from, to, total);
       if (!hit) return;
-      if (hit.kind === 'intro' && !episodeSkip.remote.intro) {
-        const prev = learned?.intro;
-        updateLearned({ intro: hit.seg });
-        if (!prev) toast(`记住了这部的片头（${formatTime(hit.seg.start)}–${formatTime(hit.seg.end)}），之后每集会显示「跳过片头」`, 'success');
-      } else if (hit.kind === 'outro' && !episodeSkip.remote.outro) {
-        const prev = learned?.outro;
-        updateLearned({ outro: { fromEnd: hit.fromEnd, toEnd: hit.toEnd } });
-        if (!prev) toast('记住了这部的片尾位置，之后每集会显示「跳过片尾」', 'success');
+      const commit = () => {
+        if (hit.kind === 'intro' && !episodeSkip.remote.intro) {
+          const prev = learned?.intro;
+          updateLearned({ intro: hit.seg });
+          if (!prev) {
+            toast(
+              `记住了这部的片头（${formatTime(hit.seg.start)}–${formatTime(hit.seg.end)}），之后每集会显示「跳过片头」；不对可以在播放器下方点「重设」`,
+              'success',
+            );
+          }
+        } else if (hit.kind === 'outro' && !episodeSkip.remote.outro) {
+          const prev = learned?.outro;
+          updateLearned({ outro: { fromEnd: hit.fromEnd, toEnd: hit.toEnd } });
+          if (!prev) toast('记住了这部的片尾位置，之后每集会显示「跳过片尾」；不对可以点「重设」', 'success');
+        }
+      };
+      if (opts?.immediate) {
+        commit();
+        return;
       }
+      pendingLearnRef.current = setTimeout(() => {
+        pendingLearnRef.current = null;
+        const t = positionRef.current.time;
+        if (t >= to + 8 && t <= to + 45) commit();
+      }, 12_000);
     },
     [episodeSkip.remote, learned, updateLearned, toast],
   );
@@ -474,7 +504,7 @@ function WatchContent() {
                 onClick={() => {
                   // 在片尾附近点「下一集」：当成跳过片尾，记下片尾大概从哪开始
                   const { time, duration: total } = positionRef.current;
-                  learnSkip(time, total, total);
+                  learnSkip(time, total, total, { immediate: true });
                   goEpisode(currentIndex + 1);
                 }}
               >
@@ -488,39 +518,22 @@ function WatchContent() {
                     : `正在预热第 ${currentIndex + 2} 集…`}
                 </span>
               )}
-              {(episodeSkip.intro || episodeSkip.outro) && (
-                <span className="flex items-center gap-1.5 text-xs text-muted ml-auto">
-                  <label className="flex items-center gap-1.5 cursor-pointer" title="这部剧进入片头 / 片尾时自动跳过；关着时只显示按钮">
-                    <input
-                      type="checkbox"
-                      className="h-3.5 w-3.5 accent-[#2563eb]"
-                      checked={episodeSkip.auto}
-                      onChange={(e) => updateLearned({ auto: e.target.checked })}
-                    />
-                    自动跳过片头片尾
-                  </label>
-                  <span className="text-faint">
-                    （{episodeSkip.remote.intro || episodeSkip.remote.outro ? 'AniSkip' : '你跳过时记下的'}
-                    {learned?.intro || learned?.outro ? (
-                      <>
-                        {' · '}
-                        <button
-                          type="button"
-                          className="hover:text-content underline-offset-2 hover:underline"
-                          onClick={() => {
-                            updateLearned(null);
-                            toast('已清除这部剧记下的片头片尾', 'info');
-                          }}
-                        >
-                          重设
-                        </button>
-                      </>
-                    ) : null}
-                    ）
-                  </span>
-                </span>
+              {(episodeSkip.intro || episodeSkip.outro || learned?.ignoreRemote) && (
+                <SkipSettingsRow
+                  skip={episodeSkip}
+                  learned={learned}
+                  onAuto={(on) => updateLearned({ auto: on })}
+                  onDistrust={() => {
+                    updateLearned({ ignoreRemote: true });
+                    toast('这部剧不再用 AniSkip 的时间点；你自己跳过一次片头 / 片尾，之后就按你的来', 'info');
+                  }}
+                  onReset={() => {
+                    updateLearned(null);
+                    toast('已清除这部剧的片头片尾设置', 'info');
+                  }}
+                />
               )}
-              <label className={cn('flex items-center gap-1.5 text-xs text-muted cursor-pointer', !(episodeSkip.intro || episodeSkip.outro) && 'ml-auto')}>
+              <label className={cn('flex items-center gap-1.5 text-xs text-muted cursor-pointer', !(episodeSkip.intro || episodeSkip.outro || learned?.ignoreRemote) && 'ml-auto')}>
                 <input
                   type="checkbox"
                   className="h-3.5 w-3.5 accent-[#2563eb]"
@@ -589,6 +602,62 @@ function WatchContent() {
         />
       )}
     </div>
+  );
+}
+
+/** 播放器下方：这一集的片头片尾在哪、哪来的、自动跳过开关、不准 / 重设 */
+function SkipSettingsRow({
+  skip,
+  learned,
+  onAuto,
+  onDistrust,
+  onReset,
+}: {
+  skip: EpisodeSkip;
+  learned?: LearnedSkip;
+  onAuto: (on: boolean) => void;
+  onDistrust: () => void;
+  onReset: () => void;
+}) {
+  const seg = (s?: { start: number; end: number }) => (s ? `${formatTime(s.start)}–${formatTime(s.end)}` : '');
+  const fromRemote = skip.remote.intro || skip.remote.outro;
+  const parts = [skip.intro && `片头 ${seg(skip.intro)}`, skip.outro && `片尾 ${seg(skip.outro)}`].filter(Boolean);
+  const linkCls = 'hover:text-content underline-offset-2 hover:underline cursor-pointer';
+  return (
+    <span className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted ml-auto">
+      {(skip.intro || skip.outro) && (
+        <label className="flex items-center gap-1.5 cursor-pointer" title="这部剧进入片头 / 片尾时自动跳过；关着时只显示按钮">
+          <input
+            type="checkbox"
+            className="h-3.5 w-3.5 accent-[#2563eb]"
+            checked={skip.auto}
+            onChange={(e) => onAuto(e.target.checked)}
+          />
+          自动跳过片头片尾
+        </label>
+      )}
+      <span className="text-faint">
+        （{parts.length > 0 ? parts.join(' · ') : '片头片尾还没记下'}
+        {parts.length > 0 ? ` · ${fromRemote ? 'AniSkip' : '你跳过时记下的'}` : ''}
+        {fromRemote && (
+          <>
+            {' · '}
+            <button type="button" className={linkCls} onClick={onDistrust}>
+              不准
+            </button>
+          </>
+        )}
+        {learned && (learned.intro || learned.outro || learned.ignoreRemote || learned.auto) && (
+          <>
+            {' · '}
+            <button type="button" className={linkCls} onClick={onReset}>
+              重设
+            </button>
+          </>
+        )}
+        ）
+      </span>
+    </span>
   );
 }
 

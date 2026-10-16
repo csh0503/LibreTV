@@ -18,6 +18,8 @@ export interface LearnedSkip {
   outro?: { fromEnd: number; toEnd: number };
   /** 这部剧自动跳过 */
   auto?: boolean;
+  /** 你说 AniSkip 的时间点不准：这部剧不再用它，只用你自己跳过时记下的 */
+  ignoreRemote?: boolean;
   updatedAt: number;
 }
 
@@ -94,12 +96,13 @@ export function resolveEpisodeSkip(remote: SkipTimes | undefined, learned: Learn
     learned?.outro && duration > 0
       ? valid({ start: duration - learned.outro.fromEnd, end: duration - learned.outro.toEnd })
       : undefined;
-  const intro = valid(remote?.intro) ?? valid(learned?.intro);
-  const outro = valid(remote?.outro) ?? learnedOutro;
+  const r = learned?.ignoreRemote ? undefined : remote;
+  const intro = valid(r?.intro) ?? valid(learned?.intro);
+  const outro = valid(r?.outro) ?? learnedOutro;
   return {
     intro,
     outro,
     auto: Boolean(learned?.auto),
-    remote: { intro: Boolean(valid(remote?.intro)), outro: Boolean(valid(remote?.outro)) },
+    remote: { intro: Boolean(valid(r?.intro)), outro: Boolean(valid(r?.outro)) },
   };
 }

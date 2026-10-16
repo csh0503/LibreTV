@@ -30,7 +30,7 @@
 - **播放卡住自动换源**：`player-shell.tsx` 在三种情况把「这个源不行」交给父级（`onRequestSwitchSource(reason, position)`，每集一次）：hls 重试耗尽、开播后卡住 25 秒、换地址 35 秒还没开播（画面已加载只是被浏览器挡了自动播放的不算）。`use-auto-failover.ts` 用同一部（`failoverQueryTitle` 去掉片名后的年份）重新搜（多半命中缓存），`lib/failover.ts` 的 `pickFailoverCandidates` 在同一组里按片源排名挑，确认有这一集后跳过去接着播（位置回退 3 秒），试过的记在 URL `tried`，一集最多 5 个源；都不行显示「换了 N 个源都播不了」+ 手动换源 / 重试。
 - **详情弹窗默认用上次看的源**：看过的作品，选集区默认是上次那个源（`lastWatched`），不是推荐源。
 
-- **跳过片头片尾**：按「区间」记，不是「头尾几秒」（片头前的冷开场、片尾后的剧情照常播）。来源：① 动漫查 AniSkip（`/api/skip-times` → `lib/skip-times.ts`：Bangumi 用中文名找日文原名 → AniList 拿 MyAnimeList 编号 → AniSkip 每集区间；只用总时长差 ≤15 秒的提交，避免版本不同时间点偏）；② 你自己跳过时记下的（`lib/skip-marks.ts` 的 `classifySkip`：开头附近跳 40~200 秒算片头，最后 6 分钟跳 30 秒以上算片尾，片尾按离结尾的距离记；在片尾点「下一集」也会记；存这台设备 localStorage，每部剧一份）。播放器右下角显示「跳过片头 / 跳过片尾」，片尾一直到结尾时按钮是「下一集」；默认不自动跳，播放页勾「自动跳过片头片尾」才对这部剧自动跳（每集每段一次）。「重设」清掉记下的。注意：判断用户从哪跳要在 `seeking` 时记（Chromium 在 `seeked` 之前就用新位置触发 timeupdate）。AniSkip / Bangumi / AniList 在线上能不能连通还没确认（容器连不上）。
+- **跳过片头片尾**：按「区间」记，不是「头尾几秒」（片头前的冷开场、片尾后的剧情照常播）。来源：① 动漫查 AniSkip（`/api/skip-times` → `lib/skip-times.ts`：Bangumi 用中文名找日文原名 → AniList 拿 MyAnimeList 编号 → AniSkip 每集区间；只用总时长差 ≤15 秒的提交，避免版本不同时间点偏）；② 你自己跳过时记下的（`lib/skip-marks.ts` 的 `classifySkip`：开头附近跳 40~200 秒算片头，最后 6 分钟跳 30 秒以上算片尾，片尾按离结尾的距离记；在片尾点「下一集」也会记；存这台设备 localStorage，每部剧一份）。播放器右下角显示「跳过片头 / 跳过片尾」，片尾一直到结尾时按钮是「下一集」；默认不自动跳，播放页勾「自动跳过片头片尾」才对这部剧自动跳（每集每段一次）。「重设」清掉记下的。注意：判断用户从哪跳要在 `seeking` 时记（Chromium 在 `seeked` 之前就用新位置触发 timeupdate）。线上已确认能查到 AniSkip（药屋少女的呢喃第三季）。选季要严：AniList 原名完全一样，或主名一样且季数一样（`splitSeason`）才用，对不上就不给——以前退回第一条结果，第三季拿到了第一季的时间。学习要「跳过去后接着看 10 秒以上」才记（`pendingLearnRef`，12 秒后看位置），拖来拖去找位置不算；片尾点「下一集」立即记。播放器下方显示片头片尾的具体时间、来源，AniSkip 的可点「不准」（`ignoreRemote`，这部剧不再用 AniSkip），「重设」清掉这部剧的全部设置。
 
 ## 架构要点
 

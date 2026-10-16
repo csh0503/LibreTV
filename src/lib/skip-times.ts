@@ -49,12 +49,37 @@ interface AniListMedia {
   startDate?: { year?: number | null };
 }
 
+const JP_NUM: Record<string, number> = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 };
+const SEASON_RE =
+  /\s*(?:第\s*([0-9一二三四五六七八九十]+)\s*[期季部]|season\s*(\d+)|(\d+)(?:st|nd|rd|th)\s*season|part\s*(\d+)|\s([2-9])|([ⅡⅢⅣⅤ]))\s*$/i;
+const ROMAN: Record<string, number> = { Ⅱ: 2, Ⅲ: 3, Ⅳ: 4, Ⅴ: 5 };
+
+/** 片名里的第几季（没写就是第 1 季），和去掉季数后的主名 */
+export function splitSeason(name: string): { base: string; season: number } {
+  const m = name.trim().match(SEASON_RE);
+  if (!m) return { base: normalizeNative(name), season: 1 };
+  const raw = m[1] ?? m[2] ?? m[3] ?? m[4] ?? m[5];
+  const season = m[6] ? ROMAN[m[6]] : raw ? (JP_NUM[raw] ?? parseInt(raw, 10)) : 1;
+  return { base: normalizeNative(name.slice(0, m.index)), season: season || 1 };
+}
+
+/**
+ * AniList 搜索结果里挑这一季：日文原名完全一样最好；否则要「主名一样 + 第几季一样」。
+ * 都对不上就不给（以前会退回第一条结果，结果第三季拿到了第一季的片头时间）。
+ */
 export function pickAniListMedia(media: AniListMedia[], native: string, year?: string): AniListMedia | undefined {
   const withMal = media.filter((m) => m.idMal);
   const target = normalizeNative(native);
+  const preferYear = (pool: AniListMedia[]) => pool.find((m) => year && String(m.startDate?.year) === year) ?? pool[0];
   const exact = withMal.filter((m) => m.title?.native && normalizeNative(m.title.native) === target);
-  const pool = exact.length > 0 ? exact : withMal.slice(0, 1);
-  return pool.find((m) => year && String(m.startDate?.year) === year) ?? pool[0];
+  if (exact.length > 0) return preferYear(exact);
+  const want = splitSeason(native);
+  if (want.base.length < 2) return undefined;
+  const sameSeason = withMal.filter((m) => {
+    const got = splitSeason(m.title?.native ?? '');
+    return got.base === want.base && got.season === want.season;
+  });
+  return sameSeason.length > 0 ? preferYear(sameSeason) : undefined;
 }
 
 interface AniSkipResult {
@@ -86,7 +111,7 @@ export function pickSkipTimes(results: AniSkipResult[], length?: number): SkipTi
 
 /** 中文片名 → MyAnimeList 编号；查不到返回 null（缓存一天），暂时查不了返回 undefined */
 export async function resolveMalId(title: string, year?: string): Promise<number | null | undefined> {
-  const key = `skip:mal:${title}|${year ?? ''}`;
+  const key = `skip:mal:v2:${title}|${year ?? ''}`;
   const cached = getCache<number | null>(key);
   if (cached !== undefined) return cached;
   try {
