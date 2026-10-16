@@ -10,13 +10,12 @@ import type { SkipTimes } from '@/lib/skip-times';
 export type AudioSkipStatus = 'idle' | 'working' | 'done' | 'off';
 
 /** 开播后等一会儿再开始（先让播放器抢带宽起播） */
-const START_DELAY_MS = 4000;
+const START_DELAY_MS = 2000;
 
 /**
  * 在后台比对声音找片头片尾（不播放、不出声）：
- * - 片头：开播几秒后开始。有这部剧的模板就只拿本集开头比；没有就再取另一集（下一集，没有就上一集）开头比，
- *   一般在播到片头之前就算完。
- * - 片尾：播过一半才开始（中途不看了就不浪费流量），做法同上。
+ * - 开播 2 秒后先找片头、紧接着找片尾（一起做完，不等播到）。
+ * - 有这部剧的模板就只拿本集的开头 / 结尾比；没有就再取另一集（下一集，没有就上一集）的开头 / 结尾比。
  * need 为 false 的那段（已有你手动设的 / 数据库的准确值）不做。
  */
 export function useAudioSkip(opts: {
@@ -34,7 +33,7 @@ export function useAudioSkip(opts: {
   const url = opts.episodes[opts.index];
   const otherIndex = opts.index + 1 < opts.episodes.length ? opts.index + 1 : opts.index - 1;
   const otherUrl = otherIndex >= 0 ? opts.episodes[otherIndex] : undefined;
-  const { seriesKey, adFilter, ready, positionRef } = opts;
+  const { seriesKey, adFilter, ready } = opts;
   const needIntro = opts.need.intro;
   const needOutro = opts.need.outro;
 
@@ -84,15 +83,6 @@ export function useAudioSkip(opts: {
         if (intro.seg) setResult((r) => ({ ...r, intro: intro.seg }));
       }
       if (needOutro) {
-        // 播过一半才找片尾；等的时候不显示「正在比对」
-        setStatus('idle');
-        while (!signal.aborted) {
-          const { time, duration } = positionRef.current;
-          if (duration > 0 && time >= duration * 0.5) break;
-          await new Promise((r) => setTimeout(r, 10_000));
-        }
-        if (signal.aborted) return;
-        setStatus('working');
         const outro = await solve('outro');
         if (signal.aborted) return;
         if (outro.seg) setResult((r) => ({ ...r, outro: outro.seg }));
@@ -105,7 +95,7 @@ export function useAudioSkip(opts: {
       clearTimeout(timer);
       ctrl.abort();
     };
-  }, [url, otherUrl, seriesKey, adFilter, ready, needIntro, needOutro, positionRef]);
+  }, [url, otherUrl, seriesKey, adFilter, ready, needIntro, needOutro]);
 
   return { result, status };
 }

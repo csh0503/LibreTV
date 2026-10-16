@@ -205,9 +205,10 @@ function WatchContent() {
     index: currentIndex,
     adFilter: store.adFilter,
     ready: duration > 60 && !remoteSkip.isFetching && !source?.isAdult,
+    // 只填了片头长度（不知道从哪开始）不算已有：照样比对，找到准确位置就用它
     need: {
-      intro: !learned?.ignoreRemote && baseSkip.source.intro !== 'manual' && baseSkip.source.intro !== 'remote',
-      outro: !learned?.ignoreRemote && baseSkip.source.outro !== 'manual' && baseSkip.source.outro !== 'remote',
+      intro: !learned?.ignoreRemote && !(baseSkip.intro && (baseSkip.source.intro === 'manual' || baseSkip.source.intro === 'remote')),
+      outro: !learned?.ignoreRemote && !(baseSkip.outro && (baseSkip.source.outro === 'manual' || baseSkip.source.outro === 'remote')),
     },
     positionRef,
   });

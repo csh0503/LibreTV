@@ -1,5 +1,6 @@
 import {
   FP_HOP_SECONDS,
+  FP_RATE,
   TEMPLATE_SECONDS,
   decodeTemplate,
   encodeTemplate,
@@ -16,10 +17,11 @@ import type { SkipSegment } from './skip-times';
  * - 有模板之后：每集只取自己的开头 / 结尾跟模板比，不用再下载别的集。
  */
 
-/** 存起来的模板：曲子开头 30 秒的特征 + 整段多长 */
+/** 存起来的模板：曲子开头 30 秒的特征 + 整段多长；tail = 曲子最后 20 秒（用来逐集找准结束点） */
 export interface AudioTemplate {
   tpl: string;
   length: number;
+  tail?: string;
 }
 
 export interface AudioDetectResult {
@@ -28,10 +30,15 @@ export interface AudioDetectResult {
   template?: AudioTemplate;
 }
 
-const INTRO_WINDOWS = [240, 420];
-const OUTRO_WINDOWS = [360];
+/** 片头先看前 3 分钟（多数片头在这），找不到完整的再放大到 6 分钟 */
+const INTRO_WINDOWS = [180, 360];
+/** 片尾看最后 5 分钟 */
+const OUTRO_WINDOW = 300;
 const INTRO_SECONDS = { min: 25, max: 200 };
 const OUTRO_SECONDS = { min: 25, max: 240 };
+const TAIL_SECONDS = 20;
+/** 用尾段模板找结束点时，在「开头 + 长度」前后多远内找 */
+const TAIL_SEARCH_SECONDS = 45;
 
 const cat = (a: Float32Array, b: Float32Array) => {
   const out = new Float32Array(a.length + b.length);
@@ -40,7 +47,15 @@ const cat = (a: Float32Array, b: Float32Array) => {
   return out;
 };
 
-/** 两集比对：在 [from, to) 窗口里逐步放大，直到找到完整（不贴着窗口边）的共有段 */
+function makeTemplate(fp: Float32Array, start: number, seconds: number): AudioTemplate {
+  return {
+    tpl: encodeTemplate(fp, start, Math.min(TEMPLATE_SECONDS, seconds)),
+    length: round1(seconds),
+    ...(seconds >= TEMPLATE_SECONDS + 10 ? { tail: encodeTemplate(fp, start + seconds - TAIL_SECONDS, TAIL_SECONDS) } : {}),
+  };
+}
+
+/** 两集比对：窗口从小到大，只补新的那一段（不重复下载），两集同时取；直到找到完整（不贴着窗口边）的共有段 */
 async function compareEpisodes(
   current: HlsSegment[],
   other: HlsSegment[],
@@ -56,9 +71,12 @@ async function compareEpisodes(
   let aTo = windows[0]?.from ?? 0;
   let bTo = windows[0]?.otherFrom ?? 0;
   for (const w of windows) {
-    // 只补新的那一段，不重复下载
-    a = cat(a, await extractAudio(current, aTo, w.to, deps, signal));
-    b = cat(b, await extractAudio(other, bTo, w.otherTo, deps, signal));
+    const [moreA, moreB] = await Promise.all([
+      extractAudio(current, aTo, w.to, deps, signal),
+      extractAudio(other, bTo, w.otherTo, deps, signal),
+    ]);
+    a = cat(a, moreA);
+    b = cat(b, moreB);
     aTo = w.to;
     bTo = w.otherTo;
     if (signal?.aborted) return {};
@@ -67,18 +85,21 @@ async function compareEpisodes(
     const m = await findCommonSegmentAsync(fa, fb, { minSeconds: limits.min }, signal);
     if (!m || m.seconds > limits.max) continue;
     // 贴着窗口末尾：可能还没完，放大窗口再找
-    const span = (w.to - w.from) - 3;
-    if (!endIsFine && (m.aStart + m.seconds >= span || m.bStart + m.seconds >= w.otherTo - w.otherFrom - 3)) continue;
+    const touches = m.aStart + m.seconds >= w.to - w.from - 3 || m.bStart + m.seconds >= w.otherTo - w.otherFrom - 3;
+    if (!endIsFine && touches) continue;
     const start = w.from + m.aStart;
     return {
       seg: { start: round1(start), end: round1(start + m.seconds), via: 'audio' },
-      template: { tpl: encodeTemplate(fa, m.aStart, Math.min(TEMPLATE_SECONDS, m.seconds)), length: m.seconds },
+      template: makeTemplate(fa, m.aStart, m.seconds),
     };
   }
   return {};
 }
 
-/** 用模板在 [from, to) 里找曲子从哪开始 */
+/**
+ * 用模板在 [from, to) 里找：开头模板定起点；有尾段模板就在「起点 + 长度」前后找尾段定终点
+ * （这集的片头比第一次那集长一点短一点也对得上），没有才按「起点 + 长度」。
+ */
 async function matchTemplate(
   current: HlsSegment[],
   template: AudioTemplate,
@@ -87,15 +108,31 @@ async function matchTemplate(
   deps: HlsAudioDeps,
   signal?: AbortSignal,
 ): Promise<AudioDetectResult> {
-  const tpl = decodeTemplate(template.tpl);
-  const tplSeconds = (tpl.length / 16) * FP_HOP_SECONDS;
-  const pcm = await extractAudio(current, from, to, deps, signal);
+  const head = decodeTemplate(template.tpl);
+  const headSeconds = (head.length / 16) * FP_HOP_SECONDS;
+  let pcm = await extractAudio(current, from, to, deps, signal);
   if (signal?.aborted) return {};
-  const m = await findCommonSegmentAsync(tpl, fingerprint(pcm), { minSeconds: Math.min(15, tplSeconds * 0.6) }, signal);
+  const m = await findCommonSegmentAsync(head, fingerprint(pcm), { minSeconds: Math.min(15, headSeconds * 0.6) }, signal);
   // 要从模板开头附近就对上（不然可能只是对上了曲子中间某段）
   if (!m || m.aStart > 5) return {};
   const start = from + m.bStart - m.aStart;
-  return { seg: { start: round1(start), end: round1(start + template.length), via: 'audio' } };
+  let end = start + template.length;
+  if (template.tail) {
+    const total = playlistDuration(current);
+    const winFrom = Math.max(start, end - TAIL_SEARCH_SECONDS);
+    const winTo = Math.min(total, end + TAIL_SEARCH_SECONDS);
+    if (winTo > to) {
+      pcm = cat(pcm, await extractAudio(current, to, winTo, deps, signal));
+      to = winTo;
+    }
+    if (signal?.aborted) return {};
+    const lo = Math.max(0, Math.round((winFrom - from) * FP_RATE));
+    const hi = Math.min(pcm.length, Math.round((winTo - from) * FP_RATE));
+    const tail = decodeTemplate(template.tail);
+    const t = await findCommonSegmentAsync(tail, fingerprint(pcm.subarray(lo, hi)), { minSeconds: 10 }, signal);
+    if (t) end = winFrom + t.bStart - t.aStart + TAIL_SECONDS;
+  }
+  return { seg: { start: round1(start), end: round1(end), via: 'audio' } };
 }
 
 export async function detectIntro(opts: {
@@ -108,14 +145,14 @@ export async function detectIntro(opts: {
   const total = playlistDuration(opts.current);
   const limit = Math.min(600, total * 0.4);
   if (opts.template) {
-    // 先看前 4 分钟（片头多半在这），没有再往后找
-    const first = await matchTemplate(opts.current, opts.template, 0, Math.min(240, limit), opts.deps, opts.signal);
-    if (first.seg || limit <= 240) return first;
-    return matchTemplate(opts.current, opts.template, 200, limit, opts.deps, opts.signal);
+    // 先看前 3 分钟（片头多半在这），没有再往后找
+    const first = await matchTemplate(opts.current, opts.template, 0, Math.min(INTRO_WINDOWS[0], limit), opts.deps, opts.signal);
+    if (first.seg || limit <= INTRO_WINDOWS[0]) return first;
+    return matchTemplate(opts.current, opts.template, INTRO_WINDOWS[0] - 40, limit, opts.deps, opts.signal);
   }
   if (!opts.other) return {};
   const otherTotal = playlistDuration(opts.other);
-  const windows = INTRO_WINDOWS.filter((w) => w <= Math.max(limit, INTRO_WINDOWS[0])).map((w) => ({
+  const windows = INTRO_WINDOWS.filter((w, i) => i === 0 || w <= Math.max(limit, INTRO_WINDOWS[0])).map((w) => ({
     from: 0,
     to: Math.min(w, total),
     otherFrom: 0,
@@ -132,26 +169,27 @@ export async function detectOutro(opts: {
   signal?: AbortSignal;
 }): Promise<AudioDetectResult> {
   const total = playlistDuration(opts.current);
-  const window = OUTRO_WINDOWS[0];
-  if (opts.template) {
-    const r = await matchTemplate(opts.current, opts.template, Math.max(0, total - window - 120), total, opts.deps, opts.signal);
+  const snap = (r: AudioDetectResult) => {
+    // 片尾一直到结尾附近：当作到结尾（「下一集」按钮）
     if (r.seg) r.seg.end = total - r.seg.end <= 3 ? round1(total) : Math.min(r.seg.end, round1(total));
     return r;
+  };
+  if (opts.template) {
+    return snap(await matchTemplate(opts.current, opts.template, Math.max(0, total - OUTRO_WINDOW - 120), total, opts.deps, opts.signal));
   }
   if (!opts.other) return {};
   const otherTotal = playlistDuration(opts.other);
-  const r = await compareEpisodes(
-    opts.current,
-    opts.other,
-    [{ from: Math.max(0, total - window), to: total, otherFrom: Math.max(0, otherTotal - window), otherTo: otherTotal }],
-    OUTRO_SECONDS,
-    opts.deps,
-    opts.signal,
-    true,
+  return snap(
+    await compareEpisodes(
+      opts.current,
+      opts.other,
+      [{ from: Math.max(0, total - OUTRO_WINDOW), to: total, otherFrom: Math.max(0, otherTotal - OUTRO_WINDOW), otherTo: otherTotal }],
+      OUTRO_SECONDS,
+      opts.deps,
+      opts.signal,
+      true,
+    ),
   );
-  // 片尾一直到结尾附近：当作到结尾（「下一集」按钮）
-  if (r.seg && total - r.seg.end <= 3) r.seg.end = round1(total);
-  return r;
 }
 
 const round1 = (n: number) => Math.round(n * 10) / 10;

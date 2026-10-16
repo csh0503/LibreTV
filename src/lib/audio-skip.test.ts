@@ -15,6 +15,20 @@ describe('findCommonSegment：两集共有的那段音乐', () => {
     expect(Math.abs(m.seconds - 90)).toBeLessThan(1.5);
   });
 
+  it('片头曲最后渐弱、再静音一下：结束点要算到尾音和静音之后（不提前结束）', () => {
+    const body = music(87, 31);
+    const tail = music(3, 32).map((v, i, arr) => v * (1 - i / arr.length));
+    const op = concat(body, tail, new Float32Array(Math.round(0.8 * FP_RATE)));
+    const a = concat(speech(40, 33), op, speech(60, 34));
+    const b = scaleWithNoise(concat(speech(20, 35), op, speech(60, 36)), 0.8, 37);
+    const m = findCommonSegment(fingerprint(a), fingerprint(b))!;
+    expect(Math.abs(m.aStart - 40)).toBeLessThan(0.5);
+    expect(Math.abs(m.bStart - 20)).toBeLessThan(0.5);
+    // 真正的结束点：40 + 90.8 = 130.8
+    expect(m.aStart + m.seconds).toBeGreaterThan(130.2);
+    expect(m.aStart + m.seconds).toBeLessThan(131.6);
+  });
+
   it('没有共同的音乐时不报', () => {
     expect(findCommonSegment(fingerprint(concat(speech(60, 11), music(40, 12))), fingerprint(concat(speech(50, 13), music(40, 14))))).toBeNull();
   });
@@ -88,6 +102,26 @@ describe('detectIntro / detectOutro：从 HLS 片源里取音频比对', () => {
     const outro2 = await detectOutro({ current: e2, template: outro.template, deps });
     expect(Math.abs(outro2.seg!.start - 645)).toBeLessThan(1);
     expect(Math.abs(outro2.seg!.end - 725)).toBeLessThan(1); // 一直到结尾
+  }, 60_000);
+
+  it('有尾段模板：这集片头比第一次那集长 5 秒，结束点照样对得上', async () => {
+    const op = music(90, 41);
+    const longer = concat(op.subarray(0, 50 * FP_RATE), music(5, 42), op.subarray(50 * FP_RATE));
+    const ep1 = concat(speech(30, 43), op, speech(300, 44));
+    const ep2 = concat(speech(50, 45), op, speech(300, 46));
+    const ep3 = concat(speech(40, 47), longer, speech(300, 48));
+    const files = new Map([...(await makeEpisode('t1', ep1)), ...(await makeEpisode('t2', ep2)), ...(await makeEpisode('t3', ep3))]);
+    const deps: HlsAudioDeps = {
+      fetchText: async (url) => ({ text: new TextDecoder().decode(files.get(url)!), url }),
+      fetchBytes: async (url) => files.get(url)!,
+      decode: async (data) => new Float32Array(data.slice().buffer),
+    };
+    const [t1, t2, t3] = await Promise.all(['t1', 't2', 't3'].map((n) => loadSegments(`https://cdn.test/${n}/index.m3u8`, false, deps)));
+    const first = await detectIntro({ current: t1!, other: t2!, deps });
+    expect(first.template?.tail).toBeDefined();
+    const third = await detectIntro({ current: t3!, template: first.template, deps });
+    expect(Math.abs(third.seg!.start - 40)).toBeLessThan(1);
+    expect(Math.abs(third.seg!.end - 135)).toBeLessThan(1);
   }, 60_000);
 
   it('fMP4 和不认识的加密方式不处理', () => {

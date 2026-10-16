@@ -14,8 +14,8 @@ export const FP_HOP_SECONDS = HOP / FP_RATE;
 export const FP_DIMS = 16;
 const BAND_LOW = 250;
 const BAND_HIGH = 4000;
-/** 能量太小（静音）的帧不参与比较 */
-const SILENCE = 1e-7;
+/** 音量低于约 -40 dB 的帧当静音（不参与比较；两边都静音时精修边界算「还在同一段」） */
+const SILENCE_RMS = 0.0085;
 
 /** 原地复数 FFT（基 2） */
 function fft(re: Float64Array, im: Float64Array): void {
@@ -81,19 +81,19 @@ export function fingerprint(pcm: Float32Array): Float32Array {
   const band = new Float64Array(FP_DIMS);
   for (let f = 0; f < frames; f++) {
     const off = f * HOP;
+    let power = 0;
     for (let i = 0; i < WIN; i++) {
       re[i] = pcm[off + i] * HANN[i];
       im[i] = 0;
+      power += pcm[off + i] * pcm[off + i];
     }
+    if (Math.sqrt(power / WIN) < SILENCE_RMS) continue;
     fft(re, im);
-    let total = 0;
     for (let b = 0; b < FP_DIMS; b++) {
       let e = 0;
       for (let k = BAND_EDGES[b]; k < Math.max(BAND_EDGES[b] + 1, BAND_EDGES[b + 1]); k++) e += re[k] * re[k] + im[k] * im[k];
       band[b] = e;
-      total += e;
     }
-    if (total / WIN < SILENCE) continue;
     let mean = 0;
     for (let b = 0; b < FP_DIMS; b++) {
       band[b] = Math.log(band[b] + 1e-12);
@@ -195,14 +195,101 @@ function scanOffsets(a: Float32Array, b: Float32Array, dFrom: number, dTo: numbe
   return best;
 }
 
-function toSegment(best: Best, p: ScanParams): CommonSegment | null {
-  if (!best) return null;
-  // 滑动平均让开头晚半个窗口：往前补回
+function isSilent(fp: Float32Array, i: number): boolean {
+  let e = 0;
+  for (let d = 0; d < FP_DIMS; d++) e += fp[i * FP_DIMS + d] * fp[i * FP_DIMS + d];
+  return e < 1e-6;
+}
+
+/** 边界最多往外延伸多少秒 */
+const REFINE_MAX_SECONDS = 10;
+/** 连续这么久不像才算真的结束 */
+const REFINE_MISS_SECONDS = 1.2;
+
+/**
+ * 这两段音频里「不相干的两帧」一般有多像：随机抽帧对算均值和标准差，
+ * 精修门槛取均值 + 2.5 个标准差（夹在 0.7~0.92）。对白之间、配乐之间本来就有几分像，固定门槛会把边界拉过头。
+ */
+function unrelatedThreshold(a: Float32Array, b: Float32Array): number {
+  const na = frameCount(a);
+  const nb = frameCount(b);
+  let seed = 12345;
+  const rand = (n: number) => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) % n);
+  let sum = 0;
+  let sq = 0;
+  let n = 0;
+  for (let k = 0; k < 2000 && na > 0 && nb > 0; k++) {
+    const i = rand(na);
+    const j = rand(nb);
+    if (isSilent(a, i) || isSilent(b, j)) continue;
+    const v = similarity(a, i, b, j);
+    sum += v;
+    sq += v * v;
+    n += 1;
+  }
+  if (n < 50) return 0.8;
+  const mean = sum / n;
+  const std = Math.sqrt(Math.max(0, sq / n - mean * mean));
+  return Math.min(0.92, Math.max(0.7, mean + 2.5 * std));
+}
+
+/**
+ * 粗找出来的段边界不够准：1 秒滑动平均让两端都拖后半秒，片头曲最后的渐弱尾音、
+ * 收尾的短暂静音又会被当成「不像」，结果片头还没放完就判结束了。
+ * 这里沿同一个偏移量逐帧往外延伸：0.3 秒小平滑后仍明显比「不相干」更像，或两边都静音，就继续；
+ * 连续 1.2 秒不像才停，再把两端不像的帧收回来。
+ */
+function refine(a: Float32Array, b: Float32Array, best: NonNullable<Best>, p: ScanParams): { ai: number; bj: number; len: number } {
+  const na = frameCount(a);
+  const nb = frameCount(b);
+  const d = best.bj - best.ai;
+  const threshold = unrelatedThreshold(a, b);
+  const inRange = (i: number) => i >= 0 && i < na && i + d >= 0 && i + d < nb;
+  const frameScore = (i: number) => (isSilent(a, i) && isSilent(b, i + d) ? 1 : similarity(a, i, b, i + d));
+  const match = (i: number) => {
+    if (!inRange(i)) return false;
+    let total = 0;
+    let n = 0;
+    for (let k = i - 1; k <= i + 1; k++) {
+      if (!inRange(k)) continue;
+      total += frameScore(k);
+      n += 1;
+    }
+    return total / n >= threshold;
+  };
   const shift = Math.floor(p.smooth / 2);
+  let s = Math.max(0, best.ai - shift);
+  let e = Math.min(na - 1, best.ai + best.len - 1 - shift);
+  const maxExtend = Math.round(REFINE_MAX_SECONDS / FP_HOP_SECONDS);
+  const maxMiss = Math.round(REFINE_MISS_SECONDS / FP_HOP_SECONDS);
+  const extend = (from: number, dir: 1 | -1) => {
+    let edge = from;
+    let miss = 0;
+    for (let step = 1; step <= maxExtend; step++) {
+      const i = from + dir * step;
+      if (i < 0 || i >= na || i + d < 0 || i + d >= nb) break;
+      if (match(i)) {
+        edge = i;
+        miss = 0;
+      } else if (++miss > maxMiss) break;
+    }
+    return edge;
+  };
+  s = extend(s, -1);
+  e = extend(e, 1);
+  while (s < e && !match(s)) s++;
+  while (e > s && !match(e)) e--;
+  return { ai: s, bj: s + d, len: e - s + 1 };
+}
+
+function toSegment(best: Best, p: ScanParams, a: Float32Array, b: Float32Array): CommonSegment | null {
+  if (!best) return null;
+  const r = refine(a, b, best, p);
   return {
-    aStart: round1(Math.max(0, best.ai - shift) * FP_HOP_SECONDS),
-    bStart: round1(Math.max(0, best.bj - shift) * FP_HOP_SECONDS),
-    seconds: round1(best.len * FP_HOP_SECONDS),
+    aStart: round1(r.ai * FP_HOP_SECONDS),
+    bStart: round1(r.bj * FP_HOP_SECONDS),
+    // 帧有长度：最后一帧覆盖到它开始后的一个窗口，按帧间隔算再补半帧
+    seconds: round1((r.len + 0.5) * FP_HOP_SECONDS),
     score: Math.round(best.score * 100) / 100,
   };
 }
@@ -214,7 +301,7 @@ function toSegment(best: Best, p: ScanParams): CommonSegment | null {
 export function findCommonSegment(a: Float32Array, b: Float32Array, opts: MatchOptions = {}): CommonSegment | null {
   const p = scanParams(opts);
   const sims = new Float32Array(Math.min(frameCount(a), frameCount(b)));
-  return toSegment(scanOffsets(a, b, -(frameCount(a) - 1), frameCount(b) - 1, p, null, sims), p);
+  return toSegment(scanOffsets(a, b, -(frameCount(a) - 1), frameCount(b) - 1, p, null, sims), p, a, b);
 }
 
 /** 同上，但分批算、每批之间让出主线程（手机上算一两秒也不卡界面）；signal 中止时返回 null */
@@ -234,7 +321,7 @@ export async function findCommonSegmentAsync(
     best = scanOffsets(a, b, d, Math.min(to, d + 149), p, best, sims);
     await new Promise((r) => setTimeout(r, 0));
   }
-  return toSegment(best, p);
+  return toSegment(best, p, a, b);
 }
 
 function pickBetter(

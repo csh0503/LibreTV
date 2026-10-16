@@ -107,9 +107,8 @@ export async function extractAudio(
   const total = Math.max(0, Math.round((to - from) * FP_RATE));
   const out = new Float32Array(total);
   const keys = new Map<string, Promise<Uint8Array>>();
-  for (const seg of segments) {
-    if (signal?.aborted) break;
-    if (seg.start + seg.duration <= from || seg.start >= to) continue;
+  const wanted = segments.filter((seg) => seg.start + seg.duration > from && seg.start < to);
+  const one = async (seg: HlsSegment) => {
     try {
       let data = await deps.fetchBytes(seg.uri, signal);
       if (seg.key) {
@@ -117,7 +116,7 @@ export async function extractAudio(
         data = await decrypt(data, await keys.get(seg.key.uri)!, seg.key.iv);
       }
       const audio = demuxTsAudio(data);
-      if (!audio) continue;
+      if (!audio) return;
       const pcm = await deps.decode(audio.data, audio.codec);
       const segLen = Math.round(seg.duration * FP_RATE);
       // 分片在输出里的位置；分片开头早于 from 时跳过前面那部分
@@ -126,12 +125,20 @@ export async function extractAudio(
       const count = Math.min(pcm.length, segLen) - skip;
       if (count > 0) out.set(pcm.subarray(skip, skip + Math.min(count, total - Math.max(0, dst))), Math.max(0, dst));
     } catch {
-      if (signal?.aborted) break;
       // 这个分片拿不到：留静音，比对时自然不算
     }
-  }
+  };
+  // 同时取几个分片（串行一个个等太慢）
+  let next = 0;
+  const worker = async () => {
+    while (next < wanted.length && !signal?.aborted) await one(wanted[next++]);
+  };
+  await Promise.all(Array.from({ length: Math.min(EXTRACT_CONCURRENCY, wanted.length) }, worker));
   return out;
 }
+
+/** 同时下载 / 解码几个分片 */
+const EXTRACT_CONCURRENCY = 6;
 
 export function playlistDuration(segments: HlsSegment[]): number {
   const last = segments[segments.length - 1];
