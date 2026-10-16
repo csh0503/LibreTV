@@ -225,14 +225,23 @@ const TRAILING_SEASON = /第[一二三四五六七八九十百]+[季部篇期]$/
  * 解说类不算。只用来决定要不要提示「暂无片源」，宁可漏判也不误报。
  */
 export function hasTitleMatch(groups: AggregatedGroup[], title: string): boolean {
+  if (!buildGroupTitleKey(title, title, false)) return groups.length > 0;
+  return groups.some(groupMatcher(title));
+}
+
+/** 只留这部作品本身（含各季）的分组，供作品详情弹窗列片源 */
+export function matchingGroups(groups: AggregatedGroup[], title: string): AggregatedGroup[] {
+  return groups.filter(groupMatcher(title));
+}
+
+function groupMatcher(title: string): (g: AggregatedGroup) => boolean {
   const key = buildGroupTitleKey(title, title, false);
-  if (!key) return groups.length > 0;
   const base = key.replace(TRAILING_SEASON, '');
-  return groups.some((g) => {
-    if (g.items.every(isCommentaryItem)) return false;
+  return (g) => {
+    if (!key || g.items.every(isCommentaryItem)) return false;
     const k = buildGroupTitleKey(g.name, title, false);
     return k === key || (base.length >= 2 && k.startsWith(base));
-  });
+  };
 }
 
 /**

@@ -5,6 +5,7 @@ import {
   aggregateResults,
   extractCoreSearchStem,
   hasTitleMatch,
+  matchingGroups,
   replaceAliasInTitle,
   titleMatchesQuery,
 } from './title-aliases';
@@ -62,5 +63,13 @@ describe('hasTitleMatch：搜索结果里有没有这部作品本身', () => {
     expect(hasTitleMatch(groupsOf(['余年有你'], '庆余年'), '庆余年')).toBe(false);
     expect(hasTitleMatch(aggregateResults([row('庆余年', '影视解说')], '庆余年'), '庆余年')).toBe(false);
     expect(hasTitleMatch([], '庆余年')).toBe(false);
+  });
+});
+
+describe('matchingGroups', () => {
+  it('只留这部作品的各季，去掉名字沾边的别的片', () => {
+    const row = (name: string) => ({ vodId: name, name, typeName: '剧集', sourceKey: 's1', sourceName: '源一' });
+    const groups = aggregateResults(['庆余年', '庆余年第二季', '余年有你'].map(row), '庆余年');
+    expect(matchingGroups(groups, '庆余年').map((g) => g.name).sort()).toEqual(['庆余年', '庆余年第二季']);
   });
 });

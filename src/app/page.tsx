@@ -2,7 +2,6 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useQuery } from '@tanstack/react-query';
 import { Header } from '@/components/header';
 import { RecommendSection } from '@/components/douban-section';
 import { ForYouRows } from '@/components/for-you';
@@ -16,15 +15,16 @@ import {
   UpcomingRow,
 } from '@/components/home-rows';
 import { DetailModal } from '@/components/detail-modal';
+import { TitleModal } from '@/components/title-modal';
 import { AggregatedCard, aggregateResults } from '@/components/video-card';
-import { useAppStore, resolveSource, isInDisabledSubscription, isSourceDisabled } from '@/lib/store';
+import { useAppStore, isInDisabledSubscription, isSourceDisabled } from '@/lib/store';
 import { sourceIsAdult } from '@/lib/adult-sources';
 import { useLoadMore } from '@/components/use-load-more';
-import { api } from '@/lib/client-api';
-import type { SearchResultItem, SourceSearchOutcome, TitlePick } from '@/lib/types';
+import { useSourceSearch } from '@/components/use-source-search';
+import type { SearchResultItem, TitlePick } from '@/lib/types';
 import { hasTitleMatch } from '@/lib/title-aliases';
 import { SearchHistoryDropdown, useSearchHistory } from '@/components/search-history';
-import { cn, formatDisableTtl, validateSourceUrl } from '@/lib/utils';
+import { cn } from '@/lib/utils';
 import { useToast } from '@/components/toast';
 import { EmptyState } from '@/components/states';
 import { NoSourceNotice } from '@/components/no-source';
@@ -67,13 +67,13 @@ function HomeContent() {
   const subscriptions = useAppStore((s) => s.subscriptions);
   const [input, setInput] = useState(urlQuery);
   const [detailItem, setDetailItem] = useState<SearchResultItem | null>(null);
+  /** 作品详情弹窗（Netflix 式「更多信息」）当前展示的作品 */
+  const [titlePick, setTitlePick] = useState<TitlePick | null>(null);
   /** 「浏览全部」筛选墙默认收起，首页以 Netflix 式的行为主 */
   const [browseAll, setBrowseAll] = useState(false);
   /** 从货架末尾点「浏览全部」时落在哪个频道；每点一次 nonce +1，用来重建筛选区并滚过去 */
   const [browseTarget, setBrowseTarget] = useState<{ channel: ShelfChannel; nonce: number }>({ channel: 'anime', nonce: 0 });
   const browseRef = useRef<HTMLElement>(null);
-  /** 流式搜索中已结算的源（data 就绪前用于增量渲染） */
-  const [streamedOutcomes, setStreamedOutcomes] = useState<SourceSearchOutcome[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // URL 驱动搜索：?s= 变化时回填输入框
@@ -81,35 +81,13 @@ function HomeContent() {
     if (urlQuery) setInput(urlQuery);
   }, [urlQuery]);
 
-  // 源名回显：失败/停用提示里显示友好名称而非裸 key
-  const sourceName = (key: string) =>
-    customAPIs.find((a) => a.key === key)?.name ??
-    envSources.find((a) => a.key === key)?.name ??
-    key;
-
   const adultSourceCount = useMemo(
     () => [...customAPIs, ...envSources].filter((s) => sourceIsAdult(s)).length,
     [customAPIs, envSources]
   );
 
-  const selectedSources = useMemo(() => {
-    // selectedKeys 可能含历史残留的重复 key：按 key 去重，避免同源重复搜索
-    const seen = new Set<string>();
-    return selectedKeys
-      .map((key) => resolveSource({ customAPIs, envSources }, key))
-      .filter((s): s is NonNullable<typeof s> => {
-        if (!s || !validateSourceUrl(s.url) || seen.has(s.key)) return false;
-        seen.add(s.key);
-        // 成人内容过滤开启时，成人源（含这 8 个已知地址）不参与搜索
-        if (yellowFilter && sourceIsAdult(s)) return false;
-        return true;
-      })
-      .map((s) => (sourceIsAdult(s) ? { ...s, isAdult: true } : s))
-      // 自动停用期内的源不参与搜索（到期自动恢复）
-      .filter((s) => !isSourceDisabled({ sourceHealth }, s.key))
-      // 所属订阅被整体停用的源同样跳过（无损：各源勾选状态保留，重新启用即恢复）
-      .filter((s) => !isInDisabledSubscription({ subscriptions }, s.key));
-  }, [customAPIs, envSources, selectedKeys, sourceHealth, subscriptions, yellowFilter]);
+  const { searchQuery, selectedSources, streamedOutcomes, isSearching, settled: searchSettled, list, failures, sourceName } =
+    useSourceSearch(urlQuery);
   const disabledSources = useMemo(
     () => selectedKeys.filter((key) => isSourceDisabled({ sourceHealth }, key)),
     [selectedKeys, sourceHealth]
@@ -123,31 +101,6 @@ function HomeContent() {
     [selectedKeys, sourceHealth, subscriptions]
   );
 
-  const searchQuery = useQuery({
-    queryKey: ['search', urlQuery, selectedKeys, yellowFilter],
-    // 与 runSearch 的截断规则保持一致：顶栏搜索 / 手动构造长链接不会绕过上限
-    queryFn: ({ signal }) => {
-      setStreamedOutcomes([]);
-      return api.search(urlQuery.slice(0, 100), selectedSources, yellowFilter, {
-        signal,
-        // 逐源结算即更新：结果边搜边渲染，同时滚动健康度
-        onSource: (outcome) => {
-          setStreamedOutcomes((prev) => [...prev, outcome]);
-          for (const ev of useAppStore.getState().recordSourceHealth([outcome])) {
-            toast(
-              ev.permanent
-                ? `「${sourceName(ev.key)}」多次失败，已停止参与搜索，可在设置中恢复`
-                : `「${sourceName(ev.key)}」连续超时/失败，已停用 ${formatDisableTtl(ev.ttlMs ?? 0)}`,
-              'warning'
-            );
-          }
-        },
-      });
-    },
-    enabled: Boolean(urlQuery) && selectedSources.length > 0,
-    // 5 分钟内从播放页返回时直接使用缓存，不重新搜索（服务端另有 60s 结果缓存兜底）
-    staleTime: 300_000,
-  });
 
   // 最近搜索改为搜索框下拉（聚焦展开、按输入过滤），不再常驻首屏
   const searchHistory = useSearchHistory(input);
@@ -167,9 +120,18 @@ function HomeContent() {
     searchHistory.record(query);
   };
 
-  /** 首页各行的卡片点开：记下元数据后搜索，搜不到时据此展示「暂无片源」 */
+  /** 首页各行的卡片点开：先打开作品详情弹窗（弹窗里查片源）；元数据也记下来，去搜索结果页时「暂无片源」卡要用 */
   const pickTitle = (title: string, pick?: TitlePick) => {
-    if (pick) pickedTitles.set(title.trim().slice(0, 100), { ...pick, title });
+    const full = { ...pick, title };
+    pickedTitles.set(title.trim().slice(0, 100), full);
+    setTitlePick(full);
+  };
+
+  const closeTitleModal = useCallback(() => setTitlePick(null), []);
+
+  /** 弹窗里点「全部搜索结果」：关弹窗，走原来的搜索结果页 */
+  const showResults = (title: string) => {
+    setTitlePick(null);
     setInput(title);
     runSearch(title);
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -189,26 +151,10 @@ function HomeContent() {
     runSearch(text);
   };
 
-  const isSearching = Boolean(urlQuery) && searchQuery.isFetching && !searchQuery.data;
-  // 聚合数据未就绪时，用已结算源的结果增量渲染（健康源不再等坏源超时）
-  const streamedList = useMemo(
-    () => streamedOutcomes.flatMap((o) => o.list),
-    [streamedOutcomes]
-  );
-  const list = useMemo(
-    () => searchQuery.data?.list ?? (isSearching ? streamedList : []),
-    [searchQuery.data, isSearching, streamedList]
-  );
-  const failures =
-    searchQuery.data?.failures ??
-    streamedOutcomes
-      .filter((o) => !o.ok)
-      .map((o) => ({ sourceKey: o.sourceKey, error: o.error || '请求失败', timedOut: o.timedOut }));
   // 跨源同名聚合：同名影片合并为一张卡片，展开后可选择具体来源
   const groups = useMemo(() => aggregateResults(list, urlQuery), [list, urlQuery]);
   // 从首页卡片点进来、全部源都结算了还没有这部作品本身 → 「暂无片源」
   const picked = pickedTitles.get(urlQuery);
-  const searchSettled = Boolean(searchQuery.data) && !searchQuery.isFetching;
   const pickMissing = Boolean(picked) && searchSettled && !hasTitleMatch(groups, urlQuery);
 
   // 分批渲染：新一次搜索（groups 变化）时重置回首批
@@ -512,6 +458,15 @@ function HomeContent() {
 
       <SiteFooter />
 
+      <TitleModal
+        pick={titlePick}
+        onClose={closeTitleModal}
+        onOpenSource={(item) => {
+          setTitlePick(null);
+          setDetailItem(item);
+        }}
+        onShowResults={showResults}
+      />
       <DetailModal item={detailItem} onClose={() => setDetailItem(null)} />
     </div>
   );
