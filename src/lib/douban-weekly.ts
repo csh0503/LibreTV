@@ -139,6 +139,26 @@ export interface BiliRankItemRaw {
   stat?: { view?: number; follow?: number };
 }
 
+export const DEFAULT_TMDB_API_KEY = 'fd39301e13dd749a3d953f180444b3f3';
+
+export function getTmdbApiKey(): string {
+  return (process.env.TMDB_API_KEY || process.env.NEXT_PUBLIC_TMDB_API_KEY || DEFAULT_TMDB_API_KEY).trim();
+}
+
+export const TMDB_ID_TO_GENRE: Record<number, string> = {
+  28: '动作', 12: '冒险', 16: '动画', 35: '喜剧', 80: '犯罪', 99: '纪录片',
+  18: '剧情', 10751: '家庭', 14: '奇幻', 36: '历史', 27: '恐怖', 10402: '音乐',
+  9648: '悬疑', 10749: '爱情', 878: '科幻', 53: '惊悚', 10752: '战争',
+  10759: '动作冒险', 10762: '少儿', 10764: '真人秀', 10765: '科幻奇幻',
+  10767: '脱口秀', 10768: '战争政治',
+};
+
+export const TMDB_CODE_TO_AREA: Record<string, string> = {
+  CN: '中国大陆', HK: '中国香港', TW: '中国台湾', JP: '日本', KR: '韩国',
+  US: '美国', GB: '英国', FR: '法国', DE: '德国', TH: '泰国', IN: '印度',
+  CA: '加拿大', AU: '澳大利亚', ES: '西班牙', IT: '意大利',
+};
+
 export interface TmdbTrendingRaw {
   id?: number | string;
   title?: string;
@@ -150,6 +170,8 @@ export interface TmdbTrendingRaw {
   release_date?: string;
   first_air_date?: string;
   overview?: string;
+  genre_ids?: number[];
+  origin_country?: string[];
 }
 
 interface SixtyResponse<T> {
@@ -314,6 +336,16 @@ export function tmdbTrendingToItem(raw: TmdbTrendingRaw): DoubanItem | undefined
   const rating =
     typeof raw.vote_average === 'number' && raw.vote_average > 0 ? raw.vote_average.toFixed(1) : undefined;
 
+  const genres = Array.isArray(raw.genre_ids)
+    ? raw.genre_ids
+        .map((id) => TMDB_ID_TO_GENRE[id])
+        .filter(Boolean)
+        .slice(0, 3)
+        .join(' ') || undefined
+    : undefined;
+  const areaCode = Array.isArray(raw.origin_country) ? raw.origin_country[0] : undefined;
+  const area = areaCode ? TMDB_CODE_TO_AREA[areaCode] || undefined : undefined;
+
   return {
     id: `tmdb_${raw.id}`,
     title,
@@ -322,6 +354,8 @@ export function tmdbTrendingToItem(raw: TmdbTrendingRaw): DoubanItem | undefined
     rating,
     isTv,
     year,
+    area,
+    genres,
     subtitle: raw.overview?.trim() || undefined,
     sourceLabel: 'TMDB 全球趋势',
   };
@@ -731,7 +765,7 @@ async function fetchDoubanWithFallback(id: HotListId): Promise<DoubanItem[]> {
 }
 
 async function fetchTmdbTrending(mediaType: 'all' | 'tv' | 'movie' = 'all'): Promise<DoubanItem[]> {
-  const apiKey = (process.env.TMDB_API_KEY || process.env.NEXT_PUBLIC_TMDB_API_KEY || '').trim();
+  const apiKey = getTmdbApiKey();
   if (!apiKey) {
     const [globalTv, realtimeMovie] = await Promise.allSettled([
       fetchDoubanWithFallback('douban_tv_global'),
@@ -758,7 +792,7 @@ async function fetchTmdbTrending(mediaType: 'all' | 'tv' | 'movie' = 'all'): Pro
   const rows = assertArray<TmdbTrendingRaw>(json.results, 'TMDB 趋势榜');
   const items = rows
     .map((row) => tmdbTrendingToItem(row))
-    .filter((item): item is DoubanItem => item !== undefined);
+    .filter((item): item is DoubanItem => item !== undefined && /[\u4e00-\u9fa5]/.test(item.title));
   if (items.length === 0) throw new Error('TMDB 趋势榜为空');
   return curateRealtimeList(items, { filterEvergreen: true });
 }
@@ -796,10 +830,10 @@ export async function fetchHotList(id: HotListId): Promise<DoubanItem[]> {
 
   let items: DoubanItem[];
   let ttl = REALTIME_CACHE_TTL;
-  const hasTmdbKey = Boolean((process.env.TMDB_API_KEY || process.env.NEXT_PUBLIC_TMDB_API_KEY || '').trim());
+  const hasTmdbKey = Boolean(getTmdbApiKey());
 
   switch (id) {
-    // 1. 全网综合总榜：剧集 + 电影 + 日番 + 国漫 + 百度热播 + Bangumi (+ TMDB)
+    // 1. 全网综合总榜：剧集 + 电影 + 日番 + 国漫 + 百度热播 + Bangumi + TMDB
     case 'realtime_all': {
       items = await collectAndFuse(
         [
@@ -809,7 +843,7 @@ export async function fetchHotList(id: HotListId): Promise<DoubanItem[]> {
           { name: 'B站国创', weight: 1.0, run: () => fetchBiliRankRaw(BILI_SEASON_TYPE_MAP.bili_guochuang!) },
           { name: '百度热播', weight: 0.95, run: () => fetchBaiduTeleplayList() },
           { name: 'Bangumi', weight: 0.9, run: () => fetchBangumiHotAiring(16) },
-          ...(hasTmdbKey ? [{ name: 'TMDB趋势', weight: 1.0, run: () => fetchTmdbTrending('all') }] : []),
+          ...(hasTmdbKey ? [{ name: 'TMDB趋势', weight: 1.05, run: () => fetchTmdbTrending('all') }] : []),
         ],
         { maxEpisodes: 260 }
       );

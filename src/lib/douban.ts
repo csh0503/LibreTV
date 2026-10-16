@@ -3,6 +3,7 @@ import { fetchUpstream, getCache, setCache } from './fetch-utils';
 import { rexxarToItem, type DoubanRequest } from './recommend';
 import { fetchBangumiCatalog } from './bangumi';
 import { canonicalTitle } from './title-aliases';
+import { getTmdbApiKey, TMDB_CODE_TO_AREA, TMDB_ID_TO_GENRE } from './douban-weekly';
 
 /**
  * 多源权威片库引擎（服务端直连 + 内存缓存 + 多源元数据融合）：
@@ -179,13 +180,15 @@ interface TmdbDiscoverRaw {
   vote_count?: number;
   release_date?: string;
   first_air_date?: string;
+  genre_ids?: number[];
+  origin_country?: string[];
 }
 
 /**
- * TMDB 官方中文 Discover 片库（当配置了 TMDB_API_KEY 时自动启用）
+ * TMDB 官方中文 Discover 片库（内置你的 TMDB Key，同时支持环境变量覆盖）
  */
 async function fetchTmdbDiscoverCatalog(query: DoubanFetchQuery): Promise<DoubanItem[]> {
-  const apiKey = (process.env.TMDB_API_KEY || process.env.NEXT_PUBLIC_TMDB_API_KEY || '').trim();
+  const apiKey = getTmdbApiKey();
   if (!apiKey) return [];
 
   const isTv = query.kind === 'tv';
@@ -241,9 +244,20 @@ async function fetchTmdbDiscoverCatalog(query: DoubanFetchQuery): Promise<Douban
   const items: DoubanItem[] = [];
   for (const row of rows) {
     const title = (row.title || row.name || '').trim();
-    if (!row.id || !title || !row.poster_path) continue;
+    // 仅收录已有官方中文译名的条目，确保点击后在中文采集站能搜到片源
+    if (!row.id || !title || !row.poster_path || !/[\u4e00-\u9fa5]/.test(title)) continue;
     const dateStr = row.release_date || row.first_air_date || '';
     const year = /^\d{4}/.test(dateStr) ? dateStr.slice(0, 4) : undefined;
+    const genres = Array.isArray(row.genre_ids)
+      ? row.genre_ids
+          .map((id) => TMDB_ID_TO_GENRE[id])
+          .filter(Boolean)
+          .slice(0, 3)
+          .join(' ') || undefined
+      : undefined;
+    const areaCode = Array.isArray(row.origin_country) ? row.origin_country[0] : originCountry;
+    const area = areaCode ? TMDB_CODE_TO_AREA[areaCode] || undefined : undefined;
+
     items.push({
       id: `tmdb_${row.id}`,
       title,
@@ -252,6 +266,8 @@ async function fetchTmdbDiscoverCatalog(query: DoubanFetchQuery): Promise<Douban
       rating: row.vote_average && row.vote_average > 0 ? row.vote_average.toFixed(1) : undefined,
       isTv,
       year,
+      area,
+      genres,
       sourceLabel: 'TMDB',
     });
   }
@@ -309,7 +325,7 @@ export function fuseCatalogItems(lists: DoubanItem[][], limit: number): DoubanIt
 }
 
 export async function fetchDoubanRecommend(query: DoubanFetchQuery): Promise<{ items: DoubanItem[]; total?: number }> {
-  const hasTmdb = Boolean((process.env.TMDB_API_KEY || process.env.NEXT_PUBLIC_TMDB_API_KEY || '').trim());
+  const hasTmdb = Boolean(getTmdbApiKey());
   const cacheKey = `douban:v2:${hasTmdb ? 'tmdb:' : ''}${query.kind}:${query.tags.join(',')}:${query.sort}:${query.score}:${query.pageStart}:${query.pageSize}`;
   const cached = getCache<{ items: DoubanItem[]; total?: number }>(cacheKey);
   if (cached) return cached;
