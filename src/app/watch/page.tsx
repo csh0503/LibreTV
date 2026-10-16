@@ -20,6 +20,7 @@ import { SwitchSourceModal } from '@/components/switch-source';
 import { enqueueDownload } from '@/components/download-manager';
 import { FavoriteButton } from '@/components/favorite-button';
 import { Icon } from '@/components/icon';
+import { SmartImage } from '@/components/smart-image';
 import { useAuth } from '@/components/auth';
 import { resolveSource, useAppStore } from '@/lib/store';
 import {
@@ -31,7 +32,12 @@ import {
   db,
   favoriteIdOf,
 } from '@/lib/db';
-import { whenProfileReady } from '@/lib/profile-session';
+import {
+  decideEpisodeEndAction,
+  extractTasteFromVideoInfo,
+} from '@/lib/home-features';
+import { getActiveProfileId, whenProfileReady } from '@/lib/profile-session';
+import { rememberVideoInfo } from '@/lib/taste-store';
 import { cn } from '@/lib/utils';
 
 /**
@@ -92,8 +98,23 @@ function WatchContent() {
     return indexParam;
   }, [episodes, indexParam]);
 
+  type EndOverlayState =
+    | { mode: 'countdown'; nextIndex: number; remaining: number; total: number }
+    | { mode: 'manual-next'; nextIndex: number }
+    | { mode: 'still-watching'; nextIndex: number; streak: number }
+    | null;
+
+  const [endOverlay, setEndOverlay] = useState<EndOverlayState>(null);
+  const [nextPrefetchState, setNextPrefetchState] = useState<'idle' | 'running' | 'done'>('idle');
+  /** 连续自动连播计数：手动点选集数或确认「还在看」时归零 */
+  const autoPlayStreakRef = useRef(0);
+
   const goEpisode = useCallback(
-    (index: number) => {
+    (index: number, opts?: { fromAuto?: boolean }) => {
+      if (!opts?.fromAuto) {
+        autoPlayStreakRef.current = 0;
+      }
+      setEndOverlay(null);
       const sp = new URLSearchParams(searchParams.toString());
       sp.set('index', String(index));
       sp.set('url', episodes[index] || directUrl);
@@ -103,14 +124,34 @@ function WatchContent() {
     [router, searchParams, episodes, directUrl]
   );
 
-  // 进度恢复优先级：URL position 参数 > IndexedDB 记录
+  // 切换剧集或 URL 变化时关闭上一集的片尾卡片
+  useEffect(() => {
+    setEndOverlay(null);
+  }, [currentIndex, currentUrl]);
+
+  // 详情加载后顺带把题材、地区、年份记入口味表
+  useEffect(() => {
+    const info = detailQuery.data?.videoInfo;
+    if (!info || source?.isAdult || !videoTitle) return;
+    void rememberVideoInfo(videoTitle, extractTasteFromVideoInfo(info));
+  }, [detailQuery.data?.videoInfo, source?.isAdult, videoTitle]);
+
+  // 进度恢复优先级：URL position 参数 > IndexedDB progress 表 > 已同步的观看历史
   const getRestorePosition = useCallback(async () => {
     await whenProfileReady();
     const urlPos = parseInt(searchParams.get('position') || '0', 10) || 0;
     if (urlPos > 0) return urlPos;
     if (!vodId) return 0;
     const entry = await db.progress.get(progressKeyOf(sourceKey, vodId, currentIndex));
-    return entry?.position ?? 0;
+    if (entry?.position && entry.position > 0) return entry.position;
+    const pid = getActiveProfileId();
+    if (pid) {
+      const hist = await db.history.get(`${pid}::${sourceKey}_${vodId}`);
+      if (hist && hist.episodeIndex === currentIndex && hist.playbackPosition > 0) {
+        return hist.playbackPosition;
+      }
+    }
+    return 0;
   }, [searchParams, sourceKey, vodId, currentIndex]);
 
   // 写入观看历史（进入页面即记录，进度后续增量更新）
@@ -132,7 +173,7 @@ function WatchContent() {
     }, 2000);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [verified, sourceKey, vodId, currentIndex, videoTitle, currentUrl]);
+  }, [verified, sourceKey, vodId, currentIndex, videoTitle, currentUrl, episodes.length]);
 
   // 播放中与暂停时的进度落盘逻辑一致，共用同一回调
   const handleProgress = useCallback(
@@ -145,18 +186,58 @@ function WatchContent() {
     [sourceKey, vodId, currentIndex, currentUrl]
   );
 
-  // 自动连播的 800ms 延迟切集要在卸载时取消，避免离开页面后跳转
-  const autoNextTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => {
-    if (autoNextTimer.current) clearTimeout(autoNextTimer.current);
-  }, []);
+  // 倒计时大卡每秒递减，归零时自动切入下一集并累加连播计数
+  useEffect(() => {
+    if (!endOverlay || endOverlay.mode !== 'countdown') return;
+    if (endOverlay.remaining <= 0) {
+      autoPlayStreakRef.current += 1;
+      goEpisode(endOverlay.nextIndex, { fromAuto: true });
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setEndOverlay((prev) =>
+        prev && prev.mode === 'countdown'
+          ? { ...prev, remaining: prev.remaining - 1 }
+          : prev
+      );
+    }, 1000);
+    return () => window.clearTimeout(timer);
+  }, [endOverlay, goEpisode]);
 
   const handleEnded = useCallback(() => {
     if (vodId) clearProgress(sourceKey, vodId, currentIndex).catch(() => {});
-    if (store.autoplayNext && currentIndex < episodes.length - 1) {
-      autoNextTimer.current = setTimeout(() => goEpisode(currentIndex + 1), 800);
+    const decision = decideEpisodeEndAction({
+      currentIndex,
+      totalEpisodes: episodes.length,
+      autoplayNext: store.autoplayNext,
+      consecutiveAutoPlays: autoPlayStreakRef.current,
+    });
+    if (decision.mode === 'none') {
+      setEndOverlay(null);
+      return;
     }
-  }, [store.autoplayNext, currentIndex, episodes.length, goEpisode, sourceKey, vodId]);
+    if (decision.mode === 'countdown') {
+      setEndOverlay({
+        mode: 'countdown',
+        nextIndex: decision.nextIndex,
+        remaining: decision.seconds,
+        total: decision.seconds,
+      });
+      return;
+    }
+    if (decision.mode === 'still-watching') {
+      setEndOverlay({
+        mode: 'still-watching',
+        nextIndex: decision.nextIndex,
+        streak: decision.streak,
+      });
+      return;
+    }
+    setEndOverlay({
+      mode: 'manual-next',
+      nextIndex: decision.nextIndex,
+    });
+  }, [store.autoplayNext, currentIndex, episodes.length, sourceKey, vodId]);
 
   // Alt+←/→ 集数切换快捷键
   useEffect(() => {
@@ -263,6 +344,30 @@ function WatchContent() {
                   onTimeUpdate={handleProgress}
                   onPause={handleProgress}
                   onEnded={handleEnded}
+                  onNextPrefetchState={setNextPrefetchState}
+                  overlay={
+                    endOverlay ? (
+                      <EndEpisodeOverlayCard
+                        state={endOverlay}
+                        title={videoTitle}
+                        cover={detailQuery.data?.videoInfo?.cover}
+                        totalEpisodes={episodes.length}
+                        prefetchState={nextPrefetchState}
+                        onPlayNow={() => {
+                          autoPlayStreakRef.current = 0;
+                          goEpisode(endOverlay.nextIndex);
+                        }}
+                        onCancelCountdown={() => {
+                          if (endOverlay.mode === 'countdown') {
+                            setEndOverlay({ mode: 'manual-next', nextIndex: endOverlay.nextIndex });
+                          } else {
+                            setEndOverlay(null);
+                          }
+                        }}
+                        onDismiss={() => setEndOverlay(null)}
+                      />
+                    ) : undefined
+                  }
                 />
               ) : (
                 <div className="w-full h-full flex items-center justify-center">
@@ -293,6 +398,14 @@ function WatchContent() {
               >
                 下一集
               </button>
+              {nextPrefetchState !== 'idle' && currentIndex + 1 < episodes.length && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] bg-emerald-500/15 text-emerald-500 font-medium">
+                  <Icon name="bolt" className="w-3 h-3" />
+                  {nextPrefetchState === 'done'
+                    ? `第 ${currentIndex + 2} 集已预热就绪`
+                    : `正在预热第 ${currentIndex + 2} 集…`}
+                </span>
+              )}
               <label className="flex items-center gap-1.5 text-xs text-muted ml-auto cursor-pointer">
                 <input
                   type="checkbox"
@@ -415,3 +528,205 @@ function HomeButton() {
     </Link>
   );
 }
+
+/**
+ * 播完时的 Netflix 风格大卡：
+ * - countdown / manual-next：展示海报、集名、预热就绪状态、几秒后自动播放倒计时进度，支持立即播放或取消自动播放；
+ * - still-watching：连看多集后弹出「还在看吗？」确认，避免睡着或离开后自动连播停不下来。
+ */
+function EndEpisodeOverlayCard({
+  state,
+  title,
+  cover,
+  totalEpisodes,
+  prefetchState,
+  onPlayNow,
+  onCancelCountdown,
+  onDismiss,
+}: {
+  state:
+    | { mode: 'countdown'; nextIndex: number; remaining: number; total: number }
+    | { mode: 'manual-next'; nextIndex: number }
+    | { mode: 'still-watching'; nextIndex: number; streak: number };
+  title: string;
+  cover?: string;
+  totalEpisodes: number;
+  prefetchState: 'idle' | 'running' | 'done';
+  onPlayNow: () => void;
+  onCancelCountdown: () => void;
+  onDismiss: () => void;
+}) {
+  const imageProxyMode = useAppStore((s) => s.imageProxyMode);
+  const customImageProxy = useAppStore((s) => s.customImageProxy);
+  const [imgFailed, setImgFailed] = useState(false);
+
+  const nextEpNum = state.nextIndex + 1;
+
+  if (state.mode === 'still-watching') {
+    return (
+      <div className="pointer-events-auto inset-0 w-full h-full bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="还在看吗？"
+          className="w-full max-w-md rounded-2xl border border-white/15 bg-[#0f172a]/95 text-white p-5 sm:p-6 shadow-2xl space-y-4"
+        >
+          <div className="flex items-center gap-3.5">
+            {cover && !imgFailed ? (
+              <SmartImage
+                url={cover}
+                mode={imageProxyMode}
+                customProxy={customImageProxy}
+                alt={title}
+                className="w-16 sm:w-20 aspect-[2/3] rounded-lg object-cover bg-slate-800 shrink-0 shadow-md"
+                onExhausted={() => setImgFailed(true)}
+              />
+            ) : null}
+            <div className="min-w-0 space-y-1">
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-500/20 text-amber-300">
+                已连续播放 {state.streak} 集
+              </span>
+              <h3 className="text-lg sm:text-xl font-bold text-white">还在看吗？</h3>
+              <p className="text-xs sm:text-sm text-slate-300 line-clamp-2">
+                《{title}》即将播放 <span className="text-white font-semibold">第 {nextEpNum} 集</span>
+                {totalEpisodes > 0 ? `（共 ${totalEpisodes} 集）` : ''}
+              </p>
+              {prefetchState !== 'idle' && (
+                <p className="text-[11px] text-emerald-400 flex items-center gap-1">
+                  <Icon name="bolt" className="w-3.5 h-3.5" />
+                  <span>下一集已预热完毕，点按即可秒播</span>
+                </p>
+              )}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2.5 pt-1">
+            <button
+              type="button"
+              onClick={onPlayNow}
+              className="flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl bg-white text-slate-950 hover:bg-slate-100 font-semibold text-sm shadow transition-colors cursor-pointer"
+            >
+              <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
+                <path d="M8 5v14l11-7z" />
+              </svg>
+              继续观看第 {nextEpNum} 集
+            </button>
+            <button
+              type="button"
+              onClick={onDismiss}
+              className="px-4 py-2.5 rounded-xl border border-white/20 bg-white/10 hover:bg-white/20 text-white text-sm font-medium transition-colors cursor-pointer"
+            >
+              先不看了
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const isCounting = state.mode === 'countdown';
+  const progressPct = isCounting
+    ? Math.min(100, Math.max(0, Math.round(((state.total - state.remaining) / state.total) * 100)))
+    : 100;
+
+  return (
+    <div className="pointer-events-auto inset-0 w-full h-full bg-black/65 backdrop-blur-[2px] flex items-end sm:items-center justify-center sm:justify-end p-3 sm:p-6 animate-fade-in">
+      <div
+        role="dialog"
+        aria-label={`下一集：第 ${nextEpNum} 集`}
+        className="w-full max-w-sm sm:max-w-md rounded-2xl border border-white/15 bg-[#0f172a]/95 text-white p-4 sm:p-5 shadow-2xl space-y-3.5"
+      >
+        <div className="flex items-start gap-3.5">
+          {cover && !imgFailed ? (
+            <div
+              onClick={onPlayNow}
+              role="button"
+              tabIndex={-1}
+              className="relative w-16 sm:w-20 aspect-[2/3] rounded-lg overflow-hidden bg-slate-800 shrink-0 shadow-md cursor-pointer group"
+            >
+              <SmartImage
+                url={cover}
+                mode={imageProxyMode}
+                customProxy={customImageProxy}
+                alt={title}
+                className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                onExhausted={() => setImgFailed(true)}
+              />
+              <div className="absolute inset-0 bg-black/30 flex items-center justify-center">
+                <div className="w-8 h-8 rounded-full bg-white/90 text-slate-950 flex items-center justify-center shadow">
+                  <svg className="w-4 h-4 fill-current ml-0.5" viewBox="0 0 24 24">
+                    <path d="M8 5v14l11-7z" />
+                  </svg>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          <div className="min-w-0 flex-1 space-y-1">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold text-sky-400">
+                {isCounting ? `${state.remaining} 秒后自动播放下一集` : '下一集就绪'}
+              </span>
+              {prefetchState !== 'idle' && (
+                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-500/20 text-emerald-300">
+                  <Icon name="bolt" className="w-3 h-3" />
+                  {prefetchState === 'done' ? '已预热' : '预热中'}
+                </span>
+              )}
+            </div>
+
+            <h3 className="text-sm sm:text-base font-bold text-white truncate" title={title}>
+              {title}
+            </h3>
+
+            <p className="text-xs sm:text-sm text-slate-300 font-medium">
+              第 {nextEpNum} 集
+              {totalEpisodes > 0 && <span className="text-slate-400"> / 共 {totalEpisodes} 集</span>}
+            </p>
+          </div>
+        </div>
+
+        {isCounting && (
+          <div className="h-1.5 w-full rounded-full bg-white/15 overflow-hidden">
+            <div
+              className="h-full bg-sky-400 transition-all duration-700"
+              style={{ width: `${progressPct}%` }}
+            />
+          </div>
+        )}
+
+        <div className="flex items-center gap-2.5 pt-0.5">
+          <button
+            type="button"
+            onClick={onPlayNow}
+            className="flex-1 inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl bg-white text-slate-950 hover:bg-slate-100 font-semibold text-xs sm:text-sm shadow transition-colors cursor-pointer"
+          >
+            <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
+              <path d="M8 5v14l11-7z" />
+            </svg>
+            立即播放
+          </button>
+
+          {isCounting ? (
+            <button
+              type="button"
+              onClick={onCancelCountdown}
+              className="px-3.5 py-2 rounded-xl border border-white/20 bg-white/10 hover:bg-white/20 text-white text-xs sm:text-sm font-medium transition-colors cursor-pointer"
+            >
+              取消自动播放
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={onDismiss}
+              className="px-3.5 py-2 rounded-xl border border-white/20 bg-white/10 hover:bg-white/20 text-white text-xs sm:text-sm font-medium transition-colors cursor-pointer"
+            >
+              留在本集
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+

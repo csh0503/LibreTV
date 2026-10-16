@@ -1,0 +1,945 @@
+'use client';
+
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useQueries, useQuery } from '@tanstack/react-query';
+import { useLiveQuery } from 'dexie-react-hooks';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { api } from '@/lib/client-api';
+import { isAdultContent } from '@/lib/cms-parser';
+import {
+  db,
+  favoriteIdOf,
+  removeHistory,
+  toggleFavorite,
+  upsertHistory,
+  type FavoriteEntry,
+  type HistoryEntry,
+} from '@/lib/db';
+import { describeContinueWatching } from '@/lib/home-features';
+import type { HotListId } from '@/lib/douban-weekly';
+import { resolveSource, useAppStore } from '@/lib/store';
+import { rememberDoubanItem } from '@/lib/taste-store';
+import { canonicalTitle } from '@/lib/title-aliases';
+import type { DoubanItem, SearchResultItem } from '@/lib/types';
+import { useProfile } from '@/lib/use-profile';
+import { buildWatchUrl, cn, formatTime } from '@/lib/utils';
+import { Icon } from './icon';
+import { SmartImage } from './smart-image';
+import { useToast } from './toast';
+import { DoubanCard } from './video-card';
+
+/**
+ * 通用横向滚动货架（Netflix 风格）：
+ * 隐藏原生滚动条，桌面端提供左右翻页按钮，移动端支持顺滑触控横滑。
+ */
+export function ShelfRow({
+  title,
+  hint,
+  badge,
+  headerExtra,
+  children,
+  className,
+}: {
+  title: string;
+  hint?: string;
+  badge?: string;
+  headerExtra?: React.ReactNode;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const [canLeft, setCanLeft] = useState(false);
+  const [canRight, setCanRight] = useState(false);
+
+  const updateScrollState = useCallback(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    setCanLeft(el.scrollLeft > 4);
+    setCanRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 4);
+  }, []);
+
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    updateScrollState();
+    el.addEventListener('scroll', updateScrollState, { passive: true });
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(updateScrollState) : null;
+    ro?.observe(el);
+    return () => {
+      el.removeEventListener('scroll', updateScrollState);
+      ro?.disconnect();
+    };
+  }, [updateScrollState, children]);
+
+  const scrollByPage = (dir: -1 | 1) => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const step = Math.max(240, Math.round(el.clientWidth * 0.78));
+    el.scrollBy({ left: dir * step, behavior: 'smooth' });
+  };
+
+  return (
+    <section aria-label={title} className={cn('space-y-2.5', className)}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0 flex items-center gap-2 flex-wrap">
+          <h2 className="text-base sm:text-lg font-bold text-content tracking-tight">{title}</h2>
+          {badge && (
+            <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-accent/15 text-accent">
+              {badge}
+            </span>
+          )}
+          {hint && <span className="text-xs text-faint hidden sm:inline">{hint}</span>}
+        </div>
+        <div className="flex items-center gap-2 ml-auto">
+          {headerExtra}
+          {(canLeft || canRight) && (
+            <div className="hidden sm:flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => scrollByPage(-1)}
+                disabled={!canLeft}
+                aria-label={`向左滚动${title}`}
+                className="w-7 h-7 rounded-full border border-line bg-surface/80 text-muted hover:text-content hover:bg-hover disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center transition-colors"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                </svg>
+              </button>
+              <button
+                type="button"
+                onClick={() => scrollByPage(1)}
+                disabled={!canRight}
+                aria-label={`向右滚动${title}`}
+                className="w-7 h-7 rounded-full border border-line bg-surface/80 text-muted hover:text-content hover:bg-hover disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center transition-colors"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+      {hint && <p className="text-xs text-faint sm:hidden -mt-1">{hint}</p>}
+      <div
+        ref={scrollerRef}
+        className="flex gap-3 overflow-x-auto scrollbar-none pb-1 pt-0.5 scroll-smooth"
+      >
+        {children}
+      </div>
+    </section>
+  );
+}
+
+/**
+ * 热榜 / 主推数据源：优先请求 60s 热榜接口，若上游不可用则自动降级到豆瓣热门接口，
+ * 保证「首页大图」与「本周前十」在任何网络环境下都有数据。
+ */
+function useTopRankItems(listId: HotListId, enabled: boolean) {
+  const yellowFilter = useAppStore((s) => s.yellowFilter);
+
+  const hotQuery = useQuery({
+    queryKey: ['hot-list', listId],
+    queryFn: ({ signal }) => api.hotList(listId, signal),
+    enabled,
+    staleTime: 30 * 60_000,
+    retry: 1,
+  });
+
+  const fallbackKind = listId === 'douban_movie_weekly' ? 'movie' : 'tv';
+  const fallbackTags =
+    listId === 'douban_movie_weekly'
+      ? ['电影']
+      : listId === 'douban_tv_chinese'
+        ? ['电视剧', '华语']
+        : ['电视剧'];
+
+  const fallbackQuery = useQuery({
+    queryKey: ['hot-list-fallback', listId],
+    queryFn: ({ signal }) =>
+      api.douban(
+        {
+          kind: fallbackKind,
+          tags: fallbackTags,
+          sort: 'U',
+          score: '0,10',
+          pageStart: 0,
+          pageSize: 12,
+        },
+        signal,
+      ),
+    enabled: enabled && hotQuery.isError,
+    staleTime: 30 * 60_000,
+    retry: 1,
+  });
+
+  const items = useMemo(() => {
+    const raw = hotQuery.data?.items?.length
+      ? hotQuery.data.items
+      : (fallbackQuery.data?.items ?? []);
+    return raw
+      .filter((item) => !yellowFilter || (!isAdultContent(item.title) && !isAdultContent(item.genres)))
+      .slice(0, 10);
+  }, [hotQuery.data, fallbackQuery.data, yellowFilter]);
+
+  return {
+    items,
+    isLoading: hotQuery.isLoading || (hotQuery.isError && fallbackQuery.isLoading),
+  };
+}
+
+/**
+ * 首页大图（Netflix 风格顶部主推）：
+ * 默认展示热榜第一名，支持切换前 5 部主推，直接「播放」或「加入片单」。
+ */
+export function HeroBillboard({ onPick }: { onPick: (title: string) => void }) {
+  const router = useRouter();
+  const { toast } = useToast();
+  const doubanEnabled = useAppStore((s) => s.doubanEnabled);
+  const imageProxyMode = useAppStore((s) => s.imageProxyMode);
+  const customImageProxy = useAppStore((s) => s.customImageProxy);
+  const customAPIs = useAppStore((s) => s.customAPIs);
+  const envSources = useAppStore((s) => s.envSources);
+  const profileId = useProfile().id;
+
+  const { items, isLoading } = useTopRankItems('douban_tv_chinese', doubanEnabled);
+  const featuredList = useMemo(() => items.slice(0, 5), [items]);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [imgFailed, setImgFailed] = useState(false);
+
+  useEffect(() => {
+    if (activeIndex >= featuredList.length) setActiveIndex(0);
+  }, [activeIndex, featuredList.length]);
+
+  const current: DoubanItem | undefined = featuredList[activeIndex] ?? featuredList[0];
+  useEffect(() => setImgFailed(false), [current?.cover]);
+
+  // 自动轮播：每 8 秒温和切换主推影片
+  useEffect(() => {
+    if (featuredList.length <= 1) return;
+    const timer = window.setInterval(() => {
+      setActiveIndex((i) => (i + 1) % featuredList.length);
+    }, 8000);
+    return () => window.clearInterval(timer);
+  }, [featuredList.length]);
+
+  const favLocalId = current ? favoriteIdOf({ title: current.title }) : '';
+  const isSaved = useLiveQuery(
+    () => (profileId && favLocalId ? db.favorites.get(`${profileId}::${favLocalId}`) : undefined),
+    [profileId, favLocalId],
+  );
+
+  // 检查用户是否已在观看历史中有这部片子：若有则「立即播放」可直接续播
+  const matchedHistory = useLiveQuery(
+    async () => {
+      if (!profileId || !current) return undefined;
+      const key = canonicalTitle(current.title);
+      if (!key) return undefined;
+      const rows = await db.history.where('profileId').equals(profileId).toArray();
+      return rows
+        .filter((r) => canonicalTitle(r.title) === key)
+        .sort((a, b) => b.timestamp - a.timestamp)[0];
+    },
+    [profileId, current?.title],
+  );
+
+  if (!doubanEnabled) return null;
+
+  if (isLoading && !current) {
+    return (
+      <div className="mb-7 rounded-2xl border border-line bg-surface/60 h-52 sm:h-64 animate-pulse p-6 flex flex-col justify-end">
+        <div className="h-4 w-28 rounded bg-chip mb-3" />
+        <div className="h-8 w-56 rounded bg-chip mb-4" />
+        <div className="flex gap-3">
+          <div className="h-10 w-28 rounded-xl bg-chip" />
+          <div className="h-10 w-28 rounded-xl bg-chip" />
+        </div>
+      </div>
+    );
+  }
+
+  if (!current) return null;
+
+  const metaTags = [
+    current.year,
+    current.area,
+    current.genres,
+    current.remarks,
+  ].filter(Boolean);
+
+  const handlePlay = () => {
+    void rememberDoubanItem(current, current.isTv === false ? 'movie' : 'tv');
+    if (matchedHistory) {
+      const src = resolveSource({ customAPIs, envSources }, matchedHistory.sourceKey, {
+        url: matchedHistory.sourceUrl,
+      });
+      const view = describeContinueWatching(matchedHistory, undefined, formatTime);
+      router.push(
+        buildWatchUrl({
+          sourceKey: matchedHistory.sourceKey,
+          vodId: matchedHistory.vodId,
+          index: view.targetEpisodeIndex,
+          position: view.targetPosition,
+          title: matchedHistory.title,
+          sourceUrl: src?.url || matchedHistory.sourceUrl,
+          detail: src?.detail,
+        }),
+      );
+      return;
+    }
+    onPick(current.title);
+  };
+
+  const handleToggleMyList = () => {
+    void rememberDoubanItem(current, current.isTv === false ? 'movie' : 'tv');
+    void toggleFavorite({
+      localId: favLocalId,
+      title: current.title,
+      pic: current.cover,
+      year: current.year,
+    }).then((on) => {
+      toast(on ? `已将「${current.title}」加入我的片单` : `已从我的片单移除「${current.title}」`, 'success');
+    });
+  };
+
+  return (
+    <section
+      aria-label="今日主推影片"
+      className="relative mb-7 rounded-2xl overflow-hidden border border-line bg-[#0b111e] text-white shadow-xl"
+    >
+      {/* 背景大图氛围层 */}
+      {current.cover && !imgFailed && (
+        <div className="absolute inset-0 overflow-hidden pointer-events-none" aria-hidden>
+          <SmartImage
+            url={current.cover}
+            mode={imageProxyMode}
+            customProxy={customImageProxy}
+            alt=""
+            className="w-full h-full object-cover scale-110 blur-2xl opacity-45 transition-all duration-700"
+            onExhausted={() => setImgFailed(true)}
+          />
+        </div>
+      )}
+      <div
+        aria-hidden
+        className="absolute inset-0 pointer-events-none bg-gradient-to-r from-[#070b14]/95 via-[#0b111e]/80 to-[#0b111e]/40"
+      />
+      <div
+        aria-hidden
+        className="absolute inset-0 pointer-events-none bg-gradient-to-t from-[#070b14] via-transparent to-black/25"
+      />
+
+      <div className="relative z-10 p-5 sm:p-7 md:p-8 flex items-center justify-between gap-6">
+        <div className="min-w-0 flex-1 max-w-2xl space-y-3">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-red-600/90 text-white font-semibold tracking-wide shadow-sm">
+              TOP {activeIndex + 1} · 本周热推
+            </span>
+            {current.rating && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/15 text-amber-300 font-semibold backdrop-blur-sm">
+                ★ {current.rating}
+              </span>
+            )}
+            {metaTags.map((tag, idx) => (
+              <span
+                key={idx}
+                className="px-2 py-0.5 rounded-full bg-white/10 text-slate-200 backdrop-blur-sm"
+              >
+                {tag}
+              </span>
+            ))}
+          </div>
+
+          <h2 className="text-2xl sm:text-3xl md:text-4xl font-extrabold tracking-tight text-white line-clamp-2 drop-shadow">
+            {current.title}
+          </h2>
+
+          <p className="text-xs sm:text-sm text-slate-300/90 max-w-xl line-clamp-2">
+            {matchedHistory
+              ? `上次看到第 ${matchedHistory.episodeIndex + 1} 集${matchedHistory.playbackPosition > 10 ? `（${formatTime(matchedHistory.playbackPosition)}）` : ''}，点击可接着上次进度继续观看。`
+              : '本周口碑与热度前列主推佳作，点击「播放」跨源检索最佳画质，或加入「我的片单」随时回看。'}
+          </p>
+
+          <div className="pt-1 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={handlePlay}
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-white text-slate-950 hover:bg-slate-100 active:scale-[0.99] font-semibold text-sm shadow-lg transition-all cursor-pointer"
+            >
+              <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24" aria-hidden>
+                <path d="M8 5v14l11-7z" />
+              </svg>
+              <span>{matchedHistory ? `继续播放 第${matchedHistory.episodeIndex + 1}集` : '播放'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleToggleMyList}
+              className={cn(
+                'inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium border backdrop-blur-md transition-all cursor-pointer',
+                isSaved
+                  ? 'bg-amber-500/20 border-amber-400/50 text-amber-200 hover:bg-amber-500/30'
+                  : 'bg-white/10 border-white/20 text-white hover:bg-white/20',
+              )}
+            >
+              <Icon name={isSaved ? 'check' : 'plus'} className="w-4 h-4" />
+              <span>{isSaved ? '已在片单' : '加入片单'}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* 右侧高清立面海报（桌面与平板显示） */}
+        {current.cover && !imgFailed && (
+          <div
+            onClick={handlePlay}
+            role="button"
+            tabIndex={-1}
+            className="hidden sm:block relative w-32 md:w-40 aspect-[2/3] rounded-xl overflow-hidden shadow-2xl ring-1 ring-white/20 shrink-0 cursor-pointer group"
+          >
+            <SmartImage
+              url={current.cover}
+              mode={imageProxyMode}
+              customProxy={customImageProxy}
+              alt={current.title}
+              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+              onExhausted={() => setImgFailed(true)}
+            />
+            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
+              <div className="w-11 h-11 rounded-full bg-white/90 text-slate-950 flex items-center justify-center opacity-0 group-hover:opacity-100 scale-90 group-hover:scale-100 transition-all shadow-lg">
+                <svg className="w-5 h-5 fill-current ml-0.5" viewBox="0 0 24 24">
+                  <path d="M8 5v14l11-7z" />
+                </svg>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 主推切换指示器 */}
+      {featuredList.length > 1 && (
+        <div className="relative z-10 px-5 sm:px-7 pb-3.5 flex items-center justify-end gap-1.5">
+          {featuredList.map((item, idx) => (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => setActiveIndex(idx)}
+              aria-label={`切换到主推：${item.title}`}
+              title={item.title}
+              className={cn(
+                'h-1.5 rounded-full transition-all cursor-pointer',
+                idx === activeIndex ? 'w-6 bg-white' : 'w-2 bg-white/35 hover:bg-white/60',
+              )}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+/**
+ * 首页「继续观看」+ 追更提醒（连载片集数变多时标「更新了」）：
+ * 海报底部绘制播放进度条，点击从上次的集数和秒数接着播。
+ */
+export function ContinueWatchingRow() {
+  const profileId = useProfile().id;
+  const yellowFilter = useAppStore((s) => s.yellowFilter);
+  const customAPIs = useAppStore((s) => s.customAPIs);
+  const envSources = useAppStore((s) => s.envSources);
+
+  const history = useLiveQuery(
+    () =>
+      profileId
+        ? db.history
+            .where('profileId')
+            .equals(profileId)
+            .sortBy('timestamp')
+            .then((rows) => rows.reverse())
+        : [],
+    [profileId],
+  );
+
+  const visible = useMemo(() => {
+    const all = history ?? [];
+    return all
+      .filter((item) => {
+        if (!yellowFilter) return true;
+        const src = resolveSource({ customAPIs, envSources }, item.sourceKey, {
+          url: item.sourceUrl,
+        });
+        if (src?.isAdult) return false;
+        return !isAdultContent(item.title);
+      })
+      .slice(0, 16);
+  }, [history, yellowFilter, customAPIs, envSources]);
+
+  // 对前 8 部多集剧集静默拉取最新详情，用于判断连载剧是否「更新了」
+  const checkTargets = useMemo(
+    () =>
+      visible.slice(0, 8).map((item) => {
+        const source = resolveSource({ customAPIs, envSources }, item.sourceKey, {
+          url: item.sourceUrl,
+        });
+        return { item, source };
+      }),
+    [visible, customAPIs, envSources],
+  );
+
+  const detailQueries = useQueries({
+    queries: checkTargets.map(({ item, source }) => ({
+      queryKey: ['continue-watching-detail', item.sourceKey, item.vodId, source?.url],
+      queryFn: ({ signal }: { signal: AbortSignal }) => api.detail(item.vodId, source!, signal),
+      enabled: Boolean(source && item.vodId && item.totalEpisodes > 0),
+      staleTime: 15 * 60_000,
+      retry: 0,
+    })),
+  });
+
+  const remoteTotals = useMemo(() => {
+    const map = new Map<string, number>();
+    checkTargets.forEach(({ item }, idx) => {
+      const count = detailQueries[idx]?.data?.episodes?.length;
+      if (typeof count === 'number' && count > 0) {
+        map.set(`${item.sourceKey}_${item.vodId}`, count);
+      }
+    });
+    return map;
+  }, [checkTargets, detailQueries]);
+
+  if (!profileId || visible.length === 0) return null;
+
+  return (
+    <ShelfRow title="继续观看" hint="接着上次的集数与秒数播放">
+      {visible.map((item) => (
+        <ContinueWatchingCard
+          key={`${item.sourceKey}_${item.vodId}`}
+          item={item}
+          remoteTotalEpisodes={remoteTotals.get(`${item.sourceKey}_${item.vodId}`)}
+        />
+      ))}
+    </ShelfRow>
+  );
+}
+
+function ContinueWatchingCard({
+  item,
+  remoteTotalEpisodes,
+}: {
+  item: HistoryEntry;
+  remoteTotalEpisodes?: number;
+}) {
+  const imageProxyMode = useAppStore((s) => s.imageProxyMode);
+  const customImageProxy = useAppStore((s) => s.customImageProxy);
+  const customAPIs = useAppStore((s) => s.customAPIs);
+  const envSources = useAppStore((s) => s.envSources);
+  const { toast } = useToast();
+  const [imgFailed, setImgFailed] = useState(false);
+
+  useEffect(() => setImgFailed(false), [item.pic]);
+
+  const source = resolveSource({ customAPIs, envSources }, item.sourceKey, {
+    url: item.sourceUrl,
+  });
+
+  const view = useMemo(
+    () => describeContinueWatching(item, remoteTotalEpisodes, formatTime),
+    [item, remoteTotalEpisodes],
+  );
+
+  const href = buildWatchUrl({
+    sourceKey: item.sourceKey,
+    vodId: item.vodId,
+    index: view.targetEpisodeIndex,
+    position: view.targetPosition,
+    title: item.title,
+    sourceUrl: source?.url || item.sourceUrl,
+    detail: source?.detail,
+  });
+
+  const handleRemove = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    void removeHistory(item.sourceKey, item.vodId).then(() => {
+      toast(`已从继续观看移除「${item.title}」`, 'info', {
+        action: {
+          label: '撤销',
+          onClick: () => {
+            void upsertHistory({
+              sourceKey: item.sourceKey,
+              sourceUrl: item.sourceUrl,
+              vodId: item.vodId,
+              title: item.title,
+              pic: item.pic,
+              episodeIndex: item.episodeIndex,
+              totalEpisodes: item.totalEpisodes,
+              playbackPosition: item.playbackPosition,
+              duration: item.duration,
+              timestamp: item.timestamp,
+            });
+          },
+        },
+      });
+    });
+  };
+
+  return (
+    <div className="w-[8.25rem] sm:w-36 shrink-0 group relative">
+      <Link
+        href={href}
+        className="card block hover:scale-[1.03] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+      >
+        <div className="relative aspect-[2/3] bg-chip overflow-hidden">
+          {item.pic && !imgFailed ? (
+            <SmartImage
+              url={item.pic}
+              mode={imageProxyMode}
+              customProxy={customImageProxy}
+              alt={item.title}
+              className="w-full h-full object-cover"
+              onExhausted={() => setImgFailed(true)}
+            />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center bg-chip">
+              <svg className="w-8 h-8 text-faint" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={1.5}
+                  d="M7 4v16m10-16v16M3 6a1 1 0 011-1h1a1 1 0 011 1v12a1 1 0 01-1 1H4a1 1 0 01-1-1V6zm4 0a1 1 0 011-1h1a1 1 0 011 1v12a1 1 0 01-1 1h-1a1 1 0 01-1-1V6zm8 0a1 1 0 011-1h1a1 1 0 011 1v12a1 1 0 01-1 1h-1a1 1 0 01-1-1V6zm4 0a1 1 0 011-1h1a1 1 0 011 1v12a1 1 0 01-1 1h-1a1 1 0 01-1-1V6z"
+                />
+              </svg>
+            </div>
+          )}
+
+          {/* 追更提醒角标：「更新了」 */}
+          {view.hasUpdate && view.updateBadge && (
+            <span className="absolute top-1.5 left-1.5 z-10 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500 text-white shadow-md">
+              {view.updateBadge}
+            </span>
+          )}
+
+          {/* 悬停播放图标 */}
+          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/35 transition-colors flex items-center justify-center">
+            <div className="w-10 h-10 rounded-full bg-accent text-on-accent flex items-center justify-center opacity-0 group-hover:opacity-100 scale-90 group-hover:scale-100 transition-all shadow-lg">
+              <svg className="w-5 h-5 fill-current ml-0.5" viewBox="0 0 24 24">
+                <path d="M8 5v14l11-7z" />
+              </svg>
+            </div>
+          </div>
+
+          {/* 海报底部渐变 + 集数与秒数提示 + 进度条 */}
+          <div className="absolute inset-x-0 bottom-0 pt-6 pb-2 px-2 bg-gradient-to-t from-black/90 via-black/55 to-transparent">
+            <span className="block text-[11px] font-medium text-white truncate drop-shadow-sm">
+              {view.posterLabel}
+            </span>
+          </div>
+
+          {view.showProgress && (
+            <div className="absolute inset-x-0 bottom-0 h-1 bg-white/25 overflow-hidden">
+              <div
+                className="h-full bg-accent transition-[width] duration-300"
+                style={{ width: `${view.percent}%` }}
+              />
+            </div>
+          )}
+        </div>
+
+        <div className="p-2">
+          <div className="text-xs font-medium text-content truncate" title={item.title}>
+            {item.title}
+          </div>
+          <div
+            className={cn(
+              'text-[10px] truncate mt-0.5',
+              view.hasUpdate ? 'text-emerald-500 font-medium' : 'text-faint',
+            )}
+          >
+            {view.subLabel}
+          </div>
+        </div>
+      </Link>
+
+      {/* 移除按钮 */}
+      <button
+        type="button"
+        onClick={handleRemove}
+        aria-label={`从继续观看移除 ${item.title}`}
+        title="从继续观看移除"
+        className="absolute top-1.5 right-1.5 z-10 w-6 h-6 rounded-full bg-black/65 text-white/80 hover:text-white hover:bg-black/85 flex items-center justify-center opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
+      >
+        <Icon name="close" className="w-3.5 h-3.5" />
+      </button>
+    </div>
+  );
+}
+
+/**
+ * 首页「我的片单」：
+ * 把收藏直接展示在首页一排，与「继续观看」放在一起，不必点右上角星标抽屉才看得到。
+ */
+export function MyListRow({
+  onPick,
+  onOpen,
+}: {
+  onPick: (title: string) => void;
+  onOpen: (item: SearchResultItem) => void;
+}) {
+  const router = useRouter();
+  const profileId = useProfile().id;
+  const yellowFilter = useAppStore((s) => s.yellowFilter);
+  const customAPIs = useAppStore((s) => s.customAPIs);
+  const envSources = useAppStore((s) => s.envSources);
+
+  const favorites = useLiveQuery(
+    () =>
+      profileId
+        ? db.favorites
+            .where('profileId')
+            .equals(profileId)
+            .sortBy('addedAt')
+            .then((rows) => rows.reverse())
+        : [],
+    [profileId],
+  );
+
+  const history = useLiveQuery(
+    () => (profileId ? db.history.where('profileId').equals(profileId).toArray() : []),
+    [profileId],
+  );
+
+  const visible = useMemo(() => {
+    return (favorites ?? []).filter(
+      (row) => !(yellowFilter && (row.isAdult || isAdultContent(row.title))),
+    );
+  }, [favorites, yellowFilter]);
+
+  if (!profileId || visible.length === 0) return null;
+
+  const handleOpenFavorite = (row: FavoriteEntry) => {
+    // 1. 若有同片观看记录，优先直接续播
+    const key = canonicalTitle(row.title);
+    const hist = (history ?? [])
+      .filter(
+        (h) =>
+          (row.sourceKey && row.vodId && h.sourceKey === row.sourceKey && h.vodId === row.vodId) ||
+          (key && canonicalTitle(h.title) === key),
+      )
+      .sort((a, b) => b.timestamp - a.timestamp)[0];
+
+    if (hist) {
+      const src = resolveSource({ customAPIs, envSources }, hist.sourceKey, {
+        url: hist.sourceUrl,
+      });
+      if (src) {
+        const view = describeContinueWatching(hist, undefined, formatTime);
+        router.push(
+          buildWatchUrl({
+            sourceKey: hist.sourceKey,
+            vodId: hist.vodId,
+            index: view.targetEpisodeIndex,
+            position: view.targetPosition,
+            title: hist.title,
+            sourceUrl: src.url || hist.sourceUrl,
+            detail: src.detail,
+          }),
+        );
+        return;
+      }
+    }
+
+    // 2. 若收藏自具体点播源且该源可用，直接打开详情弹窗选集
+    if (row.sourceKey && row.vodId) {
+      const src = resolveSource({ customAPIs, envSources }, row.sourceKey, {
+        url: row.sourceUrl,
+      });
+      if (src) {
+        onOpen({
+          vodId: row.vodId,
+          name: row.title,
+          pic: row.pic,
+          year: row.year,
+          sourceKey: row.sourceKey,
+          sourceName: src.name,
+          sourceUrl: src.url,
+          isAdult: row.isAdult,
+        });
+        return;
+      }
+    }
+
+    // 3. 豆瓣卡片收藏（无绑定特定源）：触发首页搜索
+    onPick(row.title);
+  };
+
+  return (
+    <ShelfRow title="我的片单" badge={`${visible.length} 部`} hint="已收藏的剧集与电影">
+      {visible.map((row) => (
+        <div key={row.id} className="w-[7.25rem] sm:w-32 shrink-0">
+          <DoubanCard
+            item={{
+              title: row.title,
+              cover: row.pic || '',
+              rating: row.tasteRating,
+              meta: [row.year, row.tasteArea].filter(Boolean).join(' · ') || '已收藏',
+              favorite: {
+                localId: row.localId,
+                title: row.title,
+                pic: row.pic,
+                sourceKey: row.sourceKey,
+                sourceUrl: row.sourceUrl,
+                vodId: row.vodId,
+                year: row.year,
+                isAdult: row.isAdult,
+              },
+            }}
+            onClick={() => handleOpenFavorite(row)}
+          />
+        </div>
+      ))}
+    </ShelfRow>
+  );
+}
+
+const TOP_TEN_TABS: { id: HotListId; label: string; channel: 'tv' | 'movie' | 'show' }[] = [
+  { id: 'douban_tv_chinese', label: '华语剧集', channel: 'tv' },
+  { id: 'douban_tv_global', label: '全球剧集', channel: 'tv' },
+  { id: 'douban_movie_weekly', label: '口碑电影', channel: 'movie' },
+  { id: 'baidu_teleplay', label: '热播剧榜', channel: 'tv' },
+];
+
+/**
+ * 首页「本周前十」（Netflix 风格带大数字 1~10 的热榜排）：
+ * 比混在海报墙里更直观，支持切换剧集 / 电影周榜。
+ */
+export function TopTenRow({ onPick }: { onPick: (title: string) => void }) {
+  const doubanEnabled = useAppStore((s) => s.doubanEnabled);
+  const [tab, setTab] = useState<HotListId>('douban_tv_chinese');
+  const { items, isLoading } = useTopRankItems(tab, doubanEnabled);
+
+  if (!doubanEnabled) return null;
+
+  const activeChannel = TOP_TEN_TABS.find((t) => t.id === tab)?.channel ?? 'tv';
+
+  return (
+    <ShelfRow
+      title="本周前十"
+      badge="TOP 10"
+      headerExtra={
+        <div className="flex items-center gap-1 flex-wrap">
+          {TOP_TEN_TABS.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => setTab(t.id)}
+              className={cn(
+                'px-2.5 py-1 rounded-full text-xs transition-colors cursor-pointer',
+                tab === t.id
+                  ? 'bg-accent text-on-accent font-medium shadow-sm'
+                  : 'bg-chip text-muted hover:text-content hover:bg-hover',
+              )}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+      }
+    >
+      {isLoading && items.length === 0
+        ? Array.from({ length: 6 }).map((_, idx) => (
+            <div key={idx} className="w-40 sm:w-44 shrink-0 flex items-end">
+              <div className="w-10 h-24 rounded bg-chip animate-pulse mr-1" />
+              <div className="flex-1 aspect-[2/3] rounded-xl bg-chip animate-pulse" />
+            </div>
+          ))
+        : items.map((item, idx) => (
+            <TopTenCard
+              key={`${item.id}_${item.title}`}
+              rank={idx + 1}
+              item={item}
+              onClick={() => {
+                void rememberDoubanItem(item, activeChannel);
+                onPick(item.title);
+              }}
+              onFavorite={() => {
+                void rememberDoubanItem(item, activeChannel);
+              }}
+            />
+          ))}
+    </ShelfRow>
+  );
+}
+
+function TopTenCard({
+  rank,
+  item,
+  onClick,
+  onFavorite,
+}: {
+  rank: number;
+  item: DoubanItem;
+  onClick: () => void;
+  onFavorite: () => void;
+}) {
+  return (
+    <div className="shrink-0 flex items-end group pl-1">
+      {/* Netflix 风格大号空心描边渐变数字 */}
+      <div
+        aria-hidden
+        className="select-none pointer-events-none -mr-3.5 sm:-mr-4 z-0 pb-6 transition-transform duration-200 group-hover:scale-105"
+      >
+        <svg
+          viewBox={rank === 10 ? '0 0 92 110' : '0 0 64 110'}
+          className={cn('h-24 sm:h-28 w-auto overflow-visible drop-shadow')}
+        >
+          <defs>
+            <linearGradient id={`rank-grad-${rank}`} x1="0%" y1="0%" x2="0%" y2="100%">
+              <stop offset="0%" stopColor="rgb(var(--c-accent))" stopOpacity="0.95" />
+              <stop offset="100%" stopColor="rgb(var(--c-card))" stopOpacity="0.9" />
+            </linearGradient>
+          </defs>
+          <text
+            x={rank === 10 ? '46' : '32'}
+            y="98"
+            textAnchor="middle"
+            fill={`url(#rank-grad-${rank})`}
+            stroke="rgb(var(--c-content))"
+            strokeOpacity="0.45"
+            strokeWidth="3"
+            fontWeight="900"
+            fontSize={rank === 10 ? '86' : '98'}
+            fontFamily="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+            style={{ letterSpacing: rank === 10 ? '-6px' : '0' }}
+          >
+            {rank}
+          </text>
+        </svg>
+      </div>
+
+      <div className="relative z-10 w-[7.25rem] sm:w-32">
+        <DoubanCard
+          item={{
+            title: item.title,
+            cover: item.cover,
+            rating: item.rating,
+            meta: [item.year, item.area].filter(Boolean).join(' · ') || `本周第 ${rank} 名`,
+            favorite: {
+              localId: favoriteIdOf({ title: item.title }),
+              title: item.title,
+              pic: item.cover,
+              year: item.year,
+            },
+            badge:
+              item.status === 'ended'
+                ? { text: '完结', tone: 'ok' }
+                : item.status === 'airing'
+                  ? { text: '连载', tone: 'warn' }
+                  : undefined,
+          }}
+          onClick={onClick}
+          onFavorite={onFavorite}
+        />
+      </div>
+    </div>
+  );
+}

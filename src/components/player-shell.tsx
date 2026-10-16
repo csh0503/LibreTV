@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import Artplayer from 'artplayer';
 import Hls, { type HlsConfig } from 'hls.js';
 
@@ -40,6 +41,10 @@ interface PlayerShellProps {
   onPause?: (position: number, duration: number) => void;
   /** 恢复策略判源不可用（重试耗尽/格式硬失败）时回调：父级弹出换源面板 */
   onRequestSwitchSource?: (reason: string) => void;
+  /** 下一集预热状态回调：用于在下一集倒计时大卡上展示「已预热下一集」 */
+  onNextPrefetchState?: (state: 'idle' | 'running' | 'done') => void;
+  /** 播放器表面浮层（如播完时的下一集倒计时大卡、「还在看吗？」询问卡），支持全屏内展示 */
+  overlay?: React.ReactNode;
 }
 
 export function PlayerShell({
@@ -55,8 +60,11 @@ export function PlayerShell({
   onEnded,
   onPause,
   onRequestSwitchSource,
+  onNextPrefetchState,
+  overlay,
 }: PlayerShellProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const [overlayHost, setOverlayHost] = useState<HTMLDivElement | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const artRef = useRef<any>(null);
   const hlsRef = useRef<Hls | null>(null);
@@ -69,11 +77,11 @@ export function PlayerShell({
   // 始终持有最新 props/回调，避免重建播放器
   const propsRef = useRef({
     url, title, adFilter, autoplayNext, episodeKey, nextUrl, nextEpisodeKey,
-    getRestorePosition, onTimeUpdate, onEnded, onPause, onRequestSwitchSource,
+    getRestorePosition, onTimeUpdate, onEnded, onPause, onRequestSwitchSource, onNextPrefetchState,
   });
   propsRef.current = {
     url, title, adFilter, autoplayNext, episodeKey, nextUrl, nextEpisodeKey,
-    getRestorePosition, onTimeUpdate, onEnded, onPause, onRequestSwitchSource,
+    getRestorePosition, onTimeUpdate, onEnded, onPause, onRequestSwitchSource, onNextPrefetchState,
   };
 
   // 跨集共享、每次换集重置的播放链路状态
@@ -125,6 +133,22 @@ export function PlayerShell({
     };
   };
 
+  const warmNextEpisode = () => {
+    const p = propsRef.current;
+    if (!p.nextUrl || !p.nextEpisodeKey) return;
+    getNextEpisodePrefetcher().ensure({
+      m3u8Url: p.nextUrl,
+      currentTime: 0,
+      episodeKey: p.nextEpisodeKey,
+      horizonSeconds: 420,
+      onProgress: (nextStats) => {
+        if (nextStats.state === 'running' || nextStats.state === 'done') {
+          propsRef.current.onNextPrefetchState?.(nextStats.state);
+        }
+      },
+    });
+  };
+
   // 当前集预取（episodeKey 缺省 = 关闭，见 ensure 内部 settings.enabled 判断）
   const ensurePrefetch = (mediaUrl: string, currentTime: number, horizonSeconds?: number) => {
     const p = propsRef.current;
@@ -136,13 +160,8 @@ export function PlayerShell({
       horizonSeconds,
       onProgress: (stats) => {
         // 当前集预取完成且存在下一集：用独立预取器预热下一集前 7 分钟
-        if (stats.state === 'done' && p.nextUrl && p.nextEpisodeKey) {
-          getNextEpisodePrefetcher().ensure({
-            m3u8Url: p.nextUrl,
-            currentTime: 0,
-            episodeKey: p.nextEpisodeKey,
-            horizonSeconds: 420,
-          });
+        if (stats.state === 'done') {
+          warmNextEpisode();
         }
       },
     });
@@ -247,8 +266,10 @@ export function PlayerShell({
     restoredRef.current = false;
     lastPrefetchEnsureRef.current = 0;
     recoveryRef.current = new PlaybackRecovery();
+    endedRef.current = false;
     // 换集时清掉上一集的预取窗口，避免带宽被旧集占用
     getVideoPrefetcher().stop();
+    propsRef.current.onNextPrefetchState?.('idle');
     setError('');
     setShowPoster(true);
     const art = artRef.current;
@@ -268,6 +289,7 @@ export function PlayerShell({
     restoredRef.current = false;
     recoveryRef.current = new PlaybackRecovery();
     endedRef.current = false;
+    propsRef.current.onNextPrefetchState?.('idle');
 
     let lastSave = 0;
 
@@ -301,6 +323,13 @@ export function PlayerShell({
       },
     });
     artRef.current = art;
+
+    // 在播放器容器内部挂载浮层宿主：网页全屏与系统全屏下均可显示倒计时大卡与「还在看吗？」
+    const host = document.createElement('div');
+    host.className = 'pointer-events-none absolute inset-0 z-[160] flex items-center justify-center';
+    containerRef.current.appendChild(host);
+    setOverlayHost(host);
+
     art.on('video:loadedmetadata', () => {
       // ArtPlayer 运行时支持 title 选项（类型定义未覆盖），用于界面标题展示
       try {
@@ -340,6 +369,10 @@ export function PlayerShell({
         // 用 currentMediaUrlRef（代理回退后的实际地址）：否则预取的 key 与
         // loader 读取的 key 不一致，缓存永不命中且直连 fetch 白耗流量
         ensurePrefetch(currentMediaUrlRef.current, art.currentTime);
+        // 临近片尾 90 秒内提前预热下一集，保证播完弹出大卡时下一集已预热
+        if (art.duration > 0 && art.duration - art.currentTime <= 90) {
+          warmNextEpisode();
+        }
       }
     });
     art.on('video:seeked', () => {
@@ -465,6 +498,8 @@ export function PlayerShell({
       hlsRef.current = null;
       recoveryRef.current?.dispose();
       getVideoPrefetcher().stop();
+      host.remove();
+      setOverlayHost(null);
       art.destroy();
       artRef.current = null;
     };
@@ -518,11 +553,12 @@ export function PlayerShell({
           {hint}
         </div>
       )}
-      {autoplayNext && !error && (
+      {autoplayNext && !error && !overlay && (
         <div className="absolute bottom-16 right-3 text-[10px] text-muted bg-black/50 px-2 py-0.5 rounded pointer-events-none">
           自动连播已开启
         </div>
       )}
+      {overlay && (overlayHost ? createPortal(overlay, overlayHost) : overlay)}
     </div>
   );
 }

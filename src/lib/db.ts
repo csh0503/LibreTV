@@ -240,14 +240,20 @@ export async function upsertHistory(entry: Omit<HistoryEntry, 'id' | 'profileId'
     rating: existing?.tasteRating || seed?.rating,
     doubanId: existing?.tasteDoubanId || seed?.doubanId,
   });
+  const sameEpisode = !existing || existing.episodeIndex === entry.episodeIndex;
   const merged: HistoryEntry = {
     ...existing,
     ...entry,
     ...columns,
     id,
     profileId: pid,
-    playbackPosition: entry.playbackPosition > 10 ? entry.playbackPosition : existing?.playbackPosition ?? 0,
-    duration: entry.duration || existing?.duration || 0,
+    playbackPosition:
+      entry.playbackPosition > 10
+        ? entry.playbackPosition
+        : sameEpisode
+          ? (existing?.playbackPosition ?? 0)
+          : 0,
+    duration: entry.duration || (sameEpisode ? existing?.duration || 0 : 0),
     timestamp: Date.now(),
   };
   await db.history.put(merged);

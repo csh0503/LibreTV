@@ -4,16 +4,20 @@ import { useMemo } from 'react';
 import { useQueries } from '@tanstack/react-query';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { api } from '@/lib/client-api';
+import { isAdultContent } from '@/lib/cms-parser';
 import { db, favoriteIdOf } from '@/lib/db';
+import { buildSingleAnchorFallback } from '@/lib/home-features';
+import { buildDoubanRequest, HALL_PAGE_SIZE } from '@/lib/recommend';
 import { useAppStore } from '@/lib/store';
-import { useProfile } from '@/lib/use-profile';
 import { assembleTaste, rankTaste, type TasteChannel } from '@/lib/taste';
 import { rememberDoubanItem } from '@/lib/taste-store';
-import { buildDoubanRequest, HALL_PAGE_SIZE } from '@/lib/recommend';
+import { canonicalTitle } from '@/lib/title-aliases';
 import type { DoubanItem } from '@/lib/types';
+import { useProfile } from '@/lib/use-profile';
+import { ShelfRow } from './home-rows';
 import { DoubanCard } from './video-card';
 
-/** 首页最上面两行：这个设定档的口味，以及「因为你看过」。冷启动时不占位置。 */
+/** 首页口味排：「为你推荐」与「因为你看过《某某》」。 */
 export function ForYouRows({ onPick }: { onPick: (title: string) => void }) {
   const doubanEnabled = useAppStore((s) => s.doubanEnabled);
   const yellowFilter = useAppStore((s) => s.yellowFilter);
@@ -30,9 +34,10 @@ export function ForYouRows({ onPick }: { onPick: (title: string) => void }) {
     () => (profileId ? db.tastes.where('profileId').equals(profileId).toArray() : []),
     [profileId],
   );
-  const assembled = useMemo(() => {
+
+  const tasteInput = useMemo(() => {
     if (!history || !favorites || !tastes) return null;
-    return assembleTaste({
+    return {
       now: Date.now(),
       watches: history.map((row) => ({
         title: row.title,
@@ -61,9 +66,35 @@ export function ForYouRows({ onPick }: { onPick: (title: string) => void }) {
         year: row.year,
         channel: row.channel,
       })),
-    });
+    };
   }, [history, favorites, tastes]);
-  const jobs = assembled?.jobs ?? [];
+
+  const assembled = useMemo(() => {
+    if (!tasteInput) return null;
+    return assembleTaste(tasteInput);
+  }, [tasteInput]);
+
+  // 单部兜底：刚看过 1 部有题材的片子时，立刻能展示「因为你看过《某某》」
+  const singleFallback = useMemo(() => {
+    if (assembled || !tasteInput) return null;
+    return buildSingleAnchorFallback(tasteInput);
+  }, [assembled, tasteInput]);
+
+  const jobs = useMemo(() => {
+    if (assembled) return assembled.jobs;
+    if (singleFallback) {
+      return [
+        {
+          selection: singleFallback.selection,
+          pageStart: 0,
+          forUser: false,
+          forAnchor: true,
+        },
+      ];
+    }
+    return [];
+  }, [assembled, singleFallback]);
+
   const queries = useQueries({
     queries: jobs.map((job) => {
       const request = buildDoubanRequest(job.selection);
@@ -72,14 +103,18 @@ export function ForYouRows({ onPick }: { onPick: (title: string) => void }) {
         enabled: Boolean(doubanEnabled && profileId && request),
         staleTime: 10 * 60 * 1000,
         retry: 1,
-        queryFn: ({ signal }: { signal: AbortSignal }) => api.douban({
-          kind: request!.kind,
-          tags: request!.tags,
-          sort: request!.sort,
-          score: request!.score,
-          pageStart: job.pageStart,
-          pageSize: HALL_PAGE_SIZE,
-        }, signal),
+        queryFn: ({ signal }: { signal: AbortSignal }) =>
+          api.douban(
+            {
+              kind: request!.kind,
+              tags: request!.tags,
+              sort: request!.sort,
+              score: request!.score,
+              pageStart: job.pageStart,
+              pageSize: HALL_PAGE_SIZE,
+            },
+            signal,
+          ),
       };
     }),
   });
@@ -91,21 +126,16 @@ export function ForYouRows({ onPick }: { onPick: (title: string) => void }) {
     onPick(item.title);
   };
 
-  if (!assembled) {
-    if (history.length + favorites.length < 2) return null;
-    return (
-      <p className="mb-6 text-xs text-faint">
-        从下面的大厅点开几部片子后，会按这个设定档的口味推荐。以前看过的，要在大厅里再遇到同一部，才会记上题材。
-      </p>
-    );
+  if (!assembled && !singleFallback) {
+    return null;
   }
 
   const waiting = queries.length > 0 && queries.some((query) => query.isPending);
   if (waiting) {
     return (
-      <section aria-label="为你推荐" className="mb-8 space-y-2">
-        <h2 className="text-sm font-semibold text-content">为你推荐</h2>
-        <div className="flex gap-2.5 overflow-hidden">
+      <section aria-label="为你推荐加载中" className="space-y-2.5">
+        <div className="h-5 w-40 rounded bg-chip animate-pulse" />
+        <div className="flex gap-3 overflow-hidden">
           {Array.from({ length: 8 }).map((_, index) => (
             <div key={index} className="w-[7.25rem] sm:w-32 shrink-0">
               <div className="aspect-[2/3] rounded-xl bg-chip animate-pulse" />
@@ -128,44 +158,76 @@ export function ForYouRows({ onPick }: { onPick: (title: string) => void }) {
       if (job.forAnchor) anchorPool.push(item);
     }
   });
-  const ranked = rankTaste({
-    events: assembled.events,
-    userPool,
-    anchorPool,
-    anchorTitle: assembled.anchorTitle,
-    blocked: assembled.blocked,
-    now: Date.now(),
-    hideAdult: yellowFilter,
-    channelOf: (item) => channels.get(item.id),
-  });
-  if (ranked.forYou.length === 0 && ranked.because.length === 0) {
-    if (queries.length > 0 && queries.every((query) => query.isError)) {
-      return <p className="mb-6 text-xs text-faint">按你的口味找片子失败了，下面的大厅还能继续看。</p>;
+
+  if (assembled) {
+    const ranked = rankTaste({
+      events: assembled.events,
+      userPool,
+      anchorPool,
+      anchorTitle: assembled.anchorTitle,
+      blocked: assembled.blocked,
+      now: Date.now(),
+      hideAdult: yellowFilter,
+      channelOf: (item) => channels.get(item.id),
+    });
+    if (ranked.forYou.length === 0 && ranked.because.length === 0) {
+      return null;
     }
-    return null;
+
+    return (
+      <>
+        {ranked.forYou.length > 0 && (
+          <TasteRow
+            title="为你推荐"
+            hint="按当前设定档看完、收藏的口味偏好排列"
+            items={ranked.forYou}
+            onOpen={(item) => open(item, channels.get(item.id))}
+            onFavorite={(item) => {
+              void rememberDoubanItem(item, channels.get(item.id));
+            }}
+          />
+        )}
+        {ranked.because.length > 0 && assembled.anchorTitle && (
+          <TasteRow
+            title={`因为你${assembled.anchorReason}《${assembled.anchorTitle}》`}
+            items={ranked.because}
+            onOpen={(item) => open(item, channels.get(item.id))}
+            onFavorite={(item) => {
+              void rememberDoubanItem(item, channels.get(item.id));
+            }}
+          />
+        )}
+      </>
+    );
   }
 
-  return (
-    <div className="mb-8 space-y-6">
-      {ranked.forYou.length > 0 && (
-        <TasteRow
-          title="为你推荐"
-          hint="只按这个设定档看完、收藏和弃掉的片子来排"
-          items={ranked.forYou}
-          onOpen={(item) => open(item, channels.get(item.id))}
-          onFavorite={(item) => { void rememberDoubanItem(item, channels.get(item.id)); }}
-        />
-      )}
-      {ranked.because.length > 0 && assembled.anchorTitle && (
-        <TasteRow
-          title={`因为你${assembled.anchorReason}《${assembled.anchorTitle}》`}
-          items={ranked.because}
-          onOpen={(item) => open(item, channels.get(item.id))}
-          onFavorite={(item) => { void rememberDoubanItem(item, channels.get(item.id)); }}
-        />
-      )}
-    </div>
-  );
+  if (singleFallback) {
+    const blockedSet = new Set(singleFallback.blocked.map((t) => canonicalTitle(t)).filter(Boolean));
+    const singleItems = anchorPool
+      .filter((item) => {
+        if (yellowFilter && (isAdultContent(item.title) || isAdultContent(item.genres) || isAdultContent(item.remarks))) {
+          return false;
+        }
+        const key = canonicalTitle(item.title);
+        return Boolean(key && !blockedSet.has(key));
+      })
+      .slice(0, 12);
+
+    if (singleItems.length === 0) return null;
+
+    return (
+      <TasteRow
+        title={`因为你${singleFallback.anchorReason}《${singleFallback.anchorTitle}》`}
+        items={singleItems}
+        onOpen={(item) => open(item, channels.get(item.id))}
+        onFavorite={(item) => {
+          void rememberDoubanItem(item, channels.get(item.id));
+        }}
+      />
+    );
+  }
+
+  return null;
 }
 
 function TasteRow({
@@ -182,38 +244,33 @@ function TasteRow({
   onFavorite: (item: DoubanItem) => void;
 }) {
   return (
-    <section aria-label={title} className="space-y-2">
-      <div>
-        <h2 className="text-sm font-semibold text-content line-clamp-2">{title}</h2>
-        {hint && <p className="text-xs text-faint mt-0.5">{hint}</p>}
-      </div>
-      <div className="flex gap-2.5 overflow-x-auto pb-1">
-        {items.map((item) => (
-          <div key={`${item.id}_${item.title}`} className="w-[7.25rem] sm:w-32 shrink-0">
-            <DoubanCard
-              item={{
+    <ShelfRow title={title} hint={hint}>
+      {items.map((item) => (
+        <div key={`${item.id}_${item.title}`} className="w-[7.25rem] sm:w-32 shrink-0">
+          <DoubanCard
+            item={{
+              title: item.title,
+              cover: item.cover,
+              rating: item.rating,
+              meta: [item.year, item.area].filter(Boolean).join(' · ') || undefined,
+              favorite: {
+                localId: favoriteIdOf({ title: item.title }),
                 title: item.title,
-                cover: item.cover,
-                rating: item.rating,
-                meta: [item.year, item.area].filter(Boolean).join(' · ') || undefined,
-                favorite: {
-                  localId: favoriteIdOf({ title: item.title }),
-                  title: item.title,
-                  pic: item.cover,
-                  year: item.year,
-                },
-                badge: item.status === 'ended'
+                pic: item.cover,
+                year: item.year,
+              },
+              badge:
+                item.status === 'ended'
                   ? { text: '完结', tone: 'ok' }
                   : item.status === 'airing'
                     ? { text: '连载', tone: 'warn' }
                     : undefined,
-              }}
-              onClick={() => onOpen(item)}
-              onFavorite={() => onFavorite(item)}
-            />
-          </div>
-        ))}
-      </div>
-    </section>
+            }}
+            onClick={() => onOpen(item)}
+            onFavorite={() => onFavorite(item)}
+          />
+        </div>
+      ))}
+    </ShelfRow>
   );
 }

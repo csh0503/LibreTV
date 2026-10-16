@@ -92,11 +92,12 @@ export function hostnameOf(url: string): string {
   }
 }
 
-/** 为分享链接等场景构造观看页 URL */
+/** 为分享链接、继续观看等场景构造观看页 URL */
 export function buildWatchUrl(params: {
   sourceKey: string;
   vodId?: string;
   index?: number;
+  position?: number;
   title?: string;
   episodeUrl?: string;
   sourceUrl?: string;
@@ -106,9 +107,13 @@ export function buildWatchUrl(params: {
   sp.set('source', params.sourceKey);
   if (params.vodId) sp.set('id', params.vodId);
   if (typeof params.index === 'number') sp.set('index', String(params.index));
+  if (typeof params.position === 'number' && params.position > 0) {
+    sp.set('position', String(Math.floor(params.position)));
+  }
   if (params.title) sp.set('title', params.title);
   if (params.episodeUrl) sp.set('url', params.episodeUrl);
   if (params.sourceUrl) sp.set('sourceUrl', params.sourceUrl);
   if (params.detail) sp.set('detail', params.detail);
   return `/watch?${sp.toString()}`;
 }
+

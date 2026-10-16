@@ -66,6 +66,7 @@ export function RecommendSection({
   const [sortKey, setSortKey] = useState<HallSortKey>('hot');
   const [sortDir, setSortDir] = useState<HallSortDir>('desc');
   const [weekday, setWeekday] = useState<number | 'all'>('all');
+  const [filtersExpanded, setFiltersExpanded] = useState(true);
 
   useEffect(() => {
     if (yellowFilter && channel === 'adult') setChannel('anime');
@@ -204,6 +205,16 @@ export function RecommendSection({
     setWeekday('all');
   };
 
+  const hasActiveFilter =
+    genre !== '全部' ||
+    area !== '全部' ||
+    year !== '全部' ||
+    status !== 'all' ||
+    score !== 'all' ||
+    sortKey !== 'hot' ||
+    sortDir !== 'desc' ||
+    weekday !== 'all';
+
   const pickChannel = (id: HallChannel) => {
     setChannel(id);
     setGenre('全部');
@@ -211,19 +222,42 @@ export function RecommendSection({
   };
 
   return (
-    <section aria-label="影视与动漫大厅" className="space-y-3.5">
-      <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 border-b border-line pb-2.5">
-        {CHANNELS.map((c) => (
-          <ChannelButton key={c.id} active={channel === c.id} onClick={() => pickChannel(c.id)}>
-            <span>{c.icon}</span>
-            <span>{c.label}</span>
-          </ChannelButton>
-        ))}
-        {!yellowFilter && (
-          <ChannelButton active={channel === 'adult'} onClick={() => pickChannel('adult')}>
-            <span>18+</span>
-            <span>成人</span>
-          </ChannelButton>
+    <section aria-label="影视与动漫大厅" className="space-y-3.5 pt-2">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line pb-2.5">
+        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+          <h2 className="text-base sm:text-lg font-bold text-content tracking-tight mr-1">分类片库</h2>
+          {CHANNELS.map((c) => (
+            <ChannelButton key={c.id} active={channel === c.id} onClick={() => pickChannel(c.id)}>
+              <span>{c.icon}</span>
+              <span>{c.label}</span>
+            </ChannelButton>
+          ))}
+          {!yellowFilter && (
+            <ChannelButton active={channel === 'adult'} onClick={() => pickChannel('adult')}>
+              <span>18+</span>
+              <span>成人</span>
+            </ChannelButton>
+          )}
+        </div>
+        {channel !== 'adult' && (
+          <div className="flex items-center gap-2 ml-auto">
+            {hasActiveFilter && (
+              <button
+                type="button"
+                onClick={reset}
+                className="px-2.5 py-1 rounded-lg text-xs text-accent hover:bg-accent/10 transition-colors cursor-pointer"
+              >
+                重置筛选
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setFiltersExpanded((v) => !v)}
+              className="px-2.5 py-1 rounded-lg text-xs bg-chip text-muted hover:text-content hover:bg-hover transition-colors cursor-pointer"
+            >
+              {filtersExpanded ? '收起筛选' : '展开筛选'}
+            </button>
+          </div>
         )}
       </div>
 
@@ -231,64 +265,66 @@ export function RecommendSection({
         <AdultLibrary onOpen={onOpen} />
       ) : (
         <>
-          <div className="bg-surface/60 border border-line rounded-2xl p-3 sm:p-4 space-y-2.5 text-xs">
-            {channel === 'anime' && (
-              <FilterRow label="放送">
-                <FilterChip active={weekday === 'all'} onClick={() => setWeekday('all')}>
-                  全部
-                </FilterChip>
-                {WEEKDAYS.map((label, index) => (
-                  <FilterChip key={label} active={weekday === index + 1} onClick={() => setWeekday(index + 1)}>
-                    {label}
+          {filtersExpanded && (
+            <div className="bg-surface/60 border border-line rounded-2xl p-3 sm:p-4 space-y-2 text-xs">
+              {channel === 'anime' && (
+                <FilterRow label="放送">
+                  <FilterChip active={weekday === 'all'} onClick={() => setWeekday('all')}>
+                    全部
+                  </FilterChip>
+                  {WEEKDAYS.map((label, index) => (
+                    <FilterChip key={label} active={weekday === index + 1} onClick={() => setWeekday(index + 1)}>
+                      {label}
+                    </FilterChip>
+                  ))}
+                </FilterRow>
+              )}
+              <FilterRow label="题材">
+                {genreList.map((name) => (
+                  <FilterChip key={name} active={genre === name} onClick={() => setGenre(name)}>
+                    {name}
                   </FilterChip>
                 ))}
               </FilterRow>
-            )}
-            <FilterRow label="题材">
-              {genreList.map((name) => (
-                <FilterChip key={name} active={genre === name} onClick={() => setGenre(name)}>
-                  {name}
-                </FilterChip>
-              ))}
-            </FilterRow>
-            <FilterRow label="地区">
-              {AREAS.map((name) => (
-                <FilterChip key={name} active={area === name} onClick={() => setArea(name)}>
-                  {name}
-                </FilterChip>
-              ))}
-            </FilterRow>
-            <FilterRow label="年份">
-              {YEARS.map((name) => (
-                <FilterChip key={name} active={year === name} onClick={() => setYear(name)}>
-                  {name}
-                </FilterChip>
-              ))}
-            </FilterRow>
-            {showStatus && (
-              <FilterRow label="状态">
-                <FilterChip active={status === 'all'} onClick={() => setStatus('all')}>全部</FilterChip>
-                <FilterChip active={status === 'airing'} onClick={() => setStatus('airing')}>连载中</FilterChip>
-                <FilterChip active={status === 'ended'} onClick={() => setStatus('ended')}>已完结</FilterChip>
+              <FilterRow label="地区">
+                {AREAS.map((name) => (
+                  <FilterChip key={name} active={area === name} onClick={() => setArea(name)}>
+                    {name}
+                  </FilterChip>
+                ))}
               </FilterRow>
-            )}
-            <FilterRow label="评分">
-              <FilterChip active={score === 'all'} onClick={() => setScore('all')}>全部</FilterChip>
-              <FilterChip active={score === '9'} onClick={() => setScore('9')}>9 分以上</FilterChip>
-              <FilterChip active={score === '8'} onClick={() => setScore('8')}>8 分以上</FilterChip>
-              <FilterChip active={score === '7'} onClick={() => setScore('7')}>7 分以上</FilterChip>
-            </FilterRow>
-            <FilterRow label="排序">
-              <SortArrows
-                sortKey={sortKey}
-                sortDir={sortDir}
-                onChange={(key, dir) => {
-                  setSortKey(key);
-                  setSortDir(dir);
-                }}
-              />
-            </FilterRow>
-          </div>
+              <FilterRow label="年份">
+                {YEARS.map((name) => (
+                  <FilterChip key={name} active={year === name} onClick={() => setYear(name)}>
+                    {name}
+                  </FilterChip>
+                ))}
+              </FilterRow>
+              {showStatus && (
+                <FilterRow label="状态">
+                  <FilterChip active={status === 'all'} onClick={() => setStatus('all')}>全部</FilterChip>
+                  <FilterChip active={status === 'airing'} onClick={() => setStatus('airing')}>连载中</FilterChip>
+                  <FilterChip active={status === 'ended'} onClick={() => setStatus('ended')}>已完结</FilterChip>
+                </FilterRow>
+              )}
+              <FilterRow label="评分">
+                <FilterChip active={score === 'all'} onClick={() => setScore('all')}>全部</FilterChip>
+                <FilterChip active={score === '9'} onClick={() => setScore('9')}>9 分以上</FilterChip>
+                <FilterChip active={score === '8'} onClick={() => setScore('8')}>8 分以上</FilterChip>
+                <FilterChip active={score === '7'} onClick={() => setScore('7')}>7 分以上</FilterChip>
+              </FilterRow>
+              <FilterRow label="排序">
+                <SortArrows
+                  sortKey={sortKey}
+                  sortDir={sortDir}
+                  onChange={(key, dir) => {
+                    setSortKey(key);
+                    setSortDir(dir);
+                  }}
+                />
+              </FilterRow>
+            </div>
+          )}
 
           {weekdayMode && (
             <p className="text-xs text-faint">这一行是 Bangumi 本周放送。题材、地区、年份和评分留到「全部」放送时再生效。</p>
@@ -375,8 +411,8 @@ function ChannelButton({ active, onClick, children }: { active: boolean; onClick
 function FilterRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-start gap-2">
-      <span className="text-muted shrink-0 w-12 font-medium pt-1">{label}</span>
-      <div className="flex flex-wrap gap-1">{children}</div>
+      <span className="text-muted shrink-0 w-10 sm:w-12 font-medium pt-1">{label}</span>
+      <div className="flex flex-1 min-w-0 overflow-x-auto scrollbar-none sm:flex-wrap gap-1 pb-0.5">{children}</div>
     </div>
   );
 }

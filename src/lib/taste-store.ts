@@ -116,6 +116,24 @@ export async function rememberDoubanItem(
   return changed;
 }
 
+/** 从采集站详情（typeName / area / year）补齐口味，让直接搜索播放的影片也能参与推荐 */
+export async function rememberVideoInfo(
+  title: string,
+  extracted: { channel?: TasteChannel; genres?: string; area?: string; year?: string },
+): Promise<boolean> {
+  if (!extracted.channel && !extracted.genres && !extracted.area) return false;
+  return rememberDoubanItem(
+    {
+      id: '',
+      title,
+      genres: extracted.genres,
+      area: extracted.area,
+      year: extracted.year,
+    },
+    extracted.channel,
+  );
+}
+
 /** 大厅这一页里，如果有已经看过或收藏过的片子，把卡片上的题材补到那条记录上。 */
 export async function absorbHallTaste(items: DoubanItem[], channel: TasteChannel, pickedGenre: string): Promise<void> {
   const profileId = await currentProfile();
@@ -139,3 +157,4 @@ export async function absorbHallTaste(items: DoubanItem[], channel: TasteChannel
   }
   if (changed) markProfileDirty();
 }
+

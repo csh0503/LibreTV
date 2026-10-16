@@ -16,6 +16,8 @@ import { useFocusTrap } from './use-focus-trap';
 import { Icon } from './icon';
 import { FavoriteButton } from './favorite-button';
 import { favoriteIdOf } from '@/lib/db';
+import { extractTasteFromVideoInfo } from '@/lib/home-features';
+import { rememberVideoInfo } from '@/lib/taste-store';
 
 /**
  * 详情弹窗：剧集列表 + 排序 + 复制链接。
@@ -70,7 +72,12 @@ export function DetailModal({ item, onClose }: { item: SearchResultItem | null; 
     abortRef.current = controller;
     api
       .detail(item.vodId, source, controller.signal)
-      .then((d) => setDetail(d))
+      .then((d) => {
+        setDetail(d);
+        if (!item.isAdult) {
+          void rememberVideoInfo(item.name, extractTasteFromVideoInfo(d.videoInfo));
+        }
+      })
       .catch((err) => {
         if (err instanceof DOMException && err.name === 'AbortError') return;
         setError(err instanceof Error ? err.message : '获取详情失败');

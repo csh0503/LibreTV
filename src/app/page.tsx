@@ -6,6 +6,12 @@ import { useQuery } from '@tanstack/react-query';
 import { Header } from '@/components/header';
 import { RecommendSection } from '@/components/douban-section';
 import { ForYouRows } from '@/components/for-you';
+import {
+  ContinueWatchingRow,
+  HeroBillboard,
+  MyListRow,
+  TopTenRow,
+} from '@/components/home-rows';
 import { DetailModal } from '@/components/detail-modal';
 import { AggregatedCard, aggregateResults } from '@/components/video-card';
 import { useAppStore, resolveSource, isInDisabledSubscription, isSourceDisabled } from '@/lib/store';
@@ -407,23 +413,48 @@ function HomeContent() {
           </section>
         )}
 
-        {/* 首页推荐（有搜索时隐藏）。上面两行是这个设定档自己的口味。 */}
+        {/* 首页大盘（有搜索时隐藏）：主推大图 -> 继续观看 / 我的片单 -> 个性化推荐 -> 本周前十 -> 分类片库 */}
         {!urlQuery && (
-          <>
+          <div className="space-y-7">
+            <HeroBillboard
+              onPick={(title) => {
+                setInput(title);
+                runSearch(title);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+            />
+            <ContinueWatchingRow />
+            <MyListRow
+              onPick={(title) => {
+                setInput(title);
+                runSearch(title);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+              onOpen={(item) => setDetailItem(item)}
+            />
             <ForYouRows
               onPick={(title) => {
                 setInput(title);
                 runSearch(title);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+            />
+            <TopTenRow
+              onPick={(title) => {
+                setInput(title);
+                runSearch(title);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
               }}
             />
             <RecommendSection
               onPick={(title) => {
                 setInput(title);
                 runSearch(title);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
               }}
               onOpen={(item) => setDetailItem(item)}
             />
-          </>
+          </div>
         )}
       </main>
 
