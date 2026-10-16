@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { failureReason, probeEpisode } from './quality-probe';
+import { probeEpisode } from './quality-probe';
 
 const media = Array.from({ length: 12 }, (_, i) => `#EXTINF:10,\nseg${i}.ts`).join('\n');
 
@@ -36,15 +36,10 @@ describe('probeEpisode', () => {
     });
     expect(q.ok).toBe(true);
   });
-});
 
-describe('failureReason', () => {
-  it('把错误归成几类', () => {
-    expect(failureReason('超时')).toBe('超时');
-    expect(failureReason('The operation was aborted')).toBe('超时');
-    expect(failureReason('HTTP 403')).toBe('被拒');
-    expect(failureReason('详情 HTTP 502')).toBe('源站出错');
-    expect(failureReason('Failed to fetch')).toBe('连不上');
-    expect(failureReason(undefined)).toBe('');
+  it('读到的不是播放列表（被挡返回网页）算测不了', async () => {
+    await expect(
+      probeEpisode('https://cdn.test/a/index.m3u8', { text: async () => '<html>blocked</html>', segmentBytes: async () => 0 }),
+    ).rejects.toThrow('不是播放列表');
   });
 });

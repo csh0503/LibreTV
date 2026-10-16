@@ -227,7 +227,7 @@ export function LiveChannelList({ channels, groups, currentUrl, onSelect, onFilt
           <button
             key={v}
             className={cn(
-              'px-2.5 py-1 rounded-md text-xs transition-colors',
+              'px-2.5 py-1 rounded-lg text-xs transition-colors',
               view === v ? 'bg-accent/10 text-accent font-medium' : 'text-muted hover:text-content hover:bg-hover'
             )}
             onClick={() => setView(v)}
@@ -492,7 +492,7 @@ const ChannelRow = memo(function ChannelRow({
           键盘操作由外层列表容器的 ↑↓ 导航提供 */}
       <div
         className={cn(
-          'group flex items-center gap-2.5 px-2 py-2 rounded-md cursor-pointer transition-colors relative',
+          'group flex items-center gap-2.5 px-2 py-2 rounded-lg cursor-pointer transition-colors relative',
           active ? 'bg-accent/10' : 'hover:bg-hover',
           cursor && 'ring-1 ring-accent/70'
         )}

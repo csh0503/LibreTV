@@ -175,7 +175,7 @@ function LoginModal({
 
   return (
     <div
-      className="fixed inset-0 z-[95] flex items-center justify-center bg-black/80 animate-fade-in"
+      className="fixed inset-0 z-[95] flex items-center justify-center bg-black/55 backdrop-blur-xl animate-fade-in"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}

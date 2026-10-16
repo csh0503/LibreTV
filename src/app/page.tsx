@@ -229,19 +229,19 @@ function HomeContent() {
                   // 12px 圆角矩形（非胶囊）：收起态与展开态共用同一组上圆角，
                   // 展开时输入框这部分形状完全不发生变化，上下圆角也与下拉保持一致；
                   // 右侧与上下不留内边距，由搜索按钮拉伸填满、与搜索框边缘贴合
-                  'flex items-stretch min-h-12 pl-4 border',
-                  'transition-[background-color,border-color,border-radius] duration-200',
+                  'flex items-center min-h-[52px] pl-4 pr-1.5 glass shadow-[0_8px_30px_rgba(0,0,0,0.18)]',
+                  'transition-[background-color,border-color,border-radius,box-shadow] duration-200',
                   searchHistory.visible
-                    ? // 展开时：外框（含上圆角）沿用输入框的聚焦样式不变，只把底边改为内部分隔线，
-                      // 使输入区在展开状态下仍是边界清晰的独立输入框，而非与列表糊成一片
-                      'rounded-t-xl rounded-b-none border-accent border-b-line bg-surface-raised'
-                    : 'rounded-xl border-line bg-chip focus-within:border-accent focus-within:ring-1 focus-within:ring-accent/40'
+                    ? // 展开时：只把底边改为内部分隔线，和下面的浮层拼成同一个面板
+                      'rounded-t-[22px] rounded-b-none !border-b-content/10'
+                    : 'rounded-[22px] focus-within:ring-2 focus-within:ring-accent/40'
                 )}
               >
+                <Icon name="search" className="w-[18px] h-[18px] text-faint shrink-0 mr-2.5" />
                 <input
                   ref={inputRef}
-                  className="flex-1 min-w-0 pr-2 bg-transparent text-sm text-content placeholder:text-faint focus:outline-none"
-                  placeholder="输入影片名称..."
+                  className="flex-1 min-w-0 pr-2 bg-transparent text-[15px] text-content placeholder:text-faint focus:outline-none"
+                  placeholder="搜索电影、剧集、动漫"
                   value={input}
                   maxLength={100}
                   onChange={(e) => {
@@ -275,17 +275,8 @@ function HomeContent() {
                     <Icon name="close" className="w-4 h-4" />
                   </button>
                 )}
-                {/* 主操作按钮：贴合搜索框右端——右侧圆角跟随容器、左侧直角，展开时右下角
-                    跟着容器一起改直角；按压改用亮度反馈（缩放会让贴合边缘露出缝隙） */}
-                <button
-                  type="submit"
-                  className={cn(
-                    'btn-primary shrink-0 px-4 font-medium transition-[background-color,filter] active:brightness-90',
-                    '!rounded-l-none',
-                    searchHistory.visible ? '!rounded-tr-xl !rounded-br-none' : '!rounded-r-xl'
-                  )}
-                >
-                  <Icon name="search" className="w-4 h-4" />
+                {/* 主操作按钮：框内右侧的小胶囊（回车同样能搜） */}
+                <button type="submit" className="btn-primary shrink-0 px-4 py-2 !rounded-2xl">
                   搜索
                 </button>
               </div>
@@ -363,7 +354,7 @@ function HomeContent() {
             )}
 
             {failures.length > 0 && (
-              <div className="mb-3 text-xs bg-chip rounded-lg px-3 py-2 flex flex-wrap gap-x-3 gap-y-1">
+              <div className="mb-3 text-xs bg-chip rounded-xl px-3 py-2 flex flex-wrap gap-x-3 gap-y-1">
                 <span className="text-faint">{isSearching ? '以下源暂时无响应：' : '部分点播源请求失败：'}</span>
                 {failures.map((f) => (
                   <span key={f.sourceKey} className={f.timedOut ? 'text-warning' : 'text-faint'}>
@@ -375,14 +366,14 @@ function HomeContent() {
             )}
 
             {disabledSources.length > 0 && (
-              <div className="mb-3 text-xs text-faint bg-chip rounded-lg px-3 py-2">
+              <div className="mb-3 text-xs text-faint bg-chip rounded-xl px-3 py-2">
                 {disabledSources.length} 个源因连续超时/失败已暂停参与搜索（临时停用的到期自动恢复，
                 长期停用的需在设置中手动恢复）：{disabledSources.map((key) => sourceName(key)).join('、')}
               </div>
             )}
 
             {offSubscriptionSources.length > 0 && (
-              <div className="mb-3 text-xs text-faint bg-chip rounded-lg px-3 py-2">
+              <div className="mb-3 text-xs text-faint bg-chip rounded-xl px-3 py-2">
                 {offSubscriptionSources.length} 个源所属的订阅已停用，未参与本次搜索（在设置 → 数据源订阅中可重新启用）：
                 {offSubscriptionSources.map((key) => sourceName(key)).join('、')}
               </div>

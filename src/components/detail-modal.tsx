@@ -133,7 +133,7 @@ export function DetailModal({ item, onClose }: { item: SearchResultItem | null; 
 
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-start justify-center overflow-y-auto bg-black/80 py-10 px-4 animate-fade-in"
+      className="fixed inset-0 z-[60] flex items-start justify-center overflow-y-auto bg-black/55 backdrop-blur-xl py-10 px-4 animate-fade-in"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -164,7 +164,7 @@ export function DetailModal({ item, onClose }: { item: SearchResultItem | null; 
             }}
           />
           <button
-            className="p-1.5 rounded-md text-muted hover:text-content hover:bg-hover shrink-0"
+            className="p-1.5 rounded-lg text-muted hover:text-content hover:bg-hover shrink-0"
             onClick={onClose}
             aria-label="关闭"
           >
@@ -188,7 +188,7 @@ export function DetailModal({ item, onClose }: { item: SearchResultItem | null; 
                     mode={store.imageProxyMode}
                     customProxy={store.customImageProxy}
                     alt={item.name}
-                    className="w-24 sm:w-32 aspect-[2/3] object-cover rounded-lg bg-chip shrink-0 self-center sm:self-start"
+                    className="w-24 sm:w-32 aspect-[2/3] object-cover rounded-xl bg-chip shrink-0 self-center sm:self-start"
                     loading="eager"
                     onExhausted={() => setPosterFailed(true)}
                   />

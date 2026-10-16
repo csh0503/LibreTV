@@ -190,7 +190,6 @@ export function ForYouRows({ onPick }: { onPick: (title: string, pick?: TitlePic
         {ranked.forYou.length > 0 && (
           <TasteRow
             title="为你推荐"
-            hint="按当前设定档看完、收藏的口味偏好排列"
             items={ranked.forYou}
             onOpen={(item) => open(item, channels.get(item.id))}
             onFavorite={(item) => {
@@ -243,19 +242,17 @@ export function ForYouRows({ onPick }: { onPick: (title: string, pick?: TitlePic
 
 function TasteRow({
   title,
-  hint,
   items,
   onOpen,
   onFavorite,
 }: {
   title: string;
-  hint?: string;
   items: DoubanItem[];
   onOpen: (item: DoubanItem) => void;
   onFavorite: (item: DoubanItem) => void;
 }) {
   return (
-    <ShelfRow title={title} hint={hint}>
+    <ShelfRow title={title}>
       {items.map((item) => (
         <div key={`${item.id}_${item.title}`} className="w-[7.25rem] sm:w-32 shrink-0">
           <DoubanCard

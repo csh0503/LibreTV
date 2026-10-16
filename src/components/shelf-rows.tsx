@@ -126,7 +126,7 @@ export function ShelfRows({
         if (!requested) return null;
         if (loading) {
           return (
-            <ShelfRow key={def.id} title={def.title} hint={def.hint}>
+            <ShelfRow key={def.id} title={def.title}>
               {Array.from({ length: 7 }).map((_, i) => (
                 <div key={i} className="w-[7.25rem] sm:w-32 shrink-0 aspect-[2/3] rounded-xl bg-chip animate-pulse" />
               ))}
@@ -135,7 +135,7 @@ export function ShelfRows({
         }
         if (items.length === 0) return null;
         return (
-          <ShelfRow key={def.id} title={def.title} hint={def.hint}>
+          <ShelfRow key={def.id} title={def.title}>
             {items.map((item) => (
               <div key={`${item.id}_${item.title}`} className="w-[7.25rem] sm:w-32 shrink-0">
                 <DoubanCard

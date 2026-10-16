@@ -311,7 +311,7 @@ export function LivePlayer({ url, title, onPrevChannel, onNextChannel }: LivePla
       backdrop: true,
       playsInline: true,
       airplay: true,
-      theme: '#2563eb',
+      theme: '#0a84ff',
       controls,
       lang: navigator.language.toLowerCase().startsWith('zh') ? 'zh-cn' : 'en',
       moreVideoAttr: { playsInline: true },
@@ -421,7 +421,7 @@ export function LivePlayer({ url, title, onPrevChannel, onNextChannel }: LivePla
         </div>
       )}
       {hint && (
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-black/70 text-white text-sm px-3 py-1.5 rounded-full pointer-events-none animate-fade-in">
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-black/50 backdrop-blur-xl border border-white/10 text-white text-sm px-4 py-1.5 rounded-full pointer-events-none animate-fade-in">
           {hint}
         </div>
       )}

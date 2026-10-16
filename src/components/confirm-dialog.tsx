@@ -62,7 +62,7 @@ export function ConfirmDialog({
 
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/70 animate-fade-in" onClick={onCancel} aria-hidden />
+      <div className="absolute inset-0 bg-black/50 backdrop-blur-md animate-fade-in" onClick={onCancel} aria-hidden />
       <div
         role="alertdialog"
         aria-modal="true"

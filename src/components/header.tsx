@@ -43,11 +43,11 @@ export function Header({ showSearch = false }: { showSearch?: boolean }) {
 
   return (
     <>
-      <header className="sticky top-0 z-40 bg-surface/90 backdrop-blur border-b border-line">
+      <header className="sticky top-0 z-40 glass !border-x-0 !border-t-0">
         <div className="max-w-6xl mx-auto px-4 h-14 flex items-center gap-3">
           <Link href="/" aria-label="LibreTV 首页" className="flex items-center shrink-0">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/icons/icon-512.png" alt="LibreTV" className="w-7 h-7 rounded-lg" />
+            <img src="/icons/icon-512.png" alt="LibreTV" className="w-7 h-7 rounded-xl" />
           </Link>
 
           {showSearch && (
@@ -61,13 +61,12 @@ export function Header({ showSearch = false }: { showSearch?: boolean }) {
               <div ref={searchHistory.containerRef} className="relative">
                 <input
                   className={cn(
-                    'input w-full h-9',
-                    // 展开时：上圆角与外框沿用聚焦样式，底边改为内部分隔线，与下拉拼成同一面板
-                    searchHistory.visible &&
-                      'rounded-b-none border-accent border-b-line bg-surface-raised focus-visible:ring-0'
+                    'input w-full h-9 !rounded-[22px] pl-4',
+                    // 展开时：底边改为内部分隔线，与下拉拼成同一面板
+                    searchHistory.visible && '!rounded-b-none focus-visible:ring-0'
                   )}
                   aria-label="搜索影片"
-                  placeholder="搜索影片..."
+                  placeholder="搜索"
                   value={query}
                   maxLength={100}
                   onChange={(e) => {
@@ -102,17 +101,19 @@ export function Header({ showSearch = false }: { showSearch?: boolean }) {
 
           <div className="flex-1 sm:hidden" />
 
-          <nav className="flex items-center gap-1 ml-auto">
+          <nav className="flex items-center gap-0.5 sm:gap-1 ml-auto">
             <HeaderLink href="/live" active={pathname === '/live'}>
               直播
             </HeaderLink>
-            <HeaderLink href="/about" active={pathname === '/about'}>
-              关于
-            </HeaderLink>
+            <span className="hidden sm:contents">
+              <HeaderLink href="/about" active={pathname === '/about'}>
+                关于
+              </HeaderLink>
+            </span>
             <ThemeToggle />
             <button
               type="button"
-              className="px-2 py-1 rounded-md text-sm text-muted hover:text-content hover:bg-hover max-w-24 truncate"
+              className="px-3 py-1.5 rounded-full text-sm font-medium text-muted hover:text-content hover:bg-content/[0.08] max-w-16 sm:max-w-24 truncate whitespace-nowrap"
               onClick={() => setProfileOpen(true)}
               title="切换设定档"
             >
@@ -147,8 +148,8 @@ function HeaderLink({ href, active, children }: { href: string; active: boolean;
     <Link
       href={href}
       className={cn(
-        'px-2.5 py-1.5 rounded-md text-sm transition-colors',
-        active ? 'text-content bg-hover' : 'text-muted hover:text-content'
+        'px-2.5 sm:px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-colors',
+        active ? 'text-content bg-content/[0.1]' : 'text-muted hover:text-content hover:bg-content/[0.06]'
       )}
     >
       {children}
@@ -159,7 +160,7 @@ function HeaderLink({ href, active, children }: { href: string; active: boolean;
 function IconButton({ label, onClick, children }: { label: string; onClick: () => void; children: React.ReactNode }) {
   return (
     <button
-      className="p-2 rounded-md text-muted hover:text-content hover:bg-hover transition-colors"
+      className="w-8 h-8 sm:w-9 sm:h-9 rounded-full flex items-center justify-center text-muted hover:text-content hover:bg-content/[0.08] transition-colors"
       title={label}
       aria-label={label}
       onClick={onClick}

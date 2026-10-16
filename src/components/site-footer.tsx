@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useAuth } from '@/components/auth';
 
 /** 上游仓库最新 tag（即最新版本号），用于页脚的更新检测 */
@@ -79,7 +80,7 @@ function UpdateTip({ update }: { update: UpstreamUpdate | null }) {
           : '正在检测更新…';
   if (!tip) return null;
   return (
-    <span className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1.5 hidden -translate-x-1/2 whitespace-nowrap rounded-md border border-line bg-chip px-2 py-1 text-faint shadow-sm group-hover:block">
+    <span className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1.5 hidden -translate-x-1/2 whitespace-nowrap rounded-lg border border-line bg-chip px-2 py-1 text-faint shadow-sm group-hover:block">
       {tip}
     </span>
   );
@@ -90,7 +91,7 @@ export function SiteFooter() {
   const { version } = useAuth();
   const upstreamUpdate = useUpstreamUpdate(version);
   return (
-    <footer className="border-t border-line py-4">
+    <footer className="border-t border-content/[0.06] py-6">
       <p className="text-center text-xs text-faint">
         <a
           href="https://github.com/LibreSpark/LibreTV"
@@ -102,6 +103,10 @@ export function SiteFooter() {
           {process.env.NEXT_PUBLIC_APP_COMMIT && <span className="opacity-70"> ({process.env.NEXT_PUBLIC_APP_COMMIT})</span>}
           {version && <UpdateTip update={upstreamUpdate} />}
         </a>
+        {' · '}
+        <Link href="/about" className="hover:text-content">
+          关于
+        </Link>
         {' · '}
         AGPL-3.0 License
       </p>

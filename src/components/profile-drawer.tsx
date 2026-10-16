@@ -83,7 +83,7 @@ export function ProfileDrawer({ open, onClose }: { open: boolean; onClose: () =>
           const active = profile.id === current.id;
           const localCount = profiles.filter((item) => !item.cloudOnly).length;
           return (
-            <li key={profile.id} className={cn('rounded-lg border p-3', active ? 'border-accent' : 'border-line')}>
+            <li key={profile.id} className={cn('rounded-xl border p-3', active ? 'border-accent' : 'border-line')}>
               <div className="flex items-center gap-2">
                 <div className="min-w-0 flex-1">
                   <div className="text-sm font-medium text-content truncate">{profile.name}</div>

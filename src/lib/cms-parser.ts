@@ -62,13 +62,17 @@ export function parseSearchList(
   data: unknown,
   source: { key: string; name: string; url: string; isAdult?: boolean }
 ): SearchResultItem[] {
-  return readVodList(data).map((vod) => ({
-    ...mapVod(vod),
-    sourceKey: source.key,
-    sourceName: source.name,
-    sourceUrl: source.url,
-    isAdult: source.isAdult,
-  }));
+  return readVodList(data).map((vod) => {
+    const urls = extractEpisodesFromPlayUrl(String(vod.vod_play_url ?? ''));
+    return {
+      ...mapVod(vod),
+      sourceKey: source.key,
+      sourceName: source.name,
+      sourceUrl: source.url,
+      isAdult: source.isAdult,
+      ...(urls[0] ? { firstEpisode: urls[0], episodeCount: urls.length } : null),
+    };
+  });
 }
 
 /** ac=list 的分类表。非法 id 丢弃，最多 80 个。 */

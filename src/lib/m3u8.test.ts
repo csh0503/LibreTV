@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { parseM3u8Playlist } from './m3u8-parse';
-import { isProxiedUri, rewriteM3u8, stripAdGroups, stripLeadAdGroup } from './m3u8';
+import { isProxiedUri, rewriteM3u8, stripAdGroups, stripLeadAdGroup, unproxyM3u8 } from './m3u8';
 
 const BASE = 'https://cdn.example.com/live/index.m3u8';
 
@@ -354,5 +354,14 @@ describe('stripAdGroups：零头规则的保险', () => {
     for (let i = 0; i < 12; i++) parts.push(g(Array.from({ length: 20 }, () => 2)), g([2, 2, 2, 1.4]));
     const src = ['#EXTM3U', ...parts.flatMap((p, i) => (i === 0 ? [p] : ['#EXT-X-DISCONTINUITY', p])), '#EXT-X-ENDLIST'].join('\n');
     expect(stripAdGroups(src)).toBe(src);
+  });
+});
+
+describe('unproxyM3u8', () => {
+  it('把代理改写过的地址还原（分片和密钥）', () => {
+    const raw = ['#EXTM3U', '#EXT-X-KEY:METHOD=AES-128,URI="key.key"', '#EXTINF:5,', 'a/1.ts', '#EXTINF:5,', 'https://ad.example.com/x.ts'].join('\n');
+    expect(unproxyM3u8(rewriteM3u8(raw, BASE))).toBe(
+      ['#EXTM3U', '#EXT-X-KEY:METHOD=AES-128,URI="https://cdn.example.com/live/key.key"', '#EXTINF:5,', 'https://cdn.example.com/live/a/1.ts', '#EXTINF:5,', 'https://ad.example.com/x.ts'].join('\n'),
+    );
   });
 });

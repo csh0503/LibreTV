@@ -34,6 +34,16 @@ describe('parseSearchList', () => {
     expect(items[1].vodId).toBe('abc-1');
   });
 
+  it('带上第 1 集地址和集数（质检不用再请求详情）', () => {
+    const [item] = parseSearchList(
+      { list: [{ vod_id: 1, vod_name: 'x', vod_play_url: '第1集$https://share/1$$$第1集$https://cdn/1.m3u8#第2集$https://cdn/2.m3u8' }] },
+      source,
+    );
+    expect(item.firstEpisode).toBe('https://cdn/1.m3u8');
+    expect(item.episodeCount).toBe(2);
+    expect(parseSearchList({ list: [{ vod_id: 2 }] }, source)[0].firstEpisode).toBeUndefined();
+  });
+
   it('对缺失字段健壮', () => {
     const items = parseSearchList({ list: [{}] }, source);
     expect(items[0].vodId).toBe('');

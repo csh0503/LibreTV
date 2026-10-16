@@ -273,7 +273,7 @@ export function RecommendSection({
               <button
                 type="button"
                 onClick={reset}
-                className="px-2.5 py-1 rounded-lg text-xs text-accent hover:bg-accent/10 transition-colors cursor-pointer"
+                className="px-2.5 py-1 rounded-xl text-xs text-accent hover:bg-accent/10 transition-colors cursor-pointer"
               >
                 重置筛选
               </button>
@@ -281,7 +281,7 @@ export function RecommendSection({
             <button
               type="button"
               onClick={() => setFiltersExpanded((v) => !v)}
-              className="px-2.5 py-1 rounded-lg text-xs bg-chip text-muted hover:text-content hover:bg-hover transition-colors cursor-pointer"
+              className="px-2.5 py-1 rounded-xl text-xs bg-chip text-muted hover:text-content hover:bg-hover transition-colors cursor-pointer"
             >
               {filtersExpanded ? '收起筛选' : '展开筛选'}
             </button>
@@ -465,7 +465,7 @@ function GridSkeleton() {
     <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2.5">
       {Array.from({ length: 16 }).map((_, i) => (
         <div key={i} className="animate-pulse">
-          <div className="aspect-[2/3] rounded-lg bg-chip" />
+          <div className="aspect-[2/3] rounded-xl bg-chip" />
           <div className="h-3.5 mt-2 rounded bg-chip w-3/4" />
         </div>
       ))}

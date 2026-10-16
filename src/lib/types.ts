@@ -29,6 +29,10 @@ export interface SearchResultItem extends VodListItem {
   /** 自定义源的 API 地址，详情请求需要 */
   sourceUrl?: string;
   isAdult?: boolean;
+  /** 搜索结果里自带的第 1 集地址（ac=videolist 有 vod_play_url）：质检直接用，不用再请求详情 */
+  firstEpisode?: string;
+  /** 搜索结果里自带的集数 */
+  episodeCount?: number;
 }
 
 /** 采集站分类（ac=list 的 class） */

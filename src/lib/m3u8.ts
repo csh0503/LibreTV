@@ -59,6 +59,29 @@ export function rewriteM3u8(
   return out.join('\n');
 }
 
+/** rewriteM3u8 的反操作：代理取回的播放列表里的地址还原成原地址（看网站 / 目录判断广告时要用原地址） */
+export function unproxyM3u8(content: string): string {
+  const unwrap = (uri: string) => {
+    const m = uri.match(/^\/api\/(?:proxy|live\/stream)\?url=(.+)$/);
+    if (!m) return uri;
+    try {
+      return decodeURIComponent(m[1]);
+    } catch {
+      return uri;
+    }
+  };
+  return content
+    .split('\n')
+    .map((line) => {
+      if (line.startsWith('#EXT-X-KEY') || line.startsWith('#EXT-X-MAP')) {
+        return line.replace(/(URI=")([^"]+)(")/g, (_m, p1: string, uri: string, p2: string) => p1 + unwrap(uri) + p2);
+      }
+      if (line.startsWith('#') || line.trim() === '') return line;
+      return unwrap(line.trim());
+    })
+    .join('\n');
+}
+
 /**
  * 片头广告段判定上限。dytt 等采集站把固定一支广告（约 15-60s，10 片左右）
  * 作为首个 DISCONTINUITY 段混入所有视频；正片分段（每段 20-40s）与其结构相同，

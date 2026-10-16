@@ -2,7 +2,7 @@ import { makeAbsolute } from './m3u8';
 import { analyzeMediaPlaylist, bestVariant, heightFromKbps, parseMasterPlaylist, type SourceQuality } from './stream-quality';
 
 /**
- * 拿到第 1 集的播放地址之后的质检步骤（服务端和浏览器共用，只是取数据的方式不同）：
+ * 拿到第 1 集的播放地址之后的质检步骤（在浏览器里跑，取数据的方式由调用方给）：
  * 读播放列表 → 主播放列表就挑最高一档 → 数广告 → 量一个分片估码率。
  */
 export interface ProbeFetchers {
@@ -15,6 +15,8 @@ export async function probeEpisode(firstUrl: string, f: ProbeFetchers): Promise<
   if (!/\.m3u8(\?|$)/i.test(firstUrl)) return { ok: true, error: '不是 m3u8，测不了' };
   let playlistUrl = firstUrl;
   let content = await f.text(playlistUrl);
+  // 读到的不是播放列表（被挡时常常返回网页 / JSON）：算测不了，别当成「没有广告」
+  if (!content.trimStart().startsWith('#EXTM3U')) throw new Error('不是播放列表');
   let height = 0;
   const variants = parseMasterPlaylist(content);
   if (variants.length > 0) {
@@ -22,6 +24,7 @@ export async function probeEpisode(firstUrl: string, f: ProbeFetchers): Promise<
     height = best.height;
     playlistUrl = makeAbsolute(best.uri, playlistUrl);
     content = await f.text(playlistUrl);
+    if (!content.trimStart().startsWith('#EXTM3U')) throw new Error('不是播放列表');
   }
   const info = analyzeMediaPlaylist(content, playlistUrl);
   let kbps = 0;
@@ -38,14 +41,4 @@ export async function probeEpisode(firstUrl: string, f: ProbeFetchers): Promise<
     suspectSeconds: info.suspectSeconds || undefined,
     minutes: info.seconds > 0 ? Math.round(info.seconds / 60) : undefined,
   };
-}
-
-/** 「测不了」后面跟的简短原因 */
-export function failureReason(error?: string): string {
-  if (!error) return '';
-  if (/超时|timeout|abort/i.test(error)) return '超时';
-  if (/HTTP 4\d\d/.test(error)) return '被拒';
-  if (/HTTP 5\d\d/.test(error)) return '源站出错';
-  if (/没有播放地址|未找到播放资源/.test(error)) return '没有地址';
-  return '连不上';
 }

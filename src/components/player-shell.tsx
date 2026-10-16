@@ -444,7 +444,7 @@ export function PlayerShell({
       playsInline: true,
       airplay: true,
       hotkey: false,
-      theme: '#2563eb',
+      theme: '#0a84ff',
       lang: navigator.language.toLowerCase().startsWith('zh') ? 'zh-cn' : 'en',
       moreVideoAttr: { crossOrigin: 'anonymous', playsInline: true },
       controls: [
@@ -836,7 +836,7 @@ export function PlayerShell({
         </div>
       )}
       {hint && (
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-black/70 text-white text-sm px-3 py-1.5 rounded-full pointer-events-none animate-fade-in">
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-black/50 backdrop-blur-xl border border-white/10 text-white text-sm px-4 py-1.5 rounded-full pointer-events-none animate-fade-in">
           {hint}
         </div>
       )}
@@ -909,7 +909,7 @@ function SkipButton({
         <button
           type="button"
           onClick={onCancel}
-          className="px-3 py-2 rounded-lg border border-white/25 bg-black/50 text-white/85 text-xs backdrop-blur-sm hover:bg-black/70 cursor-pointer"
+          className="px-3 py-2 rounded-xl border border-white/25 bg-black/50 text-white/85 text-xs backdrop-blur-sm hover:bg-black/70 cursor-pointer"
         >
           不跳
         </button>
@@ -917,7 +917,7 @@ function SkipButton({
       <button
         type="button"
         onClick={onClick}
-        className="relative overflow-hidden px-4 py-2 rounded-lg border border-white/40 bg-black/65 text-white text-sm font-semibold backdrop-blur-sm hover:bg-white hover:text-slate-950 transition-colors cursor-pointer"
+        className="relative overflow-hidden px-4 py-2 rounded-xl border border-white/40 bg-black/65 text-white text-sm font-semibold backdrop-blur-sm hover:bg-white hover:text-slate-950 transition-colors cursor-pointer"
       >
         {countdown !== undefined && (
           // 倒数进度条：从左往右填满时自动跳

@@ -36,15 +36,11 @@ import { DoubanCard } from './video-card';
  */
 export function ShelfRow({
   title,
-  hint,
-  badge,
   headerExtra,
   children,
   className,
 }: {
   title: string;
-  hint?: string;
-  badge?: string;
   headerExtra?: React.ReactNode;
   children: React.ReactNode;
   className?: string;
@@ -84,13 +80,7 @@ export function ShelfRow({
     <section aria-label={title} className={cn('space-y-2.5', className)}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0 flex items-center gap-2 flex-wrap shrink-0">
-          <h2 className="text-base sm:text-lg font-bold text-content tracking-tight">{title}</h2>
-          {badge && (
-            <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-accent/15 text-accent">
-              {badge}
-            </span>
-          )}
-          {hint && <span className="text-xs text-faint hidden sm:inline">{hint}</span>}
+          <h2 className="text-lg sm:text-xl font-semibold text-content tracking-tight">{title}</h2>
         </div>
         <div className="flex items-center gap-2 min-w-0 flex-1 sm:flex-initial justify-end ml-auto">
           {headerExtra}
@@ -101,7 +91,7 @@ export function ShelfRow({
                 onClick={() => scrollByPage(-1)}
                 disabled={!canLeft}
                 aria-label={`向左滚动${title}`}
-                className="w-7 h-7 rounded-full border border-line bg-surface/80 text-muted hover:text-content hover:bg-hover disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center transition-colors cursor-pointer"
+                className="w-7 h-7 rounded-full bg-content/[0.06] text-muted hover:text-content hover:bg-content/[0.12] disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center transition-colors cursor-pointer"
               >
                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
@@ -112,7 +102,7 @@ export function ShelfRow({
                 onClick={() => scrollByPage(1)}
                 disabled={!canRight}
                 aria-label={`向右滚动${title}`}
-                className="w-7 h-7 rounded-full border border-line bg-surface/80 text-muted hover:text-content hover:bg-hover disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center transition-colors cursor-pointer"
+                className="w-7 h-7 rounded-full bg-content/[0.06] text-muted hover:text-content hover:bg-content/[0.12] disabled:opacity-30 disabled:pointer-events-none flex items-center justify-center transition-colors cursor-pointer"
               >
                 <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
@@ -122,14 +112,13 @@ export function ShelfRow({
           )}
         </div>
       </div>
-      {hint && <p className="text-xs text-faint sm:hidden -mt-1">{hint}</p>}
       <div className="relative group/shelf">
         {canLeft && (
           <button
             type="button"
             onClick={() => scrollByPage(-1)}
             aria-label={`向左翻页${title}`}
-            className="hidden sm:flex absolute left-1 top-1/2 -translate-y-1/2 z-20 w-9 h-9 rounded-full bg-black/70 text-white border border-white/15 shadow-lg items-center justify-center opacity-0 group-hover/shelf:opacity-100 hover:bg-black/90 hover:scale-105 transition-all cursor-pointer"
+            className="hidden sm:flex absolute left-1 top-1/2 -translate-y-1/2 z-20 w-9 h-9 rounded-full bg-black/40 backdrop-blur-xl text-white border border-white/15 shadow-lg items-center justify-center opacity-0 group-hover/shelf:opacity-100 hover:bg-black/90 hover:scale-105 transition-all cursor-pointer"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M15 19l-7-7 7-7" />
@@ -141,7 +130,7 @@ export function ShelfRow({
             type="button"
             onClick={() => scrollByPage(1)}
             aria-label={`向右翻页${title}`}
-            className="hidden sm:flex absolute right-1 top-1/2 -translate-y-1/2 z-20 w-9 h-9 rounded-full bg-black/70 text-white border border-white/15 shadow-lg items-center justify-center opacity-0 group-hover/shelf:opacity-100 hover:bg-black/90 hover:scale-105 transition-all cursor-pointer"
+            className="hidden sm:flex absolute right-1 top-1/2 -translate-y-1/2 z-20 w-9 h-9 rounded-full bg-black/40 backdrop-blur-xl text-white border border-white/15 shadow-lg items-center justify-center opacity-0 group-hover/shelf:opacity-100 hover:bg-black/90 hover:scale-105 transition-all cursor-pointer"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M9 5l7 7-7 7" />
@@ -382,7 +371,7 @@ export function HeroBillboard({ onPick }: { onPick: (title: string, pick?: Title
       aria-label="今日主推影片"
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
-      className="group/hero relative mb-7 rounded-2xl overflow-hidden border border-line bg-[#0b111e] text-white shadow-xl select-none"
+      className="group/hero relative mb-8 rounded-[28px] overflow-hidden ring-1 ring-white/[0.08] bg-[#0b0b0d] text-white shadow-[0_20px_60px_rgba(0,0,0,0.45)] select-none"
     >
       {/* 背景大图氛围层：有 16:9 横版海报时高清展示，仅竖版海报时作高斯模糊氛围背景 */}
       {bgUrl && (!imgFailed || hasWidescreenBackdrop) && (
@@ -405,11 +394,11 @@ export function HeroBillboard({ onPick }: { onPick: (title: string, pick?: Title
       )}
       <div
         aria-hidden
-        className="absolute inset-0 pointer-events-none bg-gradient-to-r from-[#070b14]/95 via-[#0b111e]/80 to-[#0b111e]/35"
+        className="absolute inset-0 pointer-events-none bg-gradient-to-r from-black/90 via-black/65 to-black/20"
       />
       <div
         aria-hidden
-        className="absolute inset-0 pointer-events-none bg-gradient-to-t from-[#070b14] via-transparent to-black/25"
+        className="absolute inset-0 pointer-events-none bg-gradient-to-t from-black/80 via-transparent to-black/10"
       />
 
       {/* 左右切换箭头（桌面端悬停浮现，移动端亦可点击或直接左右滑动） */}
@@ -419,7 +408,7 @@ export function HeroBillboard({ onPick }: { onPick: (title: string, pick?: Title
             type="button"
             onClick={goPrev}
             aria-label="上一部主推影片"
-            className="absolute left-2 sm:left-3 top-1/2 -translate-y-1/2 z-20 w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-black/50 hover:bg-black/80 text-white/90 hover:text-white border border-white/15 backdrop-blur-sm flex items-center justify-center opacity-70 sm:opacity-0 sm:group-hover/hero:opacity-100 transition-all cursor-pointer"
+            className="absolute left-2 sm:left-3 top-1/2 -translate-y-1/2 z-20 w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-black/30 backdrop-blur-xl hover:bg-black/55 text-white/90 hover:text-white border border-white/15 backdrop-blur-sm flex items-center justify-center opacity-70 sm:opacity-0 sm:group-hover/hero:opacity-100 transition-all cursor-pointer"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M15 19l-7-7 7-7" />
@@ -429,7 +418,7 @@ export function HeroBillboard({ onPick }: { onPick: (title: string, pick?: Title
             type="button"
             onClick={goNext}
             aria-label="下一部主推影片"
-            className="absolute right-2 sm:right-3 top-1/2 -translate-y-1/2 z-20 w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-black/50 hover:bg-black/80 text-white/90 hover:text-white border border-white/15 backdrop-blur-sm flex items-center justify-center opacity-70 sm:opacity-0 sm:group-hover/hero:opacity-100 transition-all cursor-pointer"
+            className="absolute right-2 sm:right-3 top-1/2 -translate-y-1/2 z-20 w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-black/30 backdrop-blur-xl hover:bg-black/55 text-white/90 hover:text-white border border-white/15 backdrop-blur-sm flex items-center justify-center opacity-70 sm:opacity-0 sm:group-hover/hero:opacity-100 transition-all cursor-pointer"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M9 5l7 7-7 7" />
@@ -441,40 +430,40 @@ export function HeroBillboard({ onPick }: { onPick: (title: string, pick?: Title
       <div className="relative z-10 px-6 py-5 sm:px-12 sm:py-7 md:px-14 md:py-8 flex items-center justify-between gap-6">
         <div className="min-w-0 flex-1 max-w-2xl space-y-3">
           <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-red-600/90 text-white font-semibold tracking-wide shadow-sm">
+            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-white text-black font-semibold">
               今日 TOP {activeIndex + 1}
             </span>
             {current.rating && (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/15 text-amber-300 font-semibold backdrop-blur-sm">
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/[0.12] text-white font-semibold backdrop-blur-md ring-1 ring-white/10">
                 ★ {current.rating}
               </span>
             )}
             {metaTags.map((tag, idx) => (
               <span
                 key={idx}
-                className="px-2 py-0.5 rounded-full bg-white/10 text-slate-200 backdrop-blur-sm"
+                className="px-2 py-0.5 rounded-full bg-white/[0.08] text-white/80 backdrop-blur-md ring-1 ring-white/10"
               >
                 {tag}
               </span>
             ))}
           </div>
 
-          <h2 className="text-2xl sm:text-3xl md:text-4xl font-extrabold tracking-tight text-white line-clamp-2 drop-shadow">
+          <h2 className="text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight text-white line-clamp-2 drop-shadow">
             {current.title}
           </h2>
 
-          <p className="text-xs sm:text-sm text-slate-300/90 max-w-xl line-clamp-2">
+          <p className="text-sm sm:text-[15px] text-white/70 max-w-xl line-clamp-2 leading-relaxed">
             {matchedHistory
               ? `上次看到第 ${matchedHistory.episodeIndex + 1} 集${matchedHistory.playbackPosition > 10 ? `（${formatTime(matchedHistory.playbackPosition)}）` : ''}，点击可接着上次进度继续观看。`
               : current.subtitle ||
-                '全网实时热度与口碑前列佳作，点击「播放」跨源检索最佳画质，或加入「我的片单」随时回看。'}
+                ''}
           </p>
 
           <div className="pt-1 flex flex-wrap items-center gap-3">
             <button
               type="button"
               onClick={handlePlay}
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-white text-slate-950 hover:bg-slate-100 active:scale-[0.99] font-semibold text-sm shadow-lg transition-all cursor-pointer"
+              className="inline-flex items-center gap-2 px-6 py-2.5 rounded-full bg-white text-black hover:bg-white/85 active:scale-[0.97] font-semibold text-sm transition-all cursor-pointer"
             >
               <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24" aria-hidden>
                 <path d="M8 5v14l11-7z" />
@@ -486,10 +475,10 @@ export function HeroBillboard({ onPick }: { onPick: (title: string, pick?: Title
               type="button"
               onClick={handleToggleMyList}
               className={cn(
-                'inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium border backdrop-blur-md transition-all cursor-pointer',
+                'inline-flex items-center gap-2 px-5 py-2.5 rounded-full text-sm font-medium backdrop-blur-xl ring-1 transition-all active:scale-[0.97] cursor-pointer',
                 isSaved
-                  ? 'bg-amber-500/20 border-amber-400/50 text-amber-200 hover:bg-amber-500/30'
-                  : 'bg-white/10 border-white/20 text-white hover:bg-white/20',
+                  ? 'bg-white/[0.18] ring-white/25 text-white hover:bg-white/25'
+                  : 'bg-white/[0.12] ring-white/15 text-white hover:bg-white/20',
               )}
             >
               <Icon name={isSaved ? 'check' : 'plus'} className="w-4 h-4" />
@@ -504,7 +493,7 @@ export function HeroBillboard({ onPick }: { onPick: (title: string, pick?: Title
             onClick={handlePlay}
             role="button"
             tabIndex={-1}
-            className="hidden sm:block relative w-32 md:w-40 aspect-[2/3] rounded-xl overflow-hidden shadow-2xl ring-1 ring-white/20 shrink-0 cursor-pointer group"
+            className="hidden sm:block relative w-32 md:w-40 aspect-[2/3] rounded-2xl overflow-hidden shadow-2xl ring-1 ring-white/15 shrink-0 cursor-pointer group"
           >
             <SmartImage
               url={current.cover}
@@ -528,7 +517,6 @@ export function HeroBillboard({ onPick }: { onPick: (title: string, pick?: Title
       {/* 主推切换指示器 */}
       {featuredList.length > 1 && (
         <div className="relative z-10 px-6 sm:px-12 pb-3.5 flex items-center justify-between sm:justify-end gap-1.5">
-          <span className="text-[11px] text-white/45 sm:hidden">左右滑动切换主推</span>
           <div className="flex items-center gap-1.5 ml-auto">
             {featuredList.map((item, idx) => (
               <button
@@ -622,7 +610,7 @@ export function ContinueWatchingRow() {
   if (!profileId || visible.length === 0) return null;
 
   return (
-    <ShelfRow title="继续观看" hint="接着上次的集数与秒数播放">
+    <ShelfRow title="继续观看">
       {visible.map((item) => (
         <ContinueWatchingCard
           key={`${item.sourceKey}_${item.vodId}`}
@@ -885,7 +873,7 @@ export function MyListRow({
   };
 
   return (
-    <ShelfRow title="我的片单" badge={`${visible.length} 部`} hint="已收藏的剧集与电影">
+    <ShelfRow title="我的片单">
       {visible.map((row) => (
         <div key={row.id} className="w-[7.25rem] sm:w-32 shrink-0">
           <DoubanCard
@@ -914,17 +902,17 @@ export function MyListRow({
 }
 
 const TOP_TEN_TABS: { id: HotListId; label: string; channel: 'tv' | 'movie' | 'show' | 'anime' | 'doc' }[] = [
-  { id: 'realtime_all', label: '🔥 综合总榜', channel: 'tv' },
-  { id: 'douban_tv_realtime', label: '📺 热门剧集', channel: 'tv' },
-  { id: 'douban_movie_realtime', label: '🍿 热门电影', channel: 'movie' },
-  { id: 'bili_bangumi', label: '🌸 日漫新番', channel: 'anime' },
-  { id: 'bili_guochuang', label: '🐉 国漫热播', channel: 'anime' },
-  { id: 'douban_tv_domestic', label: '🇨🇳 国产热剧', channel: 'tv' },
-  { id: 'douban_tv_korean', label: '🇰🇷 日韩热剧', channel: 'tv' },
-  { id: 'douban_tv_american', label: '🇺🇸 欧美热剧', channel: 'tv' },
-  { id: 'douban_show_hot', label: '🎪 热门综艺', channel: 'show' },
-  { id: 'bili_doc', label: '🌍 纪录片榜', channel: 'doc' },
-  { id: 'tmdb_trending', label: '🌐 全球趋势', channel: 'tv' },
+  { id: 'realtime_all', label: '综合总榜', channel: 'tv' },
+  { id: 'douban_tv_realtime', label: '热门剧集', channel: 'tv' },
+  { id: 'douban_movie_realtime', label: '热门电影', channel: 'movie' },
+  { id: 'bili_bangumi', label: '日漫新番', channel: 'anime' },
+  { id: 'bili_guochuang', label: '国漫热播', channel: 'anime' },
+  { id: 'douban_tv_domestic', label: '国产热剧', channel: 'tv' },
+  { id: 'douban_tv_korean', label: '日韩热剧', channel: 'tv' },
+  { id: 'douban_tv_american', label: '欧美热剧', channel: 'tv' },
+  { id: 'douban_show_hot', label: '热门综艺', channel: 'show' },
+  { id: 'bili_doc', label: '纪录片榜', channel: 'doc' },
+  { id: 'tmdb_trending', label: '全球趋势', channel: 'tv' },
 ];
 
 /**
@@ -972,7 +960,7 @@ export function TopTenRow({ onPick }: { onPick: (title: string, pick?: TitlePick
   return (
     <div className="space-y-2">
     <ShelfRow
-      title="实时风向 · TOP 10"
+      title="今日 TOP 10"
       headerExtra={
         <div className="flex items-center gap-1.5 min-w-0 max-w-full">
           {(canTabLeft || canTabRight) && (
@@ -982,7 +970,7 @@ export function TopTenRow({ onPick }: { onPick: (title: string, pick?: TitlePick
               disabled={!canTabLeft}
               aria-label="向左滚动分类标签"
               title="向左滚动分类标签"
-              className="w-6 h-6 rounded-full border border-line bg-surface/90 text-muted hover:text-content hover:bg-hover disabled:opacity-25 disabled:pointer-events-none flex items-center justify-center shrink-0 transition-colors cursor-pointer"
+              className="w-6 h-6 rounded-full bg-content/[0.06] text-muted hover:text-content hover:bg-content/[0.12] disabled:opacity-25 disabled:pointer-events-none flex items-center justify-center shrink-0 transition-colors cursor-pointer"
             >
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M15 19l-7-7 7-7" />
@@ -999,10 +987,10 @@ export function TopTenRow({ onPick }: { onPick: (title: string, pick?: TitlePick
                 type="button"
                 onClick={() => setTab(t.id)}
                 className={cn(
-                  'px-2.5 py-1 rounded-full text-xs transition-colors cursor-pointer shrink-0',
+                  'px-3 py-1 rounded-full text-xs font-medium transition-colors cursor-pointer shrink-0',
                   tab === t.id
-                    ? 'bg-accent text-on-accent font-medium shadow-sm'
-                    : 'bg-chip text-muted hover:text-content hover:bg-hover',
+                    ? 'bg-content text-page'
+                    : 'bg-content/[0.06] text-muted hover:text-content hover:bg-content/[0.12]',
                 )}
               >
                 {t.label}
@@ -1016,7 +1004,7 @@ export function TopTenRow({ onPick }: { onPick: (title: string, pick?: TitlePick
               disabled={!canTabRight}
               aria-label="向右滚动分类标签"
               title="向右滚动分类标签"
-              className="w-6 h-6 rounded-full border border-line bg-surface/90 text-muted hover:text-content hover:bg-hover disabled:opacity-25 disabled:pointer-events-none flex items-center justify-center shrink-0 transition-colors cursor-pointer"
+              className="w-6 h-6 rounded-full bg-content/[0.06] text-muted hover:text-content hover:bg-content/[0.12] disabled:opacity-25 disabled:pointer-events-none flex items-center justify-center shrink-0 transition-colors cursor-pointer"
             >
               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M9 5l7 7-7 7" />
@@ -1092,8 +1080,8 @@ function TopTenCard({
         >
           <defs>
             <linearGradient id={`rank-grad-${rank}`} x1="0%" y1="0%" x2="0%" y2="100%">
-              <stop offset="0%" stopColor="rgb(var(--c-accent))" stopOpacity="0.95" />
-              <stop offset="100%" stopColor="rgb(var(--c-card))" stopOpacity="0.9" />
+              <stop offset="0%" stopColor="rgb(var(--c-content))" stopOpacity="0.9" />
+              <stop offset="100%" stopColor="rgb(var(--c-content))" stopOpacity="0.08" />
             </linearGradient>
           </defs>
           <text
@@ -1102,11 +1090,11 @@ function TopTenCard({
             textAnchor="middle"
             fill={`url(#rank-grad-${rank})`}
             stroke="rgb(var(--c-content))"
-            strokeOpacity="0.45"
-            strokeWidth="3"
-            fontWeight="900"
+            strokeOpacity="0.25"
+            strokeWidth="1.5"
+            fontWeight="800"
             fontSize={rank === 10 ? '86' : '98'}
-            fontFamily="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+            fontFamily="var(--font-inter), -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
             style={{ letterSpacing: rank === 10 ? '-6px' : '0' }}
           >
             {rank}
@@ -1117,7 +1105,7 @@ function TopTenCard({
       <div className="relative z-10 w-[7.25rem] sm:w-32">
         {(item.rankNew || (item.rankDelta ?? 0) >= 2) && (
           <span
-            className="absolute top-9 right-1.5 z-20 px-1.5 py-0.5 rounded-md text-[10px] font-bold text-white bg-emerald-600/95 shadow pointer-events-none"
+            className="absolute top-9 right-1.5 z-20 px-1.5 py-0.5 rounded-full text-[10px] font-semibold text-white bg-black/45 backdrop-blur-md ring-1 ring-white/15 pointer-events-none"
             title={item.rankNew ? '最近一天新上榜' : `比半天到一天前上升 ${item.rankDelta} 名`}
           >
             {item.rankNew ? '新上榜' : `↑${item.rankDelta}`}
@@ -1147,9 +1135,9 @@ function TopTenCard({
 
 const UPCOMING_TABS: { id: 'all' | UpcomingKind; label: string }[] = [
   { id: 'all', label: '全部' },
-  { id: 'anime', label: '🌸 动漫' },
-  { id: 'tv', label: '📺 剧集' },
-  { id: 'movie', label: '🍿 电影' },
+  { id: 'anime', label: '动漫' },
+  { id: 'tv', label: '剧集' },
+  { id: 'movie', label: '电影' },
 ];
 
 const WEEKDAY_CN = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
@@ -1277,7 +1265,6 @@ export function UpcomingRow({ onPick }: { onPick: (title: string, pick?: TitlePi
   return (
     <ShelfRow
       title="即将播出"
-      badge="未来 7 天"
       headerExtra={
         <div className="flex flex-col items-end gap-1.5 min-w-0 max-w-full">
           <div className="flex items-center gap-1 overflow-x-auto scrollbar-none max-w-full" role="tablist" aria-label="播出日期">

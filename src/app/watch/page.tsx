@@ -402,7 +402,7 @@ function WatchContent() {
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 py-4">
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-4">
           <div>
-            <div className="aspect-video bg-black rounded-lg overflow-hidden">
+            <div className="aspect-video bg-black rounded-xl overflow-hidden">
               {currentUrl ? (
                 <PlayerShell
                   url={currentUrl}
@@ -490,7 +490,7 @@ function WatchContent() {
               <label className="ml-auto flex items-center gap-1.5 text-xs text-muted cursor-pointer">
                 <input
                   type="checkbox"
-                  className="h-3.5 w-3.5 accent-[#2563eb]"
+                  className="h-3.5 w-3.5 accent-[rgb(var(--c-accent))]"
                   checked={store.autoplayNext}
                   onChange={(e) => store.updateSettings({ autoplayNext: e.target.checked })}
                 />
@@ -513,7 +513,7 @@ function WatchContent() {
           </div>
 
           {/* 剧集侧栏 */}
-          <aside className="bg-surface-raised rounded-lg p-3 h-fit">
+          <aside className="bg-surface-raised rounded-xl p-3 h-fit">
             <div className="flex items-center justify-between gap-2 mb-2.5">
               <h2 className="text-sm font-semibold text-content">
                 剧集列表{episodes.length > 0 && `（${episodes.length}）`}
@@ -554,7 +554,7 @@ function WatchContent() {
               </div>
             )}
             <p className="hidden md:block text-[10px] text-faint mt-3 leading-relaxed">
-              快捷键：空格 播放/暂停 · ←/→ 快退/快进 {prefs.seekStep} 秒 · Shift+&lt; / &gt; 调速lt; / Shift+&lt; / &gt; 调速gt; 调速 · ↑/↓ 音量 · F 全屏 · Alt+←/→ 切换集数
+              快捷键：空格 播放/暂停 · ←/→ 快退/快进 {prefs.seekStep} 秒 · {'<'} / {'>'} 调速 · ↑/↓ 音量 · F 全屏 · Alt+←/→ 切换集数
             </p>
           </aside>
         </div>
@@ -630,7 +630,7 @@ function AdPanel({
         value={value}
         onChange={(e) => set(e.target.value)}
         placeholder="0:00"
-        className="w-16 px-2 py-1 rounded-md bg-surface border border-line text-content text-xs"
+        className="w-16 px-2 py-1 rounded-lg bg-surface border border-line text-content text-xs"
       />
       <button type="button" className="text-accent hover:underline" onClick={() => set(formatTime(positionRef.current.time))}>
         现在
@@ -691,7 +691,7 @@ function AdPanel({
         {marks.length > 0 && (
           <ul className="flex flex-wrap gap-1.5">
             {marks.map((m) => (
-              <li key={`${m.start}-${m.end}`} className="flex items-center gap-1 px-2 py-0.5 rounded-md bg-chip text-content">
+              <li key={`${m.start}-${m.end}`} className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-chip text-content">
                 {formatTime(m.start)}–{formatTime(m.end)}
                 <button
                   type="button"
@@ -724,7 +724,7 @@ function AdPanel({
               复制
             </button>
           </div>
-          <pre className="max-h-64 overflow-auto rounded-lg bg-surface border border-line p-2 text-[11px] leading-relaxed text-content whitespace-pre-wrap break-all select-all">
+          <pre className="max-h-64 overflow-auto rounded-xl bg-surface border border-line p-2 text-[11px] leading-relaxed text-content whitespace-pre-wrap break-all select-all">
             {text || (diag.isError ? `读不到播放列表：${diag.error instanceof Error ? diag.error.message : '失败'}` : '…')}
           </pre>
         </div>
@@ -786,7 +786,7 @@ function ClipPreview({ playlist }: { playlist: string }) {
   }, [playlist]);
   return (
     <div className="space-y-1">
-      <video ref={videoRef} controls playsInline className="w-full max-w-md aspect-video rounded-lg bg-black" />
+      <video ref={videoRef} controls playsInline className="w-full max-w-md aspect-video rounded-xl bg-black" />
       {error && <p className="text-danger">{error}</p>}
     </div>
   );
@@ -875,7 +875,7 @@ function BackButton() {
   const router = useRouter();
   return (
     <button
-      className="p-2 -ml-2 rounded-md text-muted hover:text-content hover:bg-hover transition-colors"
+      className="p-2 -ml-2 rounded-lg text-muted hover:text-content hover:bg-hover transition-colors"
       onClick={() => {
         if (window.history.length > 1) router.back();
         else router.push('/');
@@ -894,7 +894,7 @@ function HomeButton() {
   return (
     <Link
       href="/"
-      className="p-2 rounded-md text-muted hover:text-content hover:bg-hover transition-colors"
+      className="p-2 rounded-lg text-muted hover:text-content hover:bg-hover transition-colors"
       aria-label="回首页"
       title="回首页"
     >
@@ -952,7 +952,7 @@ function EndEpisodeOverlayCard({
                 mode={imageProxyMode}
                 customProxy={customImageProxy}
                 alt={title}
-                className="w-16 sm:w-20 aspect-[2/3] rounded-lg object-cover bg-slate-800 shrink-0 shadow-md"
+                className="w-16 sm:w-20 aspect-[2/3] rounded-xl object-cover bg-slate-800 shrink-0 shadow-md"
                 onExhausted={() => setImgFailed(true)}
               />
             ) : null}
@@ -1010,7 +1010,7 @@ function EndEpisodeOverlayCard({
               onClick={onPlayNow}
               role="button"
               tabIndex={-1}
-              className="relative w-16 sm:w-20 aspect-[2/3] rounded-lg overflow-hidden bg-slate-800 shrink-0 shadow-md cursor-pointer group"
+              className="relative w-16 sm:w-20 aspect-[2/3] rounded-xl overflow-hidden bg-slate-800 shrink-0 shadow-md cursor-pointer group"
             >
               <SmartImage
                 url={cover}

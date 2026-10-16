@@ -212,19 +212,6 @@ export const api = {
   /** Bangumi 每日放送（免 key），首页推荐的另一数据源 */
   bangumiCalendar: (signal?: AbortSignal) => request<BangumiCalendarResponse>('/api/bangumi/calendar', { signal }),
 
-  /** 影视热榜（60s API 免 key）：豆瓣周榜五个类目 + 百度热播剧 */
-  /** 片源质检：每个源第 1 集的清晰度与可识别的插入广告 */
-  quality: (
-    items: { key: string; sourceKey: string; sourceName?: string; sourceUrl: string; vodId: string }[],
-    signal?: AbortSignal,
-  ) =>
-    request<{ results: import('./stream-quality').SourceQuality[] }>('/api/quality', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ items }),
-      signal,
-    }),
-
   /** 数据源体检：现场请求每个上游一次 */
   diagnostics: (signal?: AbortSignal) =>
     request<{

@@ -80,7 +80,7 @@ describe('baiduTeleplayToItem', () => {
     expect(rich).toMatchObject({
       id: 'baidu_0',
       title: '九门',
-      remarks: '🔥 9.55w热度',
+      remarks: '9.55w热度',
       subtitle: '民国冒险故事',
       sourceLabel: '百度热播',
     });

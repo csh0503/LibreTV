@@ -74,7 +74,7 @@ export function HistoryPanel({ open, onClose }: { open: boolean; onClose: () => 
               />
               <input
                 type="text"
-                className="w-full h-9 pl-8 pr-8 rounded-lg border border-line bg-chip text-sm text-content placeholder:text-faint focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/40"
+                className="w-full h-9 pl-8 pr-8 rounded-xl border border-line bg-chip text-sm text-content placeholder:text-faint focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/40"
                 placeholder="搜索观看历史..."
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
@@ -92,7 +92,7 @@ export function HistoryPanel({ open, onClose }: { open: boolean; onClose: () => 
               )}
             </div>
             <button
-              className="shrink-0 px-2 py-1.5 rounded-md text-xs text-faint hover:text-danger hover:bg-hover transition-colors"
+              className="shrink-0 px-2 py-1.5 rounded-lg text-xs text-faint hover:text-danger hover:bg-hover transition-colors"
               onClick={() => setConfirmClear(true)}
             >
               清空历史
@@ -195,7 +195,7 @@ function HistoryItem({ item }: { item: HistoryEntry }) {
           // 点击即同步一次时间戳，置顶最近观看
           upsertHistory({ ...item, timestamp: Date.now() }).catch(() => {});
         }}
-        className="block bg-card hover:bg-hover rounded-lg p-3 pr-10 transition-colors"
+        className="block bg-card hover:bg-hover rounded-xl p-3 pr-10 transition-colors"
       >
         <div className="flex items-center gap-3">
           {item.pic && !imgFailed ? (

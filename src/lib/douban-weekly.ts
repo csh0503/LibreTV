@@ -212,7 +212,7 @@ export function baiduTeleplayToItem(raw: BaiduTeleplayRaw, index: number): Douba
     cover: raw.cover,
     isTv: true,
   };
-  if (raw.score_desc) item.remarks = `🔥 ${raw.score_desc}热度`;
+  if (raw.score_desc) item.remarks = `${raw.score_desc}热度`;
   if (raw.desc) item.subtitle = raw.desc.trim();
   if (raw.score_desc || raw.desc) item.sourceLabel = '百度热播';
   return item;

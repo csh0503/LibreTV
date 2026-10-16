@@ -26,7 +26,7 @@ export function SortArrows({
         <div
           key={item.id}
           className={cn(
-            'inline-flex items-stretch overflow-hidden rounded-md border',
+            'inline-flex items-stretch overflow-hidden rounded-lg border',
             sortKey === item.id ? 'border-accent' : 'border-line'
           )}
         >

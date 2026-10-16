@@ -147,17 +147,17 @@ export function SearchHistoryDropdown({
     <div
       className={cn(
         'absolute left-0 right-0 top-full z-40 overflow-hidden text-left',
-        'rounded-b-xl border-x border-b border-accent bg-surface-raised shadow-2xl animate-fade-in'
+        'rounded-b-[22px] glass-strong !border-t-0 shadow-[0_24px_60px_rgba(0,0,0,0.35)] animate-fade-in'
       )}
     >
-      <div className="flex items-center justify-between pl-4 pr-2 py-2 border-b border-line">
+      <div className="flex items-center justify-between pl-4 pr-2 py-2">
         <span className="flex items-center gap-1.5 text-xs text-faint">
           <Icon name="clock" className="w-3.5 h-3.5" />
           最近搜索
         </span>
         <button
           type="button"
-          className="px-2 py-1 rounded-md text-xs text-faint hover:text-danger hover:bg-hover transition-colors"
+          className="px-2 py-1 rounded-lg text-xs text-faint hover:text-danger hover:bg-hover transition-colors"
           onClick={onClearAll}
         >
           清空
@@ -186,7 +186,7 @@ export function SearchHistoryDropdown({
             </button>
             <button
               type="button"
-              className="shrink-0 p-1.5 mr-2 rounded-md text-faint hover:text-danger hover:bg-chip transition-colors"
+              className="shrink-0 p-1.5 mr-2 rounded-lg text-faint hover:text-danger hover:bg-chip transition-colors"
               aria-label={`删除搜索记录 ${h.text}`}
               onClick={() => onRemove(h.text)}
             >

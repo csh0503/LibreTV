@@ -224,7 +224,7 @@ function LiveContent() {
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4">
           {/* 主栏：播放器 + 信息条 + 节目单 */}
           <div className="min-w-0">
-            <div className="aspect-video bg-black rounded-lg overflow-hidden">
+            <div className="aspect-video bg-black rounded-xl overflow-hidden">
               {currentUrl ? (
                 <LivePlayer
                   url={currentUrl}
@@ -250,7 +250,7 @@ function LiveContent() {
 
             {/* 频道信息条 */}
             {currentChannel && (
-              <div className="bg-surface-raised border border-line rounded-lg p-3 mt-3 flex items-center gap-3">
+              <div className="bg-surface-raised border border-line rounded-xl p-3 mt-3 flex items-center gap-3">
                 <div className="w-10 h-10 shrink-0 rounded bg-chip flex items-center justify-center overflow-hidden">
                   {logo && !logoFailed ? (
                     <SmartImage
@@ -278,7 +278,7 @@ function LiveContent() {
                 <div className="flex items-center gap-1 shrink-0">
                   <button
                     className={cn(
-                      'rounded-md p-2 transition-colors',
+                      'rounded-lg p-2 transition-colors',
                       lastChannelRef.current
                         ? 'text-muted hover:text-accent hover:bg-hover'
                         : 'text-faint/40 cursor-default'
@@ -297,7 +297,7 @@ function LiveContent() {
                     </svg>
                   </button>
                   <button
-                    className="rounded-md p-2 text-muted hover:text-accent hover:bg-hover transition-colors"
+                    className="rounded-lg p-2 text-muted hover:text-accent hover:bg-hover transition-colors"
                     aria-label="上一台"
                     title="上一台（↑）"
                     onClick={goPrevChannel}
@@ -312,7 +312,7 @@ function LiveContent() {
                     </svg>
                   </button>
                   <button
-                    className="rounded-md p-2 text-muted hover:text-accent hover:bg-hover transition-colors"
+                    className="rounded-lg p-2 text-muted hover:text-accent hover:bg-hover transition-colors"
                     aria-label="下一台"
                     title="下一台（↓）"
                     onClick={goNextChannel}
@@ -328,7 +328,7 @@ function LiveContent() {
                   </button>
                   <button
                     className={cn(
-                      'rounded-md p-2 transition-colors',
+                      'rounded-lg p-2 transition-colors',
                       isFavorite ? 'text-warning' : 'text-muted hover:text-warning hover:bg-hover'
                     )}
                     aria-label={isFavorite ? '取消收藏' : '收藏'}
@@ -350,7 +350,7 @@ function LiveContent() {
                     </svg>
                   </button>
                   <button
-                    className="rounded-md p-2 text-muted hover:text-accent hover:bg-hover transition-colors"
+                    className="rounded-lg p-2 text-muted hover:text-accent hover:bg-hover transition-colors"
                     aria-label="复制播放地址"
                     title="复制播放地址"
                     onClick={async () => {
@@ -380,7 +380,7 @@ function LiveContent() {
 
             {/* 节目单 */}
             {currentChannel && (
-              <section className="bg-surface-raised border border-line rounded-lg p-3 mt-3">
+              <section className="bg-surface-raised border border-line rounded-xl p-3 mt-3">
                 <h2 className="text-sm font-semibold text-content mb-2.5">节目单</h2>
                 <LiveEpgPanel epgUrl={currentChannel.epg} tvgId={currentChannel.tvgId} />
               </section>
@@ -409,7 +409,7 @@ function LiveContent() {
             <div className="flex items-center justify-between px-3 pt-3 pb-1 shrink-0 lg:hidden">
               <span className="text-sm font-semibold text-content">频道列表</span>
               <button
-                className="rounded-md p-1.5 text-muted hover:text-content hover:bg-hover transition-colors"
+                className="rounded-lg p-1.5 text-muted hover:text-content hover:bg-hover transition-colors"
                 aria-label="关闭频道列表"
                 onClick={() => setListOpen(false)}
               >

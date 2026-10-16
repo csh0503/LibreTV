@@ -28,9 +28,11 @@ export function FavoriteButton({
     <button
       type="button"
       className={cn(
-        'p-1.5 rounded-md transition-colors',
+        'p-1.5 rounded-full transition-colors',
         saved ? 'text-amber-400 hover:text-amber-300' : 'text-muted hover:text-content hover:bg-hover',
-        className
+        className,
+        // 收藏过的一直显示（卡片上没收藏的只在鼠标移上去时出现）
+        saved && '!opacity-100'
       )}
       aria-label={saved ? '取消收藏' : '收藏'}
       title={saved ? '取消收藏' : '收藏'}

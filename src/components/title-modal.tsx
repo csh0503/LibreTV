@@ -89,7 +89,7 @@ function TitleModalBody({
   const [posterFailed, setPosterFailed] = useState(false);
 
   const live = useSourceSearch(pick.title, !presetItems);
-  const { searchQuery, selectedSources, streamedOutcomes, failures } = live;
+  const { searchQuery, selectedSources, failures } = live;
   const list = presetItems ?? live.list;
   const settled = presetItems ? true : live.settled;
   const isSearching = presetItems ? false : live.isSearching;
@@ -105,7 +105,6 @@ function TitleModalBody({
   const primaryMissing = settled && matched.length === 0 && selectedSources.length > 0;
   const fallback = useAliasFallback(pick, primaryMissing);
   const aliasNames = fallback.names;
-  const alias = fallback.alias;
   /** 实际展示的片源：原名优先，没有就用别名找到的 */
   const aliasGroups = useMemo(
     () => rankGroupsForPick(fallback.groups, { ...pick, title: fallback.alias || pick.title }),
@@ -115,7 +114,6 @@ function TitleModalBody({
   const foundVia = matched.length === 0 ? fallback.foundVia : undefined;
   const lookingUpAliases = fallback.lookingUp;
   const nothingFound = fallback.nothingFound;
-  const sourceTotal = useMemo(() => new Set(shown.flatMap((g) => g.items.map((i) => i.sourceKey))).size, [shown]);
 
   const localId = favoriteIdOf({ title: pick.title });
   const saved = useLiveQuery(
@@ -174,10 +172,10 @@ function TitleModalBody({
   const noSourcesConfigured = selectedSources.length === 0;
   // 每组里的源按「最近没出错 → 集数多 → 响应快」排，「播放」用排第一的
   const sourceHealth = useAppStore((st) => st.sourceHealth);
-  // 片源质检：搜完后挑最靠前的几个源，让服务端看第 1 集的清晰度和插入广告
+  // 片源质检（在浏览器里做）：搜索结果一出来就开始测，每个源测完就更新
   const shownItemGroups = useMemo(() => shown.map((g) => g.items), [shown]);
   const searchDone = !isSearching && !lookingUpAliases;
-  const { qualityMap, isFetching: qualityFetching } = useSourceQuality(shownItemGroups, searchDone);
+  const { qualityMap } = useSourceQuality(shownItemGroups, shown.length > 0);
   const ranked = useMemo(
     () => shown.map((g) => ({ ...g, items: rankSources(g.items, sourceHealth, qualityMap) })),
     [shown, sourceHealth, qualityMap],
@@ -249,7 +247,7 @@ function TitleModalBody({
 
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-start justify-center overflow-y-auto bg-black/80 py-6 sm:py-10 px-3 sm:px-4 animate-fade-in"
+      className="fixed inset-0 z-[60] flex items-start justify-center overflow-y-auto bg-black/55 backdrop-blur-xl py-6 sm:py-10 px-3 sm:px-4 animate-fade-in"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -260,13 +258,13 @@ function TitleModalBody({
         role="dialog"
         aria-modal="true"
         aria-label={`${pick.title} 详情`}
-        className="relative bg-surface-raised rounded-2xl w-full max-w-3xl shadow-2xl overflow-hidden animate-slide-up outline-none"
+        className="relative bg-surface-raised rounded-[28px] w-full max-w-3xl shadow-[0_24px_80px_rgba(0,0,0,0.55)] ring-1 ring-content/10 overflow-hidden animate-slide-up outline-none"
       >
         <button
           type="button"
           onClick={onClose}
           aria-label="关闭"
-          className="absolute top-3 right-3 z-20 w-9 h-9 rounded-full bg-black/60 text-white hover:bg-black/80 flex items-center justify-center transition-colors"
+          className="absolute top-3 right-3 z-20 w-9 h-9 rounded-full bg-black/40 backdrop-blur-xl border border-white/15 text-white hover:bg-black/60 flex items-center justify-center transition-colors"
         >
           <Icon name="close" className="w-5 h-5" />
         </button>
@@ -296,7 +294,7 @@ function TitleModalBody({
                 customProxy={customImageProxy}
                 alt={pick.title}
                 loading="eager"
-                className="hidden sm:block w-28 aspect-[2/3] object-cover rounded-lg shadow-lg shrink-0"
+                className="hidden sm:block w-28 aspect-[2/3] object-cover rounded-2xl shadow-lg ring-1 ring-white/10 shrink-0"
                 onExhausted={() => setPosterFailed(true)}
               />
             )}
@@ -307,7 +305,7 @@ function TitleModalBody({
                   type="button"
                   onClick={primary.onClick}
                   disabled={primary.disabled}
-                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-white text-black font-semibold text-sm hover:bg-white/85 disabled:bg-white/25 disabled:text-white/70 disabled:cursor-default transition-colors"
+                  className="inline-flex items-center gap-2 px-6 py-2.5 rounded-full bg-content text-page font-semibold text-sm hover:bg-content/85 active:scale-[0.97] disabled:bg-content/25 disabled:text-content/70 disabled:cursor-default transition-colors"
                 >
                   {primary.busy ? (
                     <Spinner size="sm" />
@@ -324,7 +322,7 @@ function TitleModalBody({
                   type="button"
                   onClick={() => void toggleList()}
                   aria-pressed={!!saved}
-                  className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-black/40 border border-white/20 text-white text-sm hover:bg-black/60 transition-colors"
+                  className="inline-flex items-center gap-1.5 px-5 py-2.5 rounded-full bg-content/[0.1] backdrop-blur-xl ring-1 ring-content/15 text-content text-sm font-medium hover:bg-content/[0.18] active:scale-[0.97] transition-all"
                 >
                   <Icon name={saved ? 'check' : 'plus'} className="w-4 h-4" />
                   {saved ? '已在片单' : '我的片单'}
@@ -340,12 +338,8 @@ function TitleModalBody({
               {pick.rating && <span className="text-rating font-semibold">★ {pick.rating}</span>}
               {meta && <span className="text-muted">{meta}</span>}
               {statusBadge && (
-                <span
-                  className={cn(
-                    'px-2 py-0.5 rounded text-[11px] font-medium text-white',
-                    pick.status === 'airing' ? 'bg-amber-500/90' : 'bg-emerald-600/90',
-                  )}
-                >
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-content/[0.08] text-[11px] font-medium text-content">
+                  <span className={cn('w-1.5 h-1.5 rounded-full', pick.status === 'airing' ? 'bg-amber-400' : 'bg-emerald-400')} aria-hidden />
                   {statusBadge}
                 </span>
               )}
@@ -355,24 +349,20 @@ function TitleModalBody({
 
           <section aria-label="片源" className="space-y-3">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <h3 className="text-base font-bold text-content">
+              <h3 className="text-[17px] font-semibold text-content">
                 片源
                 <span className="ml-2 text-xs font-normal text-faint">
                   {noSourcesConfigured
                     ? '尚未勾选点播源'
                     : isSearching
-                      ? `正在查找 ${streamedOutcomes.length}/${selectedSources.length} 个点播源…`
+                      ? '正在查找…'
                       : shown.length > 0
-                        ? `${sourceTotal} 个点播源可看${foundVia ? ` · 按别名《${foundVia}》找到` : ''}${
-                            qualityFetching ? ' · 正在挑选画质最好的片源…' : ''
-                          }`
+                        ? foundVia
+                          ? `按别名《${foundVia}》找到`
+                          : ''
                         : lookingUpAliases
-                          ? alias
-                            ? `原名没找到，正在按别名《${alias}》查找…`
-                            : '原名没找到，正在查这部作品的其他译名…'
-                          : settled
-                            ? `已查询 ${selectedSources.length - failures.length} 个点播源`
-                            : ''}
+                          ? '正在查其他译名…'
+                          : ''}
                 </span>
               </h3>
               <button
@@ -426,12 +416,11 @@ function TitleModalBody({
           {current && (
             <section aria-label="选集" className="space-y-2.5">
               <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <h3 className="text-base font-bold text-content">
+                <h3 className="text-[17px] font-semibold text-content">
                   选集
                   <span className="ml-2 text-xs font-normal text-faint">
                     {current.sourceName}
                     {current.name !== pick.title ? ` · ${current.name}` : ''}
-                    {episodes.length > 0 ? ` · 共 ${episodes.length} 集` : ''}
                   </span>
                 </h3>
                 {episodes.length > 1 && (
@@ -443,7 +432,7 @@ function TitleModalBody({
               {episodesQuery.isLoading ? (
                 <div className="grid grid-cols-5 sm:grid-cols-8 gap-1.5" aria-hidden>
                   {Array.from({ length: 8 }).map((_, i) => (
-                    <div key={i} className="h-8 rounded-lg bg-chip animate-pulse" />
+                    <div key={i} className="h-8 rounded-xl bg-chip animate-pulse" />
                   ))}
                 </div>
               ) : episodes.length > 0 ? (
@@ -454,10 +443,10 @@ function TitleModalBody({
                       type="button"
                       onClick={() => playEpisode(i)}
                       className={cn(
-                        'h-8 rounded-lg text-xs border transition-colors',
+                        'h-9 rounded-xl text-[13px] font-medium transition-colors',
                         i === watchedIndex
-                          ? 'border-accent bg-accent/15 text-content font-medium'
-                          : 'border-line bg-surface text-muted hover:text-content hover:border-accent/60',
+                          ? 'bg-content text-page'
+                          : 'bg-content/[0.06] text-content/80 hover:bg-content/[0.12] hover:text-content',
                       )}
                       title={
                         [i === watchedIndex ? '上次看到这一集' : '', episodeNames?.[i] && episodeNames[i] !== String(i + 1) ? `源标的集名：${episodeNames[i]}` : '']
@@ -500,7 +489,7 @@ function SourceGroupRow({
   const shown = expanded ? group.items : group.items.slice(0, SOURCES_PER_GROUP);
   const hidden = group.items.length - shown.length;
   return (
-    <li className="rounded-xl bg-chip/60 border border-line px-3.5 py-3">
+    <li className="rounded-2xl bg-content/[0.04] ring-1 ring-content/[0.06] px-4 py-3">
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 mb-2">
         <span className="text-sm font-medium text-content">{group.name}</span>
         {group.year && <span className="text-xs text-faint">{group.year}</span>}
@@ -516,15 +505,13 @@ function SourceGroupRow({
             aria-pressed={qualityKey(item) === currentKey}
             title={item.remarks ? `${item.sourceName} · ${item.remarks}` : item.sourceName}
             className={cn(
-              'px-2.5 py-1 rounded-lg text-xs border text-muted hover:text-content hover:border-accent/60 transition-colors',
+              'px-3 py-1.5 rounded-full text-xs transition-colors',
               qualityKey(item) === currentKey
-                ? 'border-accent bg-accent/15 text-content'
-                : recommended && i === 0
-                  ? 'bg-surface border-accent/60 text-content'
-                  : 'bg-surface border-line',
+                ? 'bg-content text-page [&_*]:!text-page/70'
+                : 'bg-content/[0.07] text-content/85 hover:bg-content/[0.13] hover:text-content',
             )}
           >
-            {recommended && i === 0 && <span className="mr-1 text-accent font-medium">推荐</span>}
+            {recommended && i === 0 && <span className="mr-1 font-semibold">推荐</span>}
             {item.sourceName}
             <QualityTag q={quality[qualityKey(item)]} />
             {item.remarks && <span className="ml-1 text-faint">{item.remarks}</span>}
@@ -534,7 +521,7 @@ function SourceGroupRow({
           <button
             type="button"
             onClick={() => setExpanded(true)}
-            className="px-2.5 py-1 rounded-lg text-xs text-accent hover:bg-accent/10 transition-colors"
+            className="px-3 py-1.5 rounded-full text-xs text-accent hover:bg-accent/10 transition-colors"
           >
             +{hidden} 个源
           </button>
@@ -624,7 +611,7 @@ function TitleSynopsisAndInfo({
           )}
         </div>
       ) : detailQuery.isFetching ? (
-        <div className="h-12 rounded-lg bg-chip animate-pulse" aria-hidden />
+        <div className="h-12 rounded-xl bg-chip animate-pulse" aria-hidden />
       ) : null}
       {rows.length > 0 && (
         <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5 text-xs">

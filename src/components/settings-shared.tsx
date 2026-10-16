@@ -205,7 +205,7 @@ export function TestBadge({
       )}
       <button
         className={cn(
-          'rounded-md p-2 transition-colors disabled:opacity-40',
+          'rounded-lg p-2 transition-colors disabled:opacity-40',
           state?.status === 'done' && !state.ok ? 'text-danger' : 'text-muted hover:text-accent hover:bg-hover'
         )}
         disabled={state?.status === 'loading'}

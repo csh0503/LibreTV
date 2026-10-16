@@ -135,7 +135,7 @@ export function Drawer({
     <div className="fixed inset-0 z-50">
       <div
         className={cn(
-          'absolute inset-0 bg-black/60 transition-opacity duration-200',
+          'absolute inset-0 bg-black/45 backdrop-blur-md transition-opacity duration-200',
           entered ? 'opacity-100' : 'opacity-0'
         )}
         onClick={closeOnOverlay ? onClose : undefined}
@@ -148,25 +148,25 @@ export function Drawer({
         aria-label={title}
         tabIndex={-1}
         className={cn(
-          'absolute right-0 top-0 h-full w-full bg-surface-raised border-l border-line flex flex-col outline-none',
-          'transition-transform duration-200 ease-out',
+          'absolute right-0 top-0 h-full w-full glass-strong !border-y-0 !border-r-0 shadow-[0_0_80px_rgba(0,0,0,0.45)] flex flex-col outline-none',
+          'transition-transform duration-300 ease-[cubic-bezier(0.32,0.72,0,1)]',
           width,
           entered ? 'translate-x-0' : 'translate-x-full'
         )}
       >
-        <div className="shrink-0 px-4 py-2.5 border-b border-line flex items-center justify-between">
-          <h2 className="font-semibold text-content">{title}</h2>
+        <div className="shrink-0 px-5 py-3.5 border-b border-content/[0.08] flex items-center justify-between">
+          <h2 className="text-[17px] font-semibold text-content">{title}</h2>
           <button
-            className="p-1.5 rounded-md text-muted hover:text-content hover:bg-hover transition-colors"
+            className="w-8 h-8 rounded-full flex items-center justify-center bg-content/[0.07] text-muted hover:text-content hover:bg-content/[0.13] transition-colors"
             onClick={onClose}
             aria-label="关闭"
           >
             <Icon name="close" />
           </button>
         </div>
-        {subheader && <div className="shrink-0 px-4 py-2.5 border-b border-line bg-surface-raised">{subheader}</div>}
+        {subheader && <div className="shrink-0 px-5 py-2.5 border-b border-content/[0.08]">{subheader}</div>}
         {/* 唯一滚动区：内容再长也只在这一层滚动，避免与列表内滚形成嵌套滚动 */}
-        <div ref={contentRef} className="flex-1 min-h-0 overflow-y-auto scrollbar-thin px-4 pt-4 pb-6">
+        <div ref={contentRef} className="flex-1 min-h-0 overflow-y-auto scrollbar-thin px-5 pt-4 pb-6">
           {children}
         </div>
       </div>
