@@ -5,7 +5,7 @@ import { keepPreviousData, useInfiniteQuery, useQuery } from '@tanstack/react-qu
 import { api } from '@/lib/client-api';
 import { useAppStore } from '@/lib/store';
 import { cn } from '@/lib/utils';
-import type { DoubanItem, SearchResultItem } from '@/lib/types';
+import type { DoubanItem, SearchResultItem, TitlePick } from '@/lib/types';
 import { isAdultContent } from '@/lib/cms-parser';
 import {
   HALL_PAGE_SIZE,
@@ -51,7 +51,7 @@ export function RecommendSection({
   onPick,
   onOpen,
 }: {
-  onPick: (title: string) => void;
+  onPick: (title: string, pick?: TitlePick) => void;
   onOpen: (item: SearchResultItem) => void;
 }) {
   const doubanEnabled = useAppStore((s) => s.doubanEnabled);
@@ -366,7 +366,7 @@ export function RecommendSection({
                     item={toCard(item)}
                     onClick={() => {
                       void rememberDoubanItem(item, channel, genre === '全部' ? undefined : genre);
-                      onPick(item.title);
+                      onPick(item.title, item);
                     }}
                     onFavorite={() => {
                       void rememberDoubanItem(item, channel, genre === '全部' ? undefined : genre);

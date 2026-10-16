@@ -20,11 +20,13 @@ import { useAppStore, resolveSource, isInDisabledSubscription, isSourceDisabled 
 import { sourceIsAdult } from '@/lib/adult-sources';
 import { useLoadMore } from '@/components/use-load-more';
 import { api } from '@/lib/client-api';
-import type { SearchResultItem, SourceSearchOutcome } from '@/lib/types';
+import type { SearchResultItem, SourceSearchOutcome, TitlePick } from '@/lib/types';
+import { hasTitleMatch } from '@/lib/title-aliases';
 import { SearchHistoryDropdown, useSearchHistory } from '@/components/search-history';
 import { cn, formatDisableTtl, validateSourceUrl } from '@/lib/utils';
 import { useToast } from '@/components/toast';
 import { EmptyState } from '@/components/states';
+import { NoSourceNotice } from '@/components/no-source';
 import { Icon } from '@/components/icon';
 import { SiteFooter } from '@/components/site-footer';
 
@@ -34,6 +36,12 @@ import { SiteFooter } from '@/components/site-footer';
  */
 /** 搜索结果分批渲染的批大小：一次挂载上千张卡片会明显掉帧 */
 const RESULT_PAGE_SIZE = 60;
+
+/**
+ * 首页卡片点开时记下的元数据（封面、年份），按片名存。
+ * 放在模块里而不是组件 state：从播放页后退回到搜索结果时组件会重建，记录仍在。
+ */
+const pickedTitles = new Map<string, TitlePick>();
 
 export default function HomePage() {
   return (
@@ -155,6 +163,14 @@ function HomeContent() {
     searchHistory.record(query);
   };
 
+  /** 首页各行的卡片点开：记下元数据后搜索，搜不到时据此展示「暂无片源」 */
+  const pickTitle = (title: string, pick?: TitlePick) => {
+    if (pick) pickedTitles.set(title.trim().slice(0, 100), { ...pick, title });
+    setInput(title);
+    runSearch(title);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   const pickHistory = (text: string) => {
     setInput(text);
     searchHistory.close();
@@ -178,6 +194,10 @@ function HomeContent() {
       .map((o) => ({ sourceKey: o.sourceKey, error: o.error || '请求失败', timedOut: o.timedOut }));
   // 跨源同名聚合：同名影片合并为一张卡片，展开后可选择具体来源
   const groups = useMemo(() => aggregateResults(list, urlQuery), [list, urlQuery]);
+  // 从首页卡片点进来、全部源都结算了还没有这部作品本身 → 「暂无片源」
+  const picked = pickedTitles.get(urlQuery);
+  const searchSettled = Boolean(searchQuery.data) && !searchQuery.isFetching;
+  const pickMissing = Boolean(picked) && searchSettled && !hasTitleMatch(groups, urlQuery);
 
   // 分批渲染：新一次搜索（groups 变化）时重置回首批
   const [visibleCount, setVisibleCount] = useState(RESULT_PAGE_SIZE);
@@ -393,6 +413,15 @@ function HomeContent() {
               <NoSourceGuide hasSources={customAPIs.length > 0 || envSources.length > 0} />
             ) : list.length > 0 ? (
               <>
+                {pickMissing && picked && (
+                  <NoSourceNotice
+                    variant="inline"
+                    pick={picked}
+                    sourceCount={selectedSources.length}
+                    failedCount={failures.length}
+                    onRetry={() => void searchQuery.refetch()}
+                  />
+                )}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 items-start">
                   {visibleGroups.map((group) => (
                     <AggregatedCard
@@ -406,6 +435,14 @@ function HomeContent() {
               </>
             ) : isSearching ? (
               <ResultsSkeleton />
+            ) : pickMissing && picked ? (
+              <NoSourceNotice
+                variant="full"
+                pick={picked}
+                sourceCount={selectedSources.length}
+                failedCount={failures.length}
+                onRetry={() => void searchQuery.refetch()}
+              />
             ) : (
               <EmptyState
                 icon="search"
@@ -421,48 +458,24 @@ function HomeContent() {
         {!urlQuery && (
           <div className="space-y-7">
             <HeroBillboard
-              onPick={(title) => {
-                setInput(title);
-                runSearch(title);
-                window.scrollTo({ top: 0, behavior: 'smooth' });
-              }}
+              onPick={pickTitle}
             />
             <ContinueWatchingRow />
             <MyListRow
-              onPick={(title) => {
-                setInput(title);
-                runSearch(title);
-                window.scrollTo({ top: 0, behavior: 'smooth' });
-              }}
+              onPick={pickTitle}
               onOpen={(item) => setDetailItem(item)}
             />
             <ForYouRows
-              onPick={(title) => {
-                setInput(title);
-                runSearch(title);
-                window.scrollTo({ top: 0, behavior: 'smooth' });
-              }}
+              onPick={pickTitle}
             />
             <TopTenRow
-              onPick={(title) => {
-                setInput(title);
-                runSearch(title);
-                window.scrollTo({ top: 0, behavior: 'smooth' });
-              }}
+              onPick={pickTitle}
             />
             <UpcomingRow
-              onPick={(title) => {
-                setInput(title);
-                runSearch(title);
-                window.scrollTo({ top: 0, behavior: 'smooth' });
-              }}
+              onPick={pickTitle}
             />
             <ShelfRows
-              onPick={(title) => {
-                setInput(title);
-                runSearch(title);
-                window.scrollTo({ top: 0, behavior: 'smooth' });
-              }}
+              onPick={pickTitle}
             />
             <div className="pt-2">
               <button
@@ -476,11 +489,7 @@ function HomeContent() {
             </div>
             {browseAll && (
               <RecommendSection
-                onPick={(title) => {
-                  setInput(title);
-                  runSearch(title);
-                  window.scrollTo({ top: 0, behavior: 'smooth' });
-                }}
+                onPick={pickTitle}
                 onOpen={(item) => setDetailItem(item)}
               />
             )}

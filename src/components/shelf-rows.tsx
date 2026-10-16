@@ -8,7 +8,7 @@ import { favoriteIdOf } from '@/lib/db';
 import { SHELF_DEFS, shelfDedupeKey } from '@/lib/shelf-defs';
 import { useAppStore } from '@/lib/store';
 import { rememberDoubanItem } from '@/lib/taste-store';
-import type { DoubanItem } from '@/lib/types';
+import type { DoubanItem, TitlePick } from '@/lib/types';
 import { ShelfRow } from './home-rows';
 import { DoubanCard } from './video-card';
 
@@ -23,9 +23,9 @@ const MAX_PER_SHELF = 20;
  * 首页货架（Netflix 式）：按固定顺序一行一行往下排。
  * 整页同一部作品只出现一次（含不同季度），排在前面的行优先；
  * 数据取不到或去重后太少的行直接不显示，不留空壳。
- * 点击后走搜索：有片源就能看，没有就在搜索结果里提示。
+ * 点击后走搜索：有片源就能看，没有就显示「暂无片源」并可加入片单（首页不预先探测、不隐藏）。
  */
-export function ShelfRows({ onPick }: { onPick: (title: string) => void }) {
+export function ShelfRows({ onPick }: { onPick: (title: string, pick?: TitlePick) => void }) {
   const doubanEnabled = useAppStore((s) => s.doubanEnabled);
   const yellowFilter = useAppStore((s) => s.yellowFilter);
   const [revealed, setRevealed] = useState(BATCH);
@@ -125,7 +125,7 @@ export function ShelfRows({ onPick }: { onPick: (title: string) => void }) {
                   }}
                   onClick={() => {
                     void rememberDoubanItem(item, def.channel);
-                    onPick(item.title);
+                    onPick(item.title, item);
                   }}
                   onFavorite={() => {
                     void rememberDoubanItem(item, def.channel);

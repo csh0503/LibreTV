@@ -22,7 +22,7 @@ import type { UpcomingItem, UpcomingKind } from '@/lib/upcoming';
 import { resolveSource, useAppStore } from '@/lib/store';
 import { rememberDoubanItem } from '@/lib/taste-store';
 import { canonicalTitle } from '@/lib/title-aliases';
-import type { DoubanItem, SearchResultItem } from '@/lib/types';
+import type { DoubanItem, SearchResultItem, TitlePick } from '@/lib/types';
 import { useProfile } from '@/lib/use-profile';
 import { buildWatchUrl, cn, formatTime } from '@/lib/utils';
 import { Icon } from './icon';
@@ -226,7 +226,7 @@ function useTopRankItems(listId: HotListId, enabled: boolean) {
  * 默认采用全网实时聚合榜（realtime_all）交叉展示热剧、院线大片、B站国创与日番榜首，
  * 优先渲染 16:9 横版海报（backdrop），支持切换前 6 部主推，直接「播放」或「加入片单」。
  */
-export function HeroBillboard({ onPick }: { onPick: (title: string) => void }) {
+export function HeroBillboard({ onPick }: { onPick: (title: string, pick?: TitlePick) => void }) {
   const router = useRouter();
   const { toast } = useToast();
   const doubanEnabled = useAppStore((s) => s.doubanEnabled);
@@ -339,7 +339,7 @@ export function HeroBillboard({ onPick }: { onPick: (title: string) => void }) {
       );
       return;
     }
-    onPick(current.title);
+    onPick(current.title, current);
   };
 
   const handleToggleMyList = () => {
@@ -790,7 +790,7 @@ export function MyListRow({
   onPick,
   onOpen,
 }: {
-  onPick: (title: string) => void;
+  onPick: (title: string, pick?: TitlePick) => void;
   onOpen: (item: SearchResultItem) => void;
 }) {
   const router = useRouter();
@@ -877,7 +877,7 @@ export function MyListRow({
     }
 
     // 3. 豆瓣卡片收藏（无绑定特定源）：触发首页搜索
-    onPick(row.title);
+    onPick(row.title, { title: row.title, cover: row.pic, year: row.year, rating: row.tasteRating, area: row.tasteArea });
   };
 
   return (
@@ -927,7 +927,7 @@ const TOP_TEN_TABS: { id: HotListId; label: string; channel: 'tv' | 'movie' | 's
  * 首页「实时风向 · TOP 10」（Netflix 风格带大数字 1~10 的多源实时热榜排）：
  * 按影视大类划分，每个分类内部由 RRF 倒数排名融合 + 跨平台共现加权算法综合选出。
  */
-export function TopTenRow({ onPick }: { onPick: (title: string) => void }) {
+export function TopTenRow({ onPick }: { onPick: (title: string, pick?: TitlePick) => void }) {
   const doubanEnabled = useAppStore((s) => s.doubanEnabled);
   const [tab, setTab] = useState<HotListId>('realtime_all');
   const { items, isLoading } = useTopRankItems(tab, doubanEnabled);
@@ -1036,7 +1036,7 @@ export function TopTenRow({ onPick }: { onPick: (title: string) => void }) {
               item={item}
               onClick={() => {
                 void rememberDoubanItem(item, activeChannel);
-                onPick(item.title);
+                onPick(item.title, item);
               }}
               onFavorite={() => {
                 void rememberDoubanItem(item, activeChannel);
@@ -1204,7 +1204,7 @@ export function buildUpcomingDays(items: Pick<UpcomingItem, 'airingAt' | 'timeKn
  * 首页「即将播出」：接下来 7 天还没播出的内容。
  * 首播/首映：点击加入片单（现在还搜不到）；连载中的新集：点击先看已经播出的集数。
  */
-export function UpcomingRow({ onPick }: { onPick: (title: string) => void }) {
+export function UpcomingRow({ onPick }: { onPick: (title: string, pick?: TitlePick) => void }) {
   const doubanEnabled = useAppStore((s) => s.doubanEnabled);
   const yellowFilter = useAppStore((s) => s.yellowFilter);
   const profileId = useProfile().id;
@@ -1252,7 +1252,7 @@ export function UpcomingRow({ onPick }: { onPick: (title: string) => void }) {
     const when = formatAiringLabel(item.airingAt, item.timeKnown);
     if (!item.premiere) {
       toast(`《${item.title}》第 ${item.episode ?? '?'} 集将于${when}播出，先看已经播出的集数`, 'info');
-      onPick(item.title);
+      onPick(item.title, { title: item.title, cover: item.cover, rating: item.rating, area: item.area });
       return;
     }
     const localId = favoriteIdOf({ title: item.title });

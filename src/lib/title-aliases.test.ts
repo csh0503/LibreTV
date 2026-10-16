@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   canonicalTitle,
   expandSearchTerms,
+  aggregateResults,
   extractCoreSearchStem,
+  hasTitleMatch,
   replaceAliasInTitle,
   titleMatchesQuery,
 } from './title-aliases';
@@ -42,5 +44,23 @@ describe('片名别名与搜索降级分词', () => {
     expect(titleMatchesQuery('海贼王', '航海王')).toBe(true);
     expect(titleMatchesQuery('海贼王剧场版：红发歌姬', '航海王')).toBe(true);
     expect(titleMatchesQuery('火影忍者', '航海王')).toBe(false);
+  });
+});
+
+describe('hasTitleMatch：搜索结果里有没有这部作品本身', () => {
+  const row = (name: string, typeName = '剧集') => ({ vodId: name, name, typeName, sourceKey: 's1', sourceName: '源一' });
+  const groupsOf = (names: string[], query: string) =>
+    aggregateResults(names.map((n) => row(n)), query);
+
+  it('同名或带季数的都算有', () => {
+    expect(hasTitleMatch(groupsOf(['庆余年'], '庆余年'), '庆余年')).toBe(true);
+    expect(hasTitleMatch(groupsOf(['庆余年第二季'], '庆余年'), '庆余年')).toBe(true);
+    expect(hasTitleMatch(groupsOf(['庆余年 第1季'], '庆余年 第二季'), '庆余年 第二季')).toBe(true);
+  });
+
+  it('只有名字沾边的别的片、或只有解说时算没有', () => {
+    expect(hasTitleMatch(groupsOf(['余年有你'], '庆余年'), '庆余年')).toBe(false);
+    expect(hasTitleMatch(aggregateResults([row('庆余年', '影视解说')], '庆余年'), '庆余年')).toBe(false);
+    expect(hasTitleMatch([], '庆余年')).toBe(false);
   });
 });

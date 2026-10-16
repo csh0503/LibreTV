@@ -218,6 +218,23 @@ function isCommentaryItem(item: SearchResultItem): boolean {
   return /\[?电影解说\]?|影视解说|几分钟看/.test(item.name || '') || /解说/.test(item.typeName || '');
 }
 
+const TRAILING_SEASON = /第[一二三四五六七八九十百]+[季部篇期]$/;
+
+/**
+ * 搜索结果里有没有「这部作品本身」：同名，或同名加季数 / 副标题（首页卡片多是不带季数的系列名）。
+ * 解说类不算。只用来决定要不要提示「暂无片源」，宁可漏判也不误报。
+ */
+export function hasTitleMatch(groups: AggregatedGroup[], title: string): boolean {
+  const key = buildGroupTitleKey(title, title, false);
+  if (!key) return groups.length > 0;
+  const base = key.replace(TRAILING_SEASON, '');
+  return groups.some((g) => {
+    if (g.items.every(isCommentaryItem)) return false;
+    const k = buildGroupTitleKey(g.name, title, false);
+    return k === key || (base.length >= 2 && k.startsWith(base));
+  });
+}
+
 /**
  * 计算聚合分桶键：
  * - 统一同义词（如「黑色四叶草」→「黑色五叶草」、「海贼王」→「航海王」）

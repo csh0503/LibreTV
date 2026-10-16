@@ -65,6 +65,9 @@ export interface VideoDetail {
   videoInfo: VideoInfo;
 }
 
+/** 首页卡片点开时一起带上的元数据：搜不到片源时用来展示「暂无片源」卡 */
+export type TitlePick = Pick<DoubanItem, 'title'> & Partial<Pick<DoubanItem, 'cover' | 'year' | 'rating' | 'area'>>;
+
 export interface DoubanItem {
   id: string;
   title: string;

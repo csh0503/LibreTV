@@ -12,13 +12,13 @@ import { useAppStore } from '@/lib/store';
 import { assembleTaste, rankTaste, type TasteChannel } from '@/lib/taste';
 import { rememberDoubanItem } from '@/lib/taste-store';
 import { canonicalTitle } from '@/lib/title-aliases';
-import type { DoubanItem } from '@/lib/types';
+import type { DoubanItem, TitlePick } from '@/lib/types';
 import { useProfile } from '@/lib/use-profile';
 import { ShelfRow } from './home-rows';
 import { DoubanCard } from './video-card';
 
 /** 首页口味排：「为你推荐」与「因为你看过《某某》」。 */
-export function ForYouRows({ onPick }: { onPick: (title: string) => void }) {
+export function ForYouRows({ onPick }: { onPick: (title: string, pick?: TitlePick) => void }) {
   const doubanEnabled = useAppStore((s) => s.doubanEnabled);
   const yellowFilter = useAppStore((s) => s.yellowFilter);
   const profileId = useProfile().id;
@@ -129,7 +129,7 @@ export function ForYouRows({ onPick }: { onPick: (title: string) => void }) {
 
   const open = (item: DoubanItem, channel?: TasteChannel) => {
     void rememberDoubanItem(item, channel);
-    onPick(item.title);
+    onPick(item.title, item);
   };
 
   if (!assembled && !singleFallback) {
