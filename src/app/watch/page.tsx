@@ -18,6 +18,9 @@ const PlayerShell = dynamic(() => import('@/components/player-shell').then((m) =
 import { EmptyState, LoadingState, Spinner } from '@/components/states';
 import { SwitchSourceModal } from '@/components/switch-source';
 import { useAutoFailover, type FailoverState } from '@/components/use-auto-failover';
+import { useToast } from '@/components/toast';
+import { classifySkip, loadSkipMarks, resolveEpisodeSkip, saveSkipMarks, seriesKeyOf, type LearnedSkip } from '@/lib/skip-marks';
+import { failoverQueryTitle } from '@/lib/failover';
 import { enqueueDownload } from '@/components/download-manager';
 import { FavoriteButton } from '@/components/favorite-button';
 import { Icon } from '@/components/icon';
@@ -39,7 +42,7 @@ import {
 } from '@/lib/home-features';
 import { getActiveProfileId, whenProfileReady } from '@/lib/profile-session';
 import { rememberVideoInfo } from '@/lib/taste-store';
-import { cn } from '@/lib/utils';
+import { cn, formatTime } from '@/lib/utils';
 
 /**
  * 播放页（唯一入口，替代旧版 watch.html → player.html 跳转链）。
@@ -149,6 +152,51 @@ function WatchContent() {
     void rememberVideoInfo(videoTitle, extractTasteFromVideoInfo(info));
   }, [detailQuery.data?.videoInfo, source?.isAdult, videoTitle]);
 
+  // —— 跳过片头片尾 ——
+  const { toast } = useToast();
+  const videoYear = detailQuery.data?.videoInfo?.year;
+  const seriesKey = seriesKeyOf(videoTitle, videoYear);
+  const [learned, setLearned] = useState<LearnedSkip | undefined>(undefined);
+  useEffect(() => setLearned(loadSkipMarks(seriesKey)), [seriesKey]);
+  const [duration, setDuration] = useState(0);
+  useEffect(() => setDuration(0), [currentIndex, sourceKey, vodId]);
+  const positionRef = useRef({ time: 0, duration: 0 });
+  const isAnime = /动漫|动画|番/.test(detailQuery.data?.videoInfo?.typeName ?? '');
+  // 动漫查 AniSkip（片子总长确定之后，用它挑同一版本的时间点）
+  const remoteSkip = useQuery({
+    queryKey: ['skip-times', failoverQueryTitle(videoTitle, videoYear), videoYear, currentIndex + 1, Math.round(duration / 5)],
+    queryFn: ({ signal }) =>
+      api.skipTimes({ title: failoverQueryTitle(videoTitle, videoYear), year: videoYear, episode: currentIndex + 1, length: duration }, signal),
+    enabled: isAnime && duration > 60 && Boolean(videoTitle),
+    staleTime: 24 * 3600_000,
+    retry: 0,
+  });
+  const episodeSkip = useMemo(
+    () => resolveEpisodeSkip(remoteSkip.data, learned, duration),
+    [remoteSkip.data, learned, duration],
+  );
+  const updateLearned = useCallback(
+    (patch: Partial<LearnedSkip> | null) => setLearned(saveSkipMarks(seriesKey, patch)),
+    [seriesKey],
+  );
+  /** 你自己跳了一大段：像片头 / 片尾就记下来（AniSkip 已有的那段不记） */
+  const learnSkip = useCallback(
+    (from: number, to: number, total: number) => {
+      const hit = classifySkip(from, to, total);
+      if (!hit) return;
+      if (hit.kind === 'intro' && !episodeSkip.remote.intro) {
+        const prev = learned?.intro;
+        updateLearned({ intro: hit.seg });
+        if (!prev) toast(`记住了这部的片头（${formatTime(hit.seg.start)}–${formatTime(hit.seg.end)}），之后每集会显示「跳过片头」`, 'success');
+      } else if (hit.kind === 'outro' && !episodeSkip.remote.outro) {
+        const prev = learned?.outro;
+        updateLearned({ outro: { fromEnd: hit.fromEnd, toEnd: hit.toEnd } });
+        if (!prev) toast('记住了这部的片尾位置，之后每集会显示「跳过片尾」', 'success');
+      }
+    },
+    [episodeSkip.remote, learned, updateLearned, toast],
+  );
+
   // 进度恢复优先级：URL position 参数 > IndexedDB progress 表 > 已同步的观看历史
   const getRestorePosition = useCallback(async () => {
     await whenProfileReady();
@@ -191,6 +239,7 @@ function WatchContent() {
   // 播放中与暂停时的进度落盘逻辑一致，共用同一回调
   const handleProgress = useCallback(
     (position: number, duration: number) => {
+      if (duration > 0) setDuration((d) => (Math.abs(d - duration) > 1 ? duration : d));
       if (vodId) {
         saveProgress(sourceKey, vodId, currentIndex, position, duration).catch(() => {});
         updateHistoryProgress(sourceKey, vodId || currentUrl, position, duration).catch(() => {});
@@ -359,6 +408,10 @@ function WatchContent() {
                   onEnded={handleEnded}
                   onNextPrefetchState={setNextPrefetchState}
                   onRequestSwitchSource={vodId ? failover.requestSwitch : undefined}
+                  skip={episodeSkip.intro || episodeSkip.outro ? episodeSkip : undefined}
+                  onUserSeek={learnSkip}
+                  onNextEpisode={currentIndex + 1 < episodes.length ? () => goEpisode(currentIndex + 1) : undefined}
+                  positionRef={positionRef}
                   overlay={
                     failover.state.phase !== 'idle' ? (
                       <FailoverOverlayCard
@@ -418,7 +471,12 @@ function WatchContent() {
               <button
                 className="btn-ghost btn-sm"
                 disabled={episodes.length === 0 || currentIndex >= episodes.length - 1}
-                onClick={() => goEpisode(currentIndex + 1)}
+                onClick={() => {
+                  // 在片尾附近点「下一集」：当成跳过片尾，记下片尾大概从哪开始
+                  const { time, duration: total } = positionRef.current;
+                  learnSkip(time, total, total);
+                  goEpisode(currentIndex + 1);
+                }}
               >
                 下一集
               </button>
@@ -430,7 +488,39 @@ function WatchContent() {
                     : `正在预热第 ${currentIndex + 2} 集…`}
                 </span>
               )}
-              <label className="flex items-center gap-1.5 text-xs text-muted ml-auto cursor-pointer">
+              {(episodeSkip.intro || episodeSkip.outro) && (
+                <span className="flex items-center gap-1.5 text-xs text-muted ml-auto">
+                  <label className="flex items-center gap-1.5 cursor-pointer" title="这部剧进入片头 / 片尾时自动跳过；关着时只显示按钮">
+                    <input
+                      type="checkbox"
+                      className="h-3.5 w-3.5 accent-[#2563eb]"
+                      checked={episodeSkip.auto}
+                      onChange={(e) => updateLearned({ auto: e.target.checked })}
+                    />
+                    自动跳过片头片尾
+                  </label>
+                  <span className="text-faint">
+                    （{episodeSkip.remote.intro || episodeSkip.remote.outro ? 'AniSkip' : '你跳过时记下的'}
+                    {learned?.intro || learned?.outro ? (
+                      <>
+                        {' · '}
+                        <button
+                          type="button"
+                          className="hover:text-content underline-offset-2 hover:underline"
+                          onClick={() => {
+                            updateLearned(null);
+                            toast('已清除这部剧记下的片头片尾', 'info');
+                          }}
+                        >
+                          重设
+                        </button>
+                      </>
+                    ) : null}
+                    ）
+                  </span>
+                </span>
+              )}
+              <label className={cn('flex items-center gap-1.5 text-xs text-muted cursor-pointer', !(episodeSkip.intro || episodeSkip.outro) && 'ml-auto')}>
                 <input
                   type="checkbox"
                   className="h-3.5 w-3.5 accent-[#2563eb]"

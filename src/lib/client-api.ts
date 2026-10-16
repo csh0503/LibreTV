@@ -258,6 +258,13 @@ export const api = {
     );
   },
 
+  /** 动漫片头片尾（AniSkip）；length 取整到 5 秒，同一集的不同源能共用边缘缓存 */
+  skipTimes: (query: { title: string; year?: string; episode: number; length: number }, signal?: AbortSignal) => {
+    const sp = new URLSearchParams({ title: query.title, episode: String(query.episode), length: String(Math.round(query.length / 5) * 5) });
+    if (query.year) sp.set('year', query.year);
+    return request<{ malId: number | null } & import('./skip-times').SkipTimes>(`/api/skip-times?${sp.toString()}`, { signal });
+  },
+
   upcoming: (signal?: AbortSignal) =>
     request<{ items: import('./upcoming').UpcomingItem[] }>('/api/upcoming', { signal }),
 
