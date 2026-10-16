@@ -1,5 +1,7 @@
 # 交接说明（给接手的会话）
 
+> **部署规则（用户要求）**：每次改完、测试通过并推送分支后，**直接部署**，不要让用户自己去 Vercel 按 Redeploy。做法：把 main 快进到工作分支（`git push origin HEAD:main`，main 是线性历史，只快进、不强推），Vercel 会自动部署 Production；页脚的提交短哈希可确认线上版本。出问题可在 Vercel 的 Deployments 里 Promote 上一个版本回滚。
+>
 > 先读完这份再动手。用户用中文（繁体/简体混用）沟通；`PASSWORD` 环境变量未设置时所有 `/api/*` 返回 503，本地调试需要自建 `.env.local`（已被 git 忽略）。
 
 ## 用户的目标
