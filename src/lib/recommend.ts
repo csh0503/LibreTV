@@ -1,4 +1,5 @@
 import type { DoubanItem } from './types';
+import { judgeStatus } from './title-status';
 import { isAdultContent } from './cms-parser';
 import { canonicalTitle } from './title-aliases';
 
@@ -119,26 +120,18 @@ export function deriveStatus(
   input: { episodesInfo?: string; year?: string; fromCalendar?: boolean; hasRating?: boolean },
   nowYear: number
 ): 'airing' | 'ended' | undefined {
-  if (input.fromCalendar) return 'airing';
-  const text = input.episodesInfo ?? '';
-  // 「47集全」是豆瓣常见的完结写法，不只「全47集」
-  if (/完结|已完结|全集|全\d+\s*[集话期]|\d+\s*[集话期]全/.test(text)) return 'ended';
-  const year = parseInt(input.year ?? '', 10);
-  if (/更新|连载/.test(text)) {
-    // 豆瓣很多旧番（如 2023《迷宫饭》）的 episodes_info 长期停留在「更新至14集」未改。
-    // 若距今已 ≥3 年且集数 <60（非柯南/海贼王这类常青长篇），必已完结。
-    if (Number.isFinite(year) && year <= nowYear - 3) {
-      const epNum = parseInt(text.match(/(\d+)/)?.[1] ?? '0', 10);
-      if (epNum > 0 && epNum < 60) return 'ended';
-    }
-    return 'airing';
-  }
-  if (!Number.isFinite(year) || year < 1900 || year > nowYear + 5) return undefined;
-  // 今年及以后、没有集数信息、也还没有评分：多半是没开播的预告 / 年番，不能当成「已完结」
-  if (year >= nowYear && input.hasRating === false) return undefined;
-  // 没有「更新至」的年份条目算已完结，包括今年。
-  // 若把今年一律当成连载，「2026 + 已完结」会整页被滤空，而「连载中」却全是这些片子。
-  return 'ended';
+  // 规则统一在 title-status.ts；片库没有更新说明时按年份推断
+  const now = nowYear === new Date().getFullYear() ? Date.now() : new Date(nowYear, 6, 1).getTime();
+  return judgeStatus(
+    {
+      text: input.episodesInfo,
+      year: input.year,
+      fromCalendar: input.fromCalendar,
+      hasRating: input.hasRating,
+      inferFromYear: true,
+    },
+    now
+  );
 }
 
 /** 豆瓣 rexxar /movie|tv/recommend 的单条 items */
@@ -232,19 +225,16 @@ export function reconcileStatusWithCalendar(
 ): DoubanItem[] {
   if (calendar.length === 0) return items;
   const airingKeys = new Set(calendar.map((c) => canonicalTitle(c.title)).filter(Boolean));
+  const now = nowYear === new Date().getFullYear() ? Date.now() : new Date(nowYear, 6, 1).getTime();
   return items.map((item) => {
     const key = canonicalTitle(item.title);
     if (key && airingKeys.has(key)) {
       return item.status === 'airing' ? item : { ...item, status: 'airing' };
     }
-    if (item.status === 'airing') {
-      const year = parseInt(item.year ?? '', 10);
-      const epNum = parseInt(item.remarks?.match(/(\d+)/)?.[1] ?? '0', 10);
-      if (Number.isFinite(year) && year < nowYear && epNum < 60) {
-        return { ...item, status: 'ended' };
-      }
-    }
-    return item;
+    if (item.status !== 'airing') return item;
+    // 标着连载、却不在本周放送表上：交给统一判定看是不是豆瓣没改的旧状态
+    const status = judgeStatus({ text: item.remarks || '更新', year: item.year, absentFromCalendar: true }, now);
+    return status === item.status ? item : { ...item, status };
   });
 }
 

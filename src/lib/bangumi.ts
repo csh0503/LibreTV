@@ -1,4 +1,5 @@
 import type { DoubanItem } from './types';
+import { judgeStatus } from './title-status';
 import { fetchUpstream, getCache, setCache } from './fetch-utils';
 
 /**
@@ -212,7 +213,6 @@ export async function fetchBangumiCatalog(opts: {
   if (!res.ok) throw new Error(`Bangumi v0 片库响应异常 (${res.status})`);
   const json = (await res.json()) as { data?: BangumiV0SubjectRaw[] };
   const rows = Array.isArray(json.data) ? json.data : [];
-  const nowYear = new Date().getFullYear();
 
   const todayStr = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
   const items: DoubanItem[] = [];
@@ -226,10 +226,13 @@ export async function fetchBangumiCatalog(opts: {
 
     const year = row.date && /^\d{4}/.test(row.date) ? row.date.slice(0, 4) : undefined;
     const epCount = row.total_episodes || row.eps || 0;
-    const yearNum = year ? parseInt(year, 10) : 0;
-    const isRecent = yearNum >= nowYear;
-    const status: 'airing' | 'ended' | undefined =
-      epCount > 0 && yearNum > 0 && yearNum < nowYear ? 'ended' : isRecent ? 'airing' : undefined;
+    // 首播 120 天内算当季在播，更早的按年份推断（规则见 title-status.ts）
+    const status = judgeStatus({
+      airDate: row.date,
+      year,
+      hasRating: (row.rating?.score ?? 0) > 0,
+      inferFromYear: true,
+    });
     const remarks = epCount > 0 ? (status === 'ended' ? `全${epCount}话` : `共${epCount}话`) : undefined;
     const topGenres = (row.tags ?? [])
       .map((t) => t.name?.trim())

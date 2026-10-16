@@ -1,4 +1,5 @@
 import type { DoubanItem } from './types';
+import { judgeStatus } from './title-status';
 import { fetchUpstream, getCache, setCache } from './fetch-utils';
 import { rexxarToItem, type DoubanRequest } from './recommend';
 import { fetchBangumiCatalog } from './bangumi';
@@ -129,13 +130,11 @@ async function fetchBiliSeasonIndex(query: DoubanFetchQuery): Promise<DoubanItem
 
     const scoreNum = parseFloat((row.score || '').replace(/分$/, ''));
     const rating = Number.isFinite(scoreNum) && scoreNum > 0 ? scoreNum.toFixed(1) : undefined;
-    const status: 'airing' | 'ended' | undefined = !isTv
-      ? undefined
-      : row.is_finish === 1
-        ? 'ended'
-        : row.is_finish === 0
-          ? 'airing'
-          : undefined;
+    const status = judgeStatus({
+      isTv,
+      finished: row.is_finish === 1 ? true : row.is_finish === 0 ? false : undefined,
+      text: row.index_show,
+    });
 
     items.push({
       id: `bili_idx_${row.season_id}`,

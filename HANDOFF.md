@@ -25,6 +25,7 @@
 
 - 货架目录在 `src/lib/shelf-defs.ts`（客户端 / 服务端共用），取数在 `src/lib/shelves.ts`：热榜类复用 `fetchHotList`（`douban-weekly.ts` 的多源 RRF 融合），题材类用 TMDB discover（`src/lib/tmdb.ts` 的 `tmdbGet`）。
 - 整页去重在客户端（`shelfDedupeKey`），前面的行优先；去重后少于 4 部的行不显示；每次放出 3 行，滚动到底再放下一批（用 scroll 事件，不用 IntersectionObserver）。
+- **连载 / 完结判定只有一处**：`src/lib/title-status.ts` 的 `judgeStatus`。豆瓣热榜、B站热播榜、B站片库（`is_finish`）、Bangumi 片库（首播 120 天内算当季在播）、豆瓣片库（`deriveStatus` 只是包装）、放送表校准（`absentFromCalendar`）都只把线索交给它。新增来源时也请走它，不要再写正则。
 - 未播出判定：`unreleased.ts` 的 `fetchUnreleasedIndex` + `dropUnreleased`；片库（`douban.ts`）、热榜、货架出口都过一遍。
 - 片库缓存键已升到 `douban:v3`。
 

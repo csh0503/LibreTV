@@ -1,4 +1,5 @@
 import type { DoubanItem } from './types';
+import { judgeStatus } from './title-status';
 import { fetchUpstream, getCache, setCache } from './fetch-utils';
 import { canonicalTitle } from './title-aliases';
 import { fetchBangumiHotAiring } from './bangumi';
@@ -253,11 +254,7 @@ export function doubanCollectionToItem(
     typeof ratingVal === 'number' && ratingVal > 0 ? Number(ratingVal.toFixed(1)).toString() : undefined;
 
   const episodes = typeof raw.episodes_info === 'string' ? raw.episodes_info.trim() : '';
-  let status: 'airing' | 'ended' | undefined;
-  if (isTv && episodes) {
-    if (/更新至|连载/.test(episodes)) status = 'airing';
-    else if (/^全\s*\d+|完结/.test(episodes)) status = 'ended';
-  }
+  const status = judgeStatus({ text: episodes, isTv, year });
 
   const subtitle =
     (typeof raw.description === 'string' && raw.description.trim()) ||
@@ -297,11 +294,7 @@ export function biliRankToItem(
   const rating = Number.isFinite(ratingNum) && ratingNum > 0 ? ratingNum.toFixed(1) : undefined;
 
   const indexShow = raw.new_ep?.index_show?.trim() || '';
-  let status: 'airing' | 'ended' | undefined;
-  if (opts.isTv && indexShow) {
-    if (/更新至|连载/.test(indexShow)) status = 'airing';
-    else if (/^全\s*\d+|完结/.test(indexShow)) status = 'ended';
-  }
+  const status = judgeStatus({ text: indexShow, isTv: opts.isTv });
 
   const stats: string[] = [];
   if (raw.icon_font?.text) stats.push(`${raw.icon_font.text}播放`);
