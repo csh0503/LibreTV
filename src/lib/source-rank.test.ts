@@ -24,3 +24,17 @@ describe('rankSources：「播放」默认用哪个源', () => {
     expect(episodeCount('HD')).toBe(0);
   });
 });
+
+describe('rankSources：加上质检', () => {
+  it('清晰度先于集数和速度，广告少的优先，质检失败的往后', () => {
+    const health = {};
+    const quality = {
+      a_a: { key: 'a_a', ok: true, height: 720, adSeconds: 0 },
+      b_b: { key: 'b_b', ok: true, height: 1080, adSeconds: 30 },
+      c_c: { key: 'c_c', ok: true, height: 1080, adSeconds: 0 },
+      d_d: { key: 'd_d', ok: false, error: '超时' },
+    };
+    const ranked = rankSources([item('d'), item('a'), item('b'), item('c')], health, quality);
+    expect(ranked.map((r) => r.sourceKey)).toEqual(['c', 'b', 'a', 'd']);
+  });
+});

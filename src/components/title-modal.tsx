@@ -17,7 +17,10 @@ import { Spinner } from './states';
 import { useToast } from './toast';
 import { useFocusTrap } from './use-focus-trap';
 import { useAliasFallback, useSourceSearch } from './use-source-search';
-import { rankSources } from '@/lib/source-rank';
+import { qualityKey, rankSources } from '@/lib/source-rank';
+import { qualityLabel, type SourceQuality } from '@/lib/stream-quality';
+import { useQuery } from '@tanstack/react-query';
+import { api } from '@/lib/client-api';
 
 /** 一组里最多直接列出几个源，其余折叠成「+N」 */
 const SOURCES_PER_GROUP = 6;
@@ -154,15 +157,49 @@ function TitleModalBody({
   const noSourcesConfigured = selectedSources.length === 0;
   // 每组里的源按「最近没出错 → 集数多 → 响应快」排，「播放」用排第一的
   const sourceHealth = useAppStore((st) => st.sourceHealth);
-  const ranked = useMemo(
+  // 片源质检：搜完后挑最靠前的几个源，让服务端看第 1 集的清晰度和插入广告
+  const healthRanked = useMemo(
     () => shown.map((g) => ({ ...g, items: rankSources(g.items, sourceHealth) })),
     [shown, sourceHealth],
+  );
+  const qualityCandidates = useMemo(
+    () =>
+      healthRanked
+        .flatMap((g) => g.items)
+        .slice(0, 8)
+        .flatMap((item) => {
+          const src = resolveSource({ customAPIs, envSources }, item.sourceKey, { url: item.sourceUrl });
+          return src
+            ? [{ key: qualityKey(item), sourceKey: item.sourceKey, sourceName: item.sourceName, sourceUrl: src.url, vodId: item.vodId }]
+            : [];
+        }),
+    [healthRanked, customAPIs, envSources],
+  );
+  const searchDone = !isSearching && !lookingUpAliases;
+  const qualityQuery = useQuery({
+    queryKey: ['quality', qualityCandidates.map((c) => c.key).join(',')],
+    queryFn: ({ signal }) => api.quality(qualityCandidates, signal),
+    enabled: searchDone && qualityCandidates.length > 0,
+    staleTime: 60 * 60_000,
+    retry: 0,
+  });
+  const qualityMap = useMemo(
+    () => Object.fromEntries((qualityQuery.data?.results ?? []).map((q) => [q.key, q])),
+    [qualityQuery.data],
+  );
+  const ranked = useMemo(
+    () => shown.map((g) => ({ ...g, items: rankSources(g.items, sourceHealth, qualityMap) })),
+    [shown, sourceHealth, qualityMap],
   );
   const best = ranked[0]?.items[0];
 
   const primary = (() => {
     if (history && resumeView) return { label: `继续播放 · ${resumeView.posterLabel}`, onClick: resume };
-    if (best) return { label: '播放', onClick: () => onOpenSource(best) };
+    if (best) {
+      const q = qualityMap[qualityKey(best)];
+      const tag = q?.ok && q.height ? ` · ${q.estimated ? '约' : ''}${qualityLabel(q.height)}` : '';
+      return { label: `播放${tag}`, onClick: () => onOpenSource(best) };
+    }
     if (noSourcesConfigured) return { label: '先添加点播源', disabled: true };
     if (!settled || lookingUpAliases) return { label: '查找片源中…', disabled: true, busy: true };
     return { label: '暂无片源', disabled: true };
@@ -296,7 +333,9 @@ function TitleModalBody({
                     : isSearching
                       ? `正在查找 ${streamedOutcomes.length}/${selectedSources.length} 个点播源…`
                       : shown.length > 0
-                        ? `${sourceTotal} 个点播源可看${foundVia ? ` · 按别名《${foundVia}》找到` : ''}`
+                        ? `${sourceTotal} 个点播源可看${foundVia ? ` · 按别名《${foundVia}》找到` : ''}${
+                            qualityQuery.isFetching ? ' · 正在测清晰度和广告…' : ''
+                          }`
                         : lookingUpAliases
                           ? alias
                             ? `原名没找到，正在按别名《${alias}》查找…`
@@ -320,7 +359,13 @@ function TitleModalBody({
             ) : shown.length > 0 ? (
               <ul className="space-y-2">
                 {ranked.slice(0, MAX_GROUPS).map((g, gi) => (
-                  <SourceGroupRow key={g.key} group={g} onOpenSource={onOpenSource} recommended={gi === 0} />
+                  <SourceGroupRow
+                    key={g.key}
+                    group={g}
+                    onOpenSource={onOpenSource}
+                    recommended={gi === 0}
+                    quality={qualityMap}
+                  />
                 ))}
               </ul>
             ) : nothingFound ? (
@@ -358,11 +403,13 @@ function SourceGroupRow({
   group,
   onOpenSource,
   recommended,
+  quality,
 }: {
   group: AggregatedGroup;
   onOpenSource: (item: SearchResultItem) => void;
   /** 这一组的第一个源就是「播放」会用的那个 */
   recommended?: boolean;
+  quality: Record<string, SourceQuality | undefined>;
 }) {
   const [expanded, setExpanded] = useState(false);
   const shown = expanded ? group.items : group.items.slice(0, SOURCES_PER_GROUP);
@@ -389,6 +436,7 @@ function SourceGroupRow({
           >
             {recommended && i === 0 && <span className="mr-1 text-accent font-medium">推荐</span>}
             {item.sourceName}
+            <QualityTag q={quality[qualityKey(item)]} />
             {item.remarks && <span className="ml-1 text-faint">{item.remarks}</span>}
           </button>
         ))}
@@ -403,5 +451,22 @@ function SourceGroupRow({
         )}
       </div>
     </li>
+  );
+}
+
+/** 源按钮上的质检小标签：「1080P」「约720P」「广告15秒·已跳过」「无广告」 */
+function QualityTag({ q }: { q?: SourceQuality }) {
+  if (!q) return null;
+  if (!q.ok) return <span className="ml-1 text-faint" title={q.error}>· 测不了</span>;
+  const label = q.height ? `${q.estimated ? '约' : ''}${qualityLabel(q.height)}` : '';
+  const ads = q.adSeconds && q.adSeconds > 0 ? `广告${q.adSeconds}秒·已跳过` : q.height || q.kbps ? '无插入广告' : '';
+  if (!label && !ads) return null;
+  return (
+    <span
+      className="ml-1 text-faint"
+      title={[q.kbps ? `约 ${(q.kbps / 1000).toFixed(1)} Mbps` : '', q.minutes ? `第 1 集 ${q.minutes} 分钟` : ''].filter(Boolean).join(' · ')}
+    >
+      · {[label, ads].filter(Boolean).join(' · ')}
+    </span>
   );
 }

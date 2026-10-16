@@ -46,6 +46,7 @@
 
 ## 已知情况
 
+- **片源质检 `/api/quality`**（`src/lib/stream-quality.ts`）：详情弹窗搜完后，对最靠前的 8 个源取第 1 集播放列表：主列表有 RESOLUTION 就读分辨率，否则 Range 量一个分片大小按码率估；用播放时同一套 `stripAdGroups` 数能识别的插入广告秒数。结果缓存 1 小时，`rankSources` 排序为：没出错 → 清晰度档位 → 集数 → 广告少 → 速度。压在画面里的水印 / 口播广告测不出来。
 - **数据源体检页 `/diagnostics`**（`/api/diagnostics`）：现场请求热榜、片库（动漫连载/完结）、TMDB 别名、设定档存储的每个上游，列出条数、耗时、报错、前几个片名。云端容器连不上这些上游，排查时请用户截这一页。
 
 - **Vercel Blob 免费额度**（每月约 1 万次读、2 千次写）：设定档同步原来每 2 秒读一次名单、播放时每 5 秒整份上传，额度很快用完。已改为：轮询 2 分钟一次 + 切回页面时；播放进度 `markProfileDirty('lazy')` 最多 5 分钟传一次、离开页面时补传；上传前名单显示云端没变就不再下载；服务端名单内存缓存 30 秒；榜单快照每实例每小时读一次。以后加任何读写存储的功能都要先算请求次数。**已接 Upstash Redis（2026-10-16，库名 libretv，iad1，Free）**，`profile-sync-store.ts` 认 `KV_REST_API_*`、`UPSTASH_REDIS_REST_*` 和自定义前缀的变量：两个都接着时 Redis 优先，Redis 没有的键回 Blob 读一次并搬进来，读到名单时整批搬设定档；删除时连 Blob 旧副本一起删。`/api/status` 的 `syncStorage` 显示当前用的是哪个。
