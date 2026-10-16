@@ -22,12 +22,21 @@ export interface DiagRun {
   maxDur: number;
 }
 
+/** 被去广告规则去掉的一段（连续的分片），带着能单独播放它的小播放列表 */
+export interface RemovedClip {
+  start: number;
+  seconds: number;
+  /** 只含这几个分片的播放列表（地址都是绝对地址，加密的带密钥），给「预览」用 */
+  playlist: string;
+}
+
 export interface AdDiagnosis {
   totalSeconds: number;
   strippedSeconds: number;
   groups: number;
   runs: DiagRun[];
   encrypted: boolean;
+  removed: RemovedClip[];
 }
 
 /**
@@ -59,10 +68,20 @@ export function diagnosePlaylist(content: string, baseUrl: string): AdDiagnosis 
   let group = 0;
   let encrypted = false;
   let strippedSeconds = 0;
+  let seq = 0;
+  let keyLine = '';
+  const removed: (RemovedClip & { segs: string[]; firstSeq: number; key: string; maxDur: number })[] = [];
+  let prevStripped = false;
   for (const line of lines) {
     if (line === '#EXT-X-DISCONTINUITY') {
       group += 1;
       continue;
+    }
+    if (line.startsWith('#EXT-X-MEDIA-SEQUENCE:')) seq = parseInt(line.split(':')[1], 10) || 0;
+    if (line.startsWith('#EXT-X-KEY')) {
+      // 密钥地址换成绝对地址，单独播放时才找得到
+      keyLine = line.replace(/URI="([^"]+)"/, (_, uri: string) => `URI="${makeAbsolute(uri, baseUrl)}"`);
+      if (/METHOD=NONE/.test(line)) keyLine = '';
     }
     if (line.startsWith('#EXT-X-KEY') && !/METHOD=NONE/.test(line)) encrypted = true;
     const m = line.match(/^#EXTINF:([\d.]+)/);
@@ -82,7 +101,19 @@ export function diagnosePlaylist(content: string, baseUrl: string): AdDiagnosis 
     }
     const shape = nameClass(line);
     const stripped = !keptAfterStrip.has(line);
-    if (stripped) strippedSeconds += pending;
+    if (stripped) {
+      strippedSeconds += pending;
+      const abs = makeAbsolute(line, baseUrl);
+      const cur = removed[removed.length - 1];
+      if (prevStripped && cur && cur.key === keyLine) {
+        cur.seconds += pending;
+        cur.maxDur = Math.max(cur.maxDur, pending);
+        cur.segs.push(`#EXTINF:${pending},`, abs);
+      } else {
+        removed.push({ start: t, seconds: pending, playlist: '', segs: [`#EXTINF:${pending},`, abs], firstSeq: seq, key: keyLine, maxDur: pending });
+      }
+    }
+    prevStripped = stripped;
     const last = runs[runs.length - 1];
     if (last && last.group === group && last.host === host && last.dir === dir && last.shape === shape && last.stripped === stripped) {
       last.seconds += pending;
@@ -94,8 +125,23 @@ export function diagnosePlaylist(content: string, baseUrl: string): AdDiagnosis 
     }
     t += pending;
     pending = 0;
+    seq += 1;
   }
-  return { totalSeconds: t, strippedSeconds, groups: group + 1, runs, encrypted };
+  const clips: RemovedClip[] = removed.map((r) => ({
+    start: r.start,
+    seconds: r.seconds,
+    playlist: [
+      '#EXTM3U',
+      '#EXT-X-VERSION:3',
+      `#EXT-X-TARGETDURATION:${Math.ceil(r.maxDur) || 1}`,
+      // 序号和原播放列表一致：没写 IV 的加密分片按序号解密
+      `#EXT-X-MEDIA-SEQUENCE:${r.firstSeq}`,
+      ...(r.key ? [r.key] : []),
+      ...r.segs,
+      '#EXT-X-ENDLIST',
+    ].join('\n'),
+  }));
+  return { totalSeconds: t, strippedSeconds, groups: group + 1, runs, encrypted, removed: clips };
 }
 
 const clock = (s: number) => {

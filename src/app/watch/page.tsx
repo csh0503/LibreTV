@@ -963,6 +963,7 @@ function AdPanel({
   const { toast } = useToast();
   const [start, setStart] = useState('');
   const [end, setEnd] = useState('');
+  const [previewing, setPreviewing] = useState<number | null>(null);
   const diag = useQuery({
     queryKey: ['ad-diag', url],
     queryFn: async ({ signal }) => {
@@ -1054,6 +1055,31 @@ function AdPanel({
             复制
           </button>
         </div>
+        {diag.data && diag.data.removed.length > 0 && (
+          <div className="space-y-2 rounded-lg border border-line bg-surface p-2.5">
+            <p className="text-content">
+              被去掉的片段（播放时会跳过）——点「预览」只播这一段原片，看看是不是真的广告：
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {diag.data.removed.map((clip, i) => (
+                <button
+                  key={clip.start}
+                  type="button"
+                  onClick={() => setPreviewing((v) => (v === i ? null : i))}
+                  className={cn('btn-sm', previewing === i ? 'btn-primary' : 'btn-ghost')}
+                >
+                  {previewing === i ? '收起' : '预览'} {formatTime(clip.start)}–{formatTime(clip.start + clip.seconds)}（{Math.round(clip.seconds)} 秒）
+                </button>
+              ))}
+            </div>
+            {previewing !== null && diag.data.removed[previewing] && (
+              <ClipPreview key={diag.data.removed[previewing].start} playlist={diag.data.removed[previewing].playlist} />
+            )}
+            <p className="text-faint">
+              时间是原片里的位置。如果预览出来是正片（被误删了），把上面的诊断复制给开发者；想马上看，可以在设置里暂时关掉「去广告」。
+            </p>
+          </div>
+        )}
         {diag.isLoading ? (
           <p className="text-faint">正在读取播放列表…</p>
         ) : diag.isError ? (
@@ -1064,6 +1090,65 @@ function AdPanel({
           </pre>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * 只播一小段被去掉的原片（不影响上面的正片播放）：用这几个分片拼一个小播放列表交给 hls.js；
+ * 直连失败（跨域 / 防盗链）就把分片和密钥地址都换成本站代理再试一次。
+ */
+function ClipPreview({ playlist }: { playlist: string }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    let cancelled = false;
+    let destroy = () => {};
+    const viaProxy = (text: string) =>
+      text
+        .split('\n')
+        .map((l) =>
+          /^https?:\/\//.test(l)
+            ? `${location.origin}/api/proxy?url=${encodeURIComponent(l)}`
+            : l.replace(/URI="(https?:\/\/[^"]+)"/, (_, u: string) => `URI="${location.origin}/api/proxy?url=${encodeURIComponent(u)}"`),
+        )
+        .join('\n');
+    void import('hls.js').then(({ default: Hls }) => {
+      if (cancelled || !videoRef.current) return;
+      const video = videoRef.current;
+      const start = (text: string, isRetry: boolean) => {
+        destroy();
+        const blobUrl = URL.createObjectURL(new Blob([text], { type: 'application/vnd.apple.mpegurl' }));
+        if (!Hls.isSupported()) {
+          video.src = blobUrl;
+          destroy = () => URL.revokeObjectURL(blobUrl);
+          return;
+        }
+        const hls = new Hls({ enableWorker: true });
+        hls.on(Hls.Events.ERROR, (_e, data) => {
+          if (!data.fatal) return;
+          if (!isRetry && data.type === Hls.ErrorTypes.NETWORK_ERROR) start(viaProxy(playlist), true);
+          else setError('这一段播不了（片源拒绝访问或格式不支持）');
+        });
+        hls.loadSource(blobUrl);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.MANIFEST_PARSED, () => void video.play().catch(() => {}));
+        destroy = () => {
+          hls.destroy();
+          URL.revokeObjectURL(blobUrl);
+        };
+      };
+      start(playlist, false);
+    });
+    return () => {
+      cancelled = true;
+      destroy();
+    };
+  }, [playlist]);
+  return (
+    <div className="space-y-1">
+      <video ref={videoRef} controls playsInline className="w-full max-w-md aspect-video rounded-lg bg-black" />
+      {error && <p className="text-danger">{error}</p>}
     </div>
   );
 }
