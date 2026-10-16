@@ -291,3 +291,27 @@ describe('parseM3u8Playlist · 片头广告剔除', () => {
     expect(parsed.segments).toHaveLength(2);
   });
 });
+
+describe('stripAdGroups：同一段短片重复出现', () => {
+  const seg = (name: string, sec = 2) => `#EXTINF:${sec},\n${name}`;
+  const group = (prefix: string, n: number, sec = 2) => Array.from({ length: n }, (_, i) => seg(`${prefix}${i}.ts`, sec)).join('\n');
+  const head = '#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n#EXT-X-KEY:METHOD=AES-128,URI="key.key"';
+  const ad = group('https://play.example.com/ad', 6, 2.93);
+
+  it('魔都式：正片 98 秒后插一次、结尾再插一次 → 两次都去掉', () => {
+    const src = [head, group('https://bf.example.com/a', 49), '#EXT-X-DISCONTINUITY', ad, '#EXT-X-DISCONTINUITY', group('https://bf.example.com/b', 600), '#EXT-X-DISCONTINUITY', ad, '#EXT-X-ENDLIST'].join('\n');
+    const out = stripAdGroups(src);
+    expect(out).not.toContain('/ad0.ts');
+    expect(out).toContain('#EXT-X-KEY');
+    expect(out).toContain('/a0.ts');
+    expect(out).toContain('/b599.ts');
+    expect(out.match(/#EXT-X-DISCONTINUITY/g)?.length).toBe(1);
+  });
+
+  it('不重复的短段、重复但很长的段都不动', () => {
+    const once = [head, group('a', 300), '#EXT-X-DISCONTINUITY', group('x', 3, 3), '#EXT-X-DISCONTINUITY', group('b', 20)].join('\n');
+    expect(stripAdGroups(once)).toContain('x0.ts');
+    const longRepeat = [head, group('r', 40), '#EXT-X-DISCONTINUITY', group('r', 40)].join('\n');
+    expect(stripAdGroups(longRepeat)).toContain('r0.ts');
+  });
+});

@@ -296,8 +296,53 @@ function stripLeadingDisc(content: string): string {
   return kept.length === lines.length ? content : kept.join('\n');
 }
 
+/** 重复出现的广告片段：最长多少秒、至少几个分片 */
+const REPEATED_AD_MAX_SECONDS = 60;
+const REPEATED_AD_MIN_SEGMENTS = 2;
+
+/**
+ * 同一段短片在一集里出现两次以上（分片地址一模一样），就是插入广告：
+ * 正片的分片不会重复。实测魔都 / 360 采集站：同一个 17.6 秒的片段插在中间（1:38 或 14:20）和结尾各一次，
+ * 中间那次前面的正片才 98 秒，「两长夹一短」规则管不到，结尾那次也不在两段之间。
+ * 首组的头部标签（#EXTM3U、#EXT-X-KEY 等）保留，只去掉分片和它们的 EXTINF。
+ */
+function stripRepeatedAdGroups(m3u8Content: string): string {
+  if (!m3u8Content) return '';
+  const lines = m3u8Content.split('\n');
+  const isDisc = (l: string) => l.trim() === '#EXT-X-DISCONTINUITY';
+  const isSegment = (l: string) => {
+    const t = l.trim();
+    return t !== '' && !t.startsWith('#');
+  };
+  const groups = scanGroups(lines, isDisc, isSegment);
+  if (groups.length < 2) return m3u8Content;
+  const keyOf = (g: AdGroupScan) =>
+    lines
+      .slice(g.start, g.end)
+      .filter(isSegment)
+      .map((l) => l.trim())
+      .join('\n');
+  const keys = groups.map(keyOf);
+  const counts = new Map<string, number>();
+  for (const k of keys) if (k) counts.set(k, (counts.get(k) ?? 0) + 1);
+
+  const drop = new Array<boolean>(lines.length).fill(false);
+  groups.forEach((g, k) => {
+    if ((counts.get(keys[k]) ?? 0) < 2) return;
+    if (g.count < REPEATED_AD_MIN_SEGMENTS || g.seconds <= 0 || g.seconds > REPEATED_AD_MAX_SECONDS) return;
+    if (g.discLine >= 0) drop[g.discLine] = true;
+    for (let i = g.start; i < g.end; i++) {
+      const t = lines[i].trim();
+      if (isSegment(lines[i]) || t.startsWith('#EXTINF') || t.startsWith('#EXT-X-BYTERANGE')) drop[i] = true;
+    }
+  });
+  if (!drop.some(Boolean)) return m3u8Content;
+  return lines.filter((_, idx) => !drop[idx]).join('\n');
+}
+
 /**
  * 广告过滤总入口（播放 loader 与下载解析共用），按可靠度依次：
+ * 0. 同一段短片重复出现（分片地址一模一样，任意位置）；
  * 1. URL 特征中插段（adjump 等，任意位置）；
  * 2. 长正片段之间的超短插入段（纯时长型中插广告）；
  * 3. 片头无特征插入段（dytt 式，位置+短小启发式）；
@@ -305,5 +350,7 @@ function stripLeadingDisc(content: string): string {
  */
 export function stripAdGroups(m3u8Content: string): string {
   if (!m3u8Content) return '';
-  return stripLeadingDisc(stripLeadAdGroup(stripInterstitialAdGroups(stripMarkedAdGroups(m3u8Content))));
+  return stripLeadingDisc(
+    stripLeadAdGroup(stripInterstitialAdGroups(stripMarkedAdGroups(stripRepeatedAdGroups(m3u8Content)))),
+  );
 }

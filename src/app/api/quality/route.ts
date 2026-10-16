@@ -56,7 +56,7 @@ async function segmentBytes(url: string): Promise<number> {
 }
 
 async function probe(item: QualityRequestItem): Promise<SourceQuality> {
-  const cacheKey = `quality:v2:${item.sourceUrl}|${item.vodId}`;
+  const cacheKey = `quality:v3:${item.sourceUrl}|${item.vodId}`;
   const cached = getCache<SourceQuality>(cacheKey);
   if (cached) return { ...cached, key: item.key };
 
