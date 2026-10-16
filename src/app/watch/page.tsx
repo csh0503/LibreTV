@@ -757,14 +757,17 @@ function SkipSettingsRow({
   return (
     <span className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted ml-auto">
       {(skip.intro || skip.outro) && (
-        <label className="flex items-center gap-1.5 cursor-pointer" title="这部剧进入片头 / 片尾时自动跳过；关着时只显示按钮">
+        <label
+          className="flex items-center gap-1.5 cursor-pointer"
+          title="默认只显示「跳过片头 / 跳过片尾」按钮。勾上后：进入片头 / 片尾时按钮倒数 5 秒再跳，期间可点「不跳」留下来看；片尾一直到结尾时片尾曲继续放，出「下一集」倒数"
+        >
           <input
             type="checkbox"
             className="h-3.5 w-3.5 accent-[#2563eb]"
             checked={skip.auto}
             onChange={(e) => onAuto(e.target.checked)}
           />
-          自动跳过片头片尾
+          自动跳过片头片尾（倒数 5 秒）
         </label>
       )}
       <span className="text-faint">

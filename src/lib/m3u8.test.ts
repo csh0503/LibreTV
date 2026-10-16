@@ -309,9 +309,39 @@ describe('stripAdGroups：同一段短片重复出现', () => {
   });
 
   it('不重复的短段、重复但很长的段都不动', () => {
-    const once = [head, group('a', 300), '#EXT-X-DISCONTINUITY', group('x', 3, 3), '#EXT-X-DISCONTINUITY', group('b', 20)].join('\n');
+    const once = [head, group('a', 300), '#EXT-X-DISCONTINUITY', group('x', 3, 2), '#EXT-X-DISCONTINUITY', group('b', 20)].join('\n');
     expect(stripAdGroups(once)).toContain('x0.ts');
     const longRepeat = [head, group('r', 40), '#EXT-X-DISCONTINUITY', group('r', 40)].join('\n');
     expect(stripAdGroups(longRepeat)).toContain('r0.ts');
+  });
+});
+
+describe('stripAdGroups：切片整齐的源里时长对不上的插播段（最大资源）', () => {
+  const head = '#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2';
+  let n = 0;
+  const group = (durs: number[]) => durs.map((d) => `#EXTINF:${d.toFixed(6)},\nhttps://v.test/2000k_1080/hls/${String(n++).padStart(10, 'a')}.ts`).join('\n');
+  const twos = (k: number) => Array.from({ length: k }, () => 2);
+  const join = (...gs: string[]) => [head, ...gs.flatMap((g, i) => (i === 0 ? [g] : ['#EXT-X-DISCONTINUITY', g])), '#EXT-X-ENDLIST'].join('\n');
+
+  it('正片每片 2.0 秒、切成很多小段；38.1 秒（19×2.0 + 0.1）的插播段去掉，结尾短一截的最后一片保留', () => {
+    n = 0;
+    const content = Array.from({ length: 40 }, (_, i) => group(twos(3 + (i % 15))));
+    const ad = group([...twos(19), 0.1]);
+    const src = join(...content.slice(0, 20), ad, ...content.slice(20), group([2, 2, 1.3]));
+    const out = stripAdGroups(src);
+    expect(out).not.toMatch(/EXTINF:0\.1/);
+    expect(out.match(/#EXTINF/g)!.length).toBe(src.match(/#EXTINF/g)!.length - 20);
+    expect(out).toMatch(/EXTINF:1\.3/);
+  });
+
+  it('片头曲接缝留下的零头分片（段长 90 秒）不动；分片时长本来就参差的源不动', () => {
+    n = 0;
+    const content = Array.from({ length: 20 }, () => group(twos(8)));
+    const op = group([...twos(44), 1.9]);
+    expect(stripAdGroups(join(...content.slice(0, 2), op, ...content.slice(2)))).toMatch(/EXTINF:1\.9/);
+    n = 0;
+    const ragged = Array.from({ length: 20 }, (_, i) => group([3.12, 1.96, 2.4, 4.0 + (i % 3) * 0.2]));
+    const mixed = join(...ragged.slice(0, 10), group([2, 2, 0.1]), ...ragged.slice(10));
+    expect(stripAdGroups(mixed)).toMatch(/EXTINF:0\.1/);
   });
 });

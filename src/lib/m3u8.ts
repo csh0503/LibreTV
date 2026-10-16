@@ -340,9 +340,71 @@ function stripRepeatedAdGroups(m3u8Content: string): string {
   return lines.filter((_, idx) => !drop[idx]).join('\n');
 }
 
+/** 「分片时长不对」的插播段：最长多少秒（片头曲约 90 秒，也可能在接缝处留下零头分片，不能误删） */
+const ODD_AD_MAX_SECONDS = 60;
+/** 至少这么多分片时长一样，才算「切片很整齐的源」 */
+const ODD_UNIFORM_SHARE = 0.9;
+const ODD_MIN_SEGMENTS = 30;
+
+/**
+ * 切片整齐的源里，时长对不上的短插播段：
+ * 有的源整集都切成同样长的分片（实测最大资源：每片都是 2.0 秒，DISCONTINUITY 很多、每段 2~40 秒，
+ * 「两长夹一短」规则管不到），插进来的广告是另外编码的，长度不是整数倍，段尾会剩一个零头分片
+ * （实测 38.1 秒 = 19 × 2.0 + 0.1）。所以：九成以上分片时长相同时，≤ 60 秒、含时长不对的分片的段判为广告。
+ * 整集最后一个分片本来就常常短一截，不算。
+ */
+function stripOddDurationGroups(m3u8Content: string): string {
+  if (!m3u8Content) return '';
+  const lines = m3u8Content.split('\n');
+  const isDisc = (l: string) => l.trim() === '#EXT-X-DISCONTINUITY';
+  const isSegment = (l: string) => {
+    const t = l.trim();
+    return t !== '' && !t.startsWith('#');
+  };
+  const groups = scanGroups(lines, isDisc, isSegment);
+  if (groups.length < 3) return m3u8Content;
+
+  // 每个分片的时长（按所在组）
+  const durs: { group: number; dur: number }[] = [];
+  groups.forEach((g, k) => {
+    let pending = 0;
+    for (let i = g.start; i < g.end; i++) {
+      const m = lines[i].trim().match(/^#EXTINF:([\d.]+)/);
+      if (m) pending = parseFloat(m[1]) || 0;
+      else if (isSegment(lines[i])) durs.push({ group: k, dur: pending });
+    }
+  });
+  if (durs.length < ODD_MIN_SEGMENTS) return m3u8Content;
+  const counts = new Map<string, number>();
+  for (const d of durs) counts.set(d.dur.toFixed(2), (counts.get(d.dur.toFixed(2)) ?? 0) + 1);
+  let mode = 0;
+  let modeCount = 0;
+  for (const [k, c] of counts) if (c > modeCount) [mode, modeCount] = [parseFloat(k), c];
+  if (modeCount / durs.length < ODD_UNIFORM_SHARE) return m3u8Content;
+
+  const oddGroups = new Set<number>();
+  durs.forEach((d, idx) => {
+    if (idx === durs.length - 1) return; // 整集最后一片
+    if (Math.abs(d.dur - mode) > 0.05) oddGroups.add(d.group);
+  });
+  const drop = new Array<boolean>(lines.length).fill(false);
+  for (const k of oddGroups) {
+    const g = groups[k];
+    if (g.count === 0 || g.seconds <= 0 || g.seconds > ODD_AD_MAX_SECONDS) continue;
+    if (g.discLine >= 0) drop[g.discLine] = true;
+    for (let i = g.start; i < g.end; i++) {
+      const t = lines[i].trim();
+      if (isSegment(lines[i]) || t.startsWith('#EXTINF') || t.startsWith('#EXT-X-BYTERANGE')) drop[i] = true;
+    }
+  }
+  if (!drop.some(Boolean)) return m3u8Content;
+  return lines.filter((_, idx) => !drop[idx]).join('\n');
+}
+
 /**
  * 广告过滤总入口（播放 loader 与下载解析共用），按可靠度依次：
  * 0. 同一段短片重复出现（分片地址一模一样，任意位置）；
+ * 0.5 切片整齐的源里时长对不上的短插播段（零头分片）；
  * 1. URL 特征中插段（adjump 等，任意位置）；
  * 2. 长正片段之间的超短插入段（纯时长型中插广告）；
  * 3. 片头无特征插入段（dytt 式，位置+短小启发式）；
@@ -351,6 +413,6 @@ function stripRepeatedAdGroups(m3u8Content: string): string {
 export function stripAdGroups(m3u8Content: string): string {
   if (!m3u8Content) return '';
   return stripLeadingDisc(
-    stripLeadAdGroup(stripInterstitialAdGroups(stripMarkedAdGroups(stripRepeatedAdGroups(m3u8Content)))),
+    stripLeadAdGroup(stripInterstitialAdGroups(stripMarkedAdGroups(stripOddDurationGroups(stripRepeatedAdGroups(m3u8Content))))),
   );
 }

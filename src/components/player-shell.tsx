@@ -25,6 +25,9 @@ import type { SkipSegment } from '@/lib/skip-times';
  * 重建 <video> 元素，触发「黑屏有声」的渲染竞态。
  */
 
+/** 开了自动跳过时，进入片头 / 片尾后先倒数几秒再跳 */
+const AUTO_SKIP_SECONDS = 5;
+
 /** 开播后连续卡住这么久就换源 */
 const STALL_TIMEOUT_MS = 25_000;
 /** 换到新地址后这么久还没开始播就换源（含直连失败改走代理的时间） */
@@ -144,6 +147,9 @@ export function PlayerShell({
   // 这次跳转从哪开始（在 seeking 时记：浏览器在 seeked 之前就会用新位置触发 timeupdate）
   const seekFromRef = useRef<number | null>(null);
   const programmaticSeekRef = useRef(false);
+  // 自动跳过的倒数：进入片头 / 片尾后先倒数几秒（按播放时间），到了才跳
+  const autoPendingRef = useRef<{ kind: 'intro' | 'outro'; at: number } | null>(null);
+  const [autoLeft, setAutoLeft] = useState<number | null>(null);
 
   const seekTo = (time: number) => {
     const art = artRef.current;
@@ -171,7 +177,6 @@ export function PlayerShell({
     if (kind === 'outro' && duration > 0 && seg.end >= duration - 3) {
       // 片尾一直到结尾：自动跳就当这一集播完了（走下一集倒数）；手动点就直接下一集
       if (auto) {
-        art.pause();
         endedRef.current = true;
         propsRef.current.onEnded?.();
       } else if (propsRef.current.nextUrl && propsRef.current.onNextEpisode) {
@@ -379,6 +384,8 @@ export function PlayerShell({
     endedRef.current = false;
     switchRequestedRef.current = false;
     skippedRef.current = new Set();
+    autoPendingRef.current = null;
+    setAutoLeft(null);
     setActiveSkip(null);
     lastTimeRef.current = 0;
     seekFromRef.current = null;
@@ -507,8 +514,29 @@ export function PlayerShell({
         !skippedRef.current.has(active) &&
         !art.video.seeking
       ) {
-        doSkip(active, true);
-        active = null;
+        const seg = active === 'intro' ? sk.intro! : sk.outro!;
+        if (active === 'outro' && d > 0 && seg.end >= d - 3) {
+          // 片尾一直到结尾：片尾曲继续放，上面出「下一集」倒数卡（不暂停、不硬切）
+          doSkip('outro', true);
+          active = null;
+        } else {
+          // 不直接跳：按钮上倒数几秒（按播放时间算，暂停时也停），这期间可以点「不跳」留下来看
+          if (autoPendingRef.current?.kind !== active) autoPendingRef.current = { kind: active, at: t + AUTO_SKIP_SECONDS };
+          const left = Math.ceil(autoPendingRef.current.at - t);
+          if (left <= 0) {
+            autoPendingRef.current = null;
+            setAutoLeft(null);
+            doSkip(active, true);
+            active = null;
+          } else {
+            setAutoLeft((prev) => (prev === left ? prev : left));
+          }
+        }
+      }
+      if (autoPendingRef.current && autoPendingRef.current.kind !== active) {
+        // 离开了这一段（拖走了 / 已跳过）：倒数作废
+        autoPendingRef.current = null;
+        setAutoLeft(null);
       }
       setActiveSkip((prev) => (prev === active ? prev : active));
       const now = Date.now();
@@ -573,6 +601,8 @@ export function PlayerShell({
       stallTimerRef.current = null;
     });
     art.on('video:ended', () => {
+      // 片尾自动「下一集」已经提前触发过：放到真正结尾时不再重复弹倒数
+      if (endedRef.current) return;
       endedRef.current = true;
       propsRef.current.onEnded?.();
     });
@@ -746,7 +776,19 @@ export function PlayerShell({
                   ? '下一集'
                   : '跳过片尾'
             }
-            onClick={() => doSkip(activeSkip, false)}
+            countdown={activeSkip !== 'jump' ? (autoLeft ?? undefined) : undefined}
+            onClick={() => {
+              autoPendingRef.current = null;
+              setAutoLeft(null);
+              doSkip(activeSkip, false);
+            }}
+            onCancel={() => {
+              // 这次想看片头 / 片尾曲：这一集这一段不再自动跳，按钮也收起
+              if (activeSkip !== 'jump') skippedRef.current.add(activeSkip);
+              autoPendingRef.current = null;
+              setAutoLeft(null);
+              setActiveSkip(null);
+            }}
           />,
           overlayHost,
         )}
@@ -784,14 +826,47 @@ export function PlayerShell({
 }
 
 /** Netflix 式右下角「跳过片头 / 跳过片尾 / 下一集」按钮（挂在播放器里，全屏时也在） */
-function SkipButton({ label, onClick }: { label: string; onClick: () => void }) {
+function SkipButton({
+  label,
+  countdown,
+  onClick,
+  onCancel,
+}: {
+  label: string;
+  /** 开了自动跳过时：还有几秒自动跳（期间可以点「不跳」） */
+  countdown?: number;
+  onClick: () => void;
+  onCancel: () => void;
+}) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="pointer-events-auto absolute right-4 bottom-16 sm:bottom-20 px-4 py-2 rounded-lg border border-white/40 bg-black/65 text-white text-sm font-semibold backdrop-blur-sm hover:bg-white hover:text-slate-950 transition-colors animate-fade-in cursor-pointer"
-    >
-      {label}
-    </button>
+    <div className="pointer-events-auto absolute right-4 bottom-16 sm:bottom-20 flex items-center gap-2 animate-fade-in">
+      {countdown !== undefined && (
+        <button
+          type="button"
+          onClick={onCancel}
+          className="px-3 py-2 rounded-lg border border-white/25 bg-black/50 text-white/85 text-xs backdrop-blur-sm hover:bg-black/70 cursor-pointer"
+        >
+          不跳
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={onClick}
+        className="relative overflow-hidden px-4 py-2 rounded-lg border border-white/40 bg-black/65 text-white text-sm font-semibold backdrop-blur-sm hover:bg-white hover:text-slate-950 transition-colors cursor-pointer"
+      >
+        {countdown !== undefined && (
+          // 倒数进度条：从左往右填满时自动跳
+          <span
+            aria-hidden
+            className="absolute inset-y-0 left-0 bg-white/20"
+            style={{ width: `${Math.round(((AUTO_SKIP_SECONDS - countdown + 1) / AUTO_SKIP_SECONDS) * 100)}%`, transition: 'width 1s linear' }}
+          />
+        )}
+        <span className="relative">
+          {label}
+          {countdown !== undefined ? `（${countdown}）` : ''}
+        </span>
+      </button>
+    </div>
   );
 }
