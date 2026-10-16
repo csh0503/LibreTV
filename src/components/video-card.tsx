@@ -38,9 +38,10 @@ export function AggregatedCard({
 
   const multi = group.items.length > 1;
   const adult = useMemo(() => group.items.some((i) => i.isAdult), [group.items]);
+  const groupItems = useMemo(() => [group.items], [group.items]);
   // 展开时才质检（清晰度 / 插入广告），按「没出错 → 清晰 → 集数 → 广告少 → 快」排，第一个标推荐
   const sourceHealth = useAppStore((s) => s.sourceHealth);
-  const { qualityMap, isFetching: qualityFetching } = useSourceQuality(group.items, multi && expanded);
+  const { qualityMap, isFetching: qualityFetching } = useSourceQuality(groupItems, multi && expanded);
   const rankedItems = useMemo(
     () => rankSources(group.items, sourceHealth, qualityMap),
     [group.items, sourceHealth, qualityMap],

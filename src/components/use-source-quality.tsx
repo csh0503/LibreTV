@@ -8,21 +8,25 @@ import { resolveSource, useAppStore } from '@/lib/store';
 import { qualityLabel, type SourceQuality } from '@/lib/stream-quality';
 import type { SearchResultItem } from '@/lib/types';
 
-/** 一次最多质检几个源（服务端上限也是 30），全部并发 */
-const MAX_PROBE = 30;
+/** 一次最多质检几个源；每 30 个一批（服务端单次上限），各批并发 */
+const MAX_PROBE = 90;
+const BATCH = 30;
 
 /**
  * 片源质检：对排在前面的几个源，让服务端看第 1 集的清晰度和可识别的插入广告。
  * 作品详情弹窗和搜索结果卡片共用，结果按「源 + 影片」缓存 1 小时（服务端同样缓存）。
  */
-export function useSourceQuality(items: SearchResultItem[], enabled: boolean) {
+export function useSourceQuality(groups: SearchResultItem[][], enabled: boolean) {
   const customAPIs = useAppStore((s) => s.customAPIs);
   const envSources = useAppStore((s) => s.envSources);
   const sourceHealth = useAppStore((s) => s.sourceHealth);
 
   const candidates = useMemo(
     () =>
-      rankSources(items, sourceHealth)
+      // 按组的先后测：第一组（点开的那一季）全部先测，名额有剩再测后面的季；
+      // 不能全部混在一起排，否则「集数多的优先」会把刚开播、才两三集的新一季挤到最后
+      groups
+        .flatMap((items) => rankSources(items, sourceHealth))
         .slice(0, MAX_PROBE)
         .flatMap((item) => {
           const src = resolveSource({ customAPIs, envSources }, item.sourceKey, { url: item.sourceUrl });
@@ -30,12 +34,17 @@ export function useSourceQuality(items: SearchResultItem[], enabled: boolean) {
             ? [{ key: qualityKey(item), sourceKey: item.sourceKey, sourceName: item.sourceName, sourceUrl: src.url, vodId: item.vodId }]
             : [];
         }),
-    [items, sourceHealth, customAPIs, envSources],
+    [groups, sourceHealth, customAPIs, envSources],
   );
 
   const query = useQuery({
     queryKey: ['quality', candidates.map((c) => c.key).sort().join(',')],
-    queryFn: ({ signal }) => api.quality(candidates, signal),
+    queryFn: async ({ signal }) => {
+      const batches: (typeof candidates)[] = [];
+      for (let i = 0; i < candidates.length; i += BATCH) batches.push(candidates.slice(i, i + BATCH));
+      const parts = await Promise.all(batches.map((b) => api.quality(b, signal)));
+      return { results: parts.flatMap((p) => p.results) };
+    },
     enabled: enabled && candidates.length > 0,
     staleTime: 60 * 60_000,
     retry: 0,

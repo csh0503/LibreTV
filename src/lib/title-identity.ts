@@ -2,6 +2,7 @@ import { Converter } from 'opencc-js';
 import { getCache, setCache } from './fetch-utils';
 import { normalizeTitle } from './cms-parser';
 import { tmdbGet } from './tmdb';
+import { extractSeasonNumber } from './douban-weekly';
 
 /**
  * 统一条目层（第一步）：同一部作品在不同地方叫法不同——豆瓣 / 大陆叫《大师计划》，台湾叫《終極盜局》，
@@ -20,9 +21,11 @@ export interface TitleInfo {
   date?: string;
   /** 电影片长（分钟） */
   runtime?: number;
-  /** 剧集：总集数 / 季数 */
+  /** 剧集：总集数（片名带季数时是这一季的集数）/ 总季数 */
   episodes?: number;
   seasons?: number;
+  /** 片名带季数时：这是第几季（资讯、日期、集数都是这一季的） */
+  season?: number;
   /** 剧集：在播 / 完结（中文） */
   status?: string;
   /** TMDB 评分（0~10）与评分人数 */
@@ -199,16 +202,27 @@ export async function resolveTitleIdentity(input: {
 }): Promise<TitleIdentity | null | undefined> {
   const title = input.title.trim().slice(0, 100);
   if (!title) return null;
-  const cacheKey = `identity:v2:${input.tmdbId ?? ''}:${input.kind ?? ''}:${title}:${input.year ?? ''}`;
+  const cacheKey = `identity:v3:${input.tmdbId ?? ''}:${input.kind ?? ''}:${title}:${input.year ?? ''}`;
   const cached = getCache<TitleIdentity | null>(cacheKey);
   if (cached !== undefined) return cached;
+
+  // 「药屋少女的呢喃 第三季」：TMDB 上整部剧只有一个条目，首播年份是第一季的（2023），
+  // 带着季数和 2026 去搜永远对不上。先用去掉季数的名字认出整部剧，不卡年份，再取这一季的资料。
+  const seasonMarker = /\s*(?:第[一二三四五六七八九十百\d]+[季部]|Season\s*\d+|Part\s*\d+)\s*$/i;
+  const hasSeason = seasonMarker.test(title);
+  const season = hasSeason ? extractSeasonNumber(title) : undefined;
+  const baseTitle = hasSeason ? title.replace(seasonMarker, '').trim() || title : title;
 
   let target: { id: number; kind: IdentityKind } | undefined =
     input.tmdbId && input.kind ? { id: input.tmdbId, kind: input.kind } : undefined;
   if (!target) {
-    const res = await tmdbGet<{ results?: TmdbSearchResult[] }>('/search/multi', { query: title, include_adult: 'false' });
+    const res = await tmdbGet<{ results?: TmdbSearchResult[] }>('/search/multi', { query: baseTitle, include_adult: 'false' });
     if (!res) return undefined; // 没有 TMDB key 或请求失败：不缓存，下次再试
-    target = pickBestMatch(res.results ?? [], { title, year: input.year, kind: input.kind });
+    target = pickBestMatch(res.results ?? [], {
+      title: baseTitle,
+      year: hasSeason ? undefined : input.year,
+      kind: hasSeason ? 'tv' : input.kind,
+    });
   }
   let identity: TitleIdentity | null = null;
   if (target) {
@@ -216,11 +230,24 @@ export async function resolveTitleIdentity(input: {
       append_to_response: 'alternative_titles,translations,credits',
     });
     if (!detail) return undefined;
+    const info = extractTitleInfo(detail, target.kind);
+    if (target.kind === 'tv' && season) {
+      const s = await tmdbGet<{ air_date?: string; overview?: string; episodes?: unknown[] }>(
+        `/tv/${target.id}/season/${season}`,
+        {},
+      );
+      if (s) {
+        info.season = season;
+        if (s.air_date) info.date = s.air_date;
+        if (Array.isArray(s.episodes) && s.episodes.length > 0) info.episodes = s.episodes.length;
+        if (s.overview?.trim()) info.overview = s.overview.trim();
+      }
+    }
     identity = {
       tmdbId: target.id,
       kind: target.kind,
-      names: collectChineseNames(detail, title),
-      info: extractTitleInfo(detail, target.kind),
+      names: collectChineseNames(detail, baseTitle),
+      info,
     };
   }
   setCache(cacheKey, identity, IDENTITY_TTL);

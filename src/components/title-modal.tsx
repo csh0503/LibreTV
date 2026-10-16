@@ -159,9 +159,9 @@ function TitleModalBody({
   // 每组里的源按「最近没出错 → 集数多 → 响应快」排，「播放」用排第一的
   const sourceHealth = useAppStore((st) => st.sourceHealth);
   // 片源质检：搜完后挑最靠前的几个源，让服务端看第 1 集的清晰度和插入广告
-  const allShownItems = useMemo(() => shown.flatMap((g) => g.items), [shown]);
+  const shownItemGroups = useMemo(() => shown.map((g) => g.items), [shown]);
   const searchDone = !isSearching && !lookingUpAliases;
-  const { qualityMap, isFetching: qualityFetching } = useSourceQuality(allShownItems, searchDone);
+  const { qualityMap, isFetching: qualityFetching } = useSourceQuality(shownItemGroups, searchDone);
   const ranked = useMemo(
     () => shown.map((g) => ({ ...g, items: rankSources(g.items, sourceHealth, qualityMap) })),
     [shown, sourceHealth, qualityMap],
@@ -481,7 +481,7 @@ function TitleSynopsisAndInfo({
     info?.overview || cleanDesc(vi?.desc) || (pick.subtitle && pick.subtitle.length > 30 ? pick.subtitle : '');
   const isMovie = pick.isTv === false;
   const episodes = info?.episodes
-    ? `${info.episodes} 集${info.seasons && info.seasons > 1 ? ` · 共 ${info.seasons} 季` : ''}`
+    ? `${info.season ? `第 ${info.season} 季 · ` : ''}${info.episodes} 集${info.seasons && info.seasons > 1 ? ` · 全剧共 ${info.seasons} 季` : ''}`
     : '';
   const rows: [string, string][] = [
     ['类型', info?.genres.length ? info.genres.join(' / ') : vi?.typeName || pick.genres || ''],
