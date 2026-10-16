@@ -27,6 +27,9 @@
 - **片源质检两层**：先由服务端测（`/api/quality`，每个源最多 30 秒）；服务端测不到的，浏览器再自己测一次（`use-source-quality.tsx` 的 `probeInBrowser`：播放地址仍走 `/api/detail`，播放列表和分片大小由浏览器直连读，同时 6 个）。Vercel 函数在海外机房，有些采集站的视频网站挡海外或很慢，但用户浏览器是直连的。两边都失败才显示「测不了·原因」（超时 / 被拒 / 源站出错 / 没有地址 / 连不上）。核心步骤在 `src/lib/quality-probe.ts`，两边共用。
 - **弹窗里的分组**（`rankGroupsForPick`）：同一部的不同写法合并（「九门2026」并进「九门 2026」），按「年份对得上 > 电影/剧集对得上 > 片名一样 > 源多」排；`matchingGroups` 只认季数 / 年份 / 版本后缀或带分隔符的副标题，「九门八甲」「九门提督」不再混进来（严格规则一个都没有时退回宽松规则）。
 
+- **播放卡住自动换源**：`player-shell.tsx` 在三种情况把「这个源不行」交给父级（`onRequestSwitchSource(reason, position)`，每集一次）：hls 重试耗尽、开播后卡住 25 秒、换地址 35 秒还没开播（画面已加载只是被浏览器挡了自动播放的不算）。`use-auto-failover.ts` 用同一部（`failoverQueryTitle` 去掉片名后的年份）重新搜（多半命中缓存），`lib/failover.ts` 的 `pickFailoverCandidates` 在同一组里按片源排名挑，确认有这一集后跳过去接着播（位置回退 3 秒），试过的记在 URL `tried`，一集最多 5 个源；都不行显示「换了 N 个源都播不了」+ 手动换源 / 重试。
+- **详情弹窗默认用上次看的源**：看过的作品，选集区默认是上次那个源（`lastWatched`），不是推荐源。
+
 ## 架构要点
 
 - 货架目录在 `src/lib/shelf-defs.ts`（客户端 / 服务端共用），取数在 `src/lib/shelves.ts`：热榜类复用 `fetchHotList`（`douban-weekly.ts` 的多源 RRF 融合），题材类用 TMDB discover（`src/lib/tmdb.ts` 的 `tmdbGet`）。

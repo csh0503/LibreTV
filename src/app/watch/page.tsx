@@ -17,6 +17,7 @@ const PlayerShell = dynamic(() => import('@/components/player-shell').then((m) =
 });
 import { EmptyState, LoadingState, Spinner } from '@/components/states';
 import { SwitchSourceModal } from '@/components/switch-source';
+import { useAutoFailover, type FailoverState } from '@/components/use-auto-failover';
 import { enqueueDownload } from '@/components/download-manager';
 import { FavoriteButton } from '@/components/favorite-button';
 import { Icon } from '@/components/icon';
@@ -105,6 +106,16 @@ function WatchContent() {
     | null;
 
   const [endOverlay, setEndOverlay] = useState<EndOverlayState>(null);
+  // 播放卡住 / 加载失败 → 自动换到同一部的下一个源，接着播同一集同一位置
+  const failover = useAutoFailover({
+    title: videoTitle,
+    year: detailQuery.data?.videoInfo?.year,
+    isTv: episodes.length > 1 ? true : undefined,
+    sourceKey,
+    vodId,
+    index: currentIndex,
+    sourceName: source?.name ?? sourceKey,
+  });
   const [nextPrefetchState, setNextPrefetchState] = useState<'idle' | 'running' | 'done'>('idle');
   /** 连续自动连播计数：手动点选集数或确认「还在看」时归零 */
   const autoPlayStreakRef = useRef(0);
@@ -119,6 +130,8 @@ function WatchContent() {
       sp.set('index', String(index));
       sp.set('url', episodes[index] || directUrl);
       sp.delete('position');
+      // 自动换源试过哪些只对那一集有效
+      sp.delete('tried');
       router.replace(`/watch?${sp.toString()}`, { scroll: false });
     },
     [router, searchParams, episodes, directUrl]
@@ -345,8 +358,19 @@ function WatchContent() {
                   onPause={handleProgress}
                   onEnded={handleEnded}
                   onNextPrefetchState={setNextPrefetchState}
+                  onRequestSwitchSource={vodId ? failover.requestSwitch : undefined}
                   overlay={
-                    endOverlay ? (
+                    failover.state.phase !== 'idle' ? (
+                      <FailoverOverlayCard
+                        state={failover.state}
+                        sourceName={source.name}
+                        onManual={() => {
+                          failover.cancel();
+                          setSwitchOpen(true);
+                        }}
+                        onRetry={() => window.location.reload()}
+                      />
+                    ) : endOverlay ? (
                       <EndEpisodeOverlayCard
                         state={endOverlay}
                         title={videoTitle}
@@ -474,6 +498,65 @@ function WatchContent() {
           onClose={() => setSwitchOpen(false)}
         />
       )}
+    </div>
+  );
+}
+
+/** 自动换源时盖在播放器上的小卡：正在换 / 换不动了 */
+function FailoverOverlayCard({
+  state,
+  sourceName,
+  onManual,
+  onRetry,
+}: {
+  state: Exclude<FailoverState, { phase: 'idle' }>;
+  sourceName: string;
+  onManual: () => void;
+  onRetry: () => void;
+}) {
+  const exhausted = state.phase === 'exhausted';
+  return (
+    <div className="pointer-events-auto inset-0 w-full h-full bg-black/70 backdrop-blur-[2px] flex items-center justify-center p-4 animate-fade-in">
+      <div
+        role="status"
+        className="w-full max-w-sm rounded-2xl border border-white/15 bg-[#0f172a]/95 text-white p-5 shadow-2xl space-y-3"
+      >
+        {exhausted ? (
+          <>
+            <h3 className="text-base font-bold">换了 {state.tried} 个源都播不了</h3>
+            <p className="text-xs text-slate-300">
+              最后一次：「{sourceName}」{state.reason}。可以手动挑一个源，或者稍后重试。
+            </p>
+          </>
+        ) : (
+          <>
+            <div className="flex items-center gap-2.5">
+              <Spinner size="sm" />
+              <h3 className="text-sm font-bold">正在自动换源…</h3>
+            </div>
+            <p className="text-xs text-slate-300">
+              「{sourceName}」{state.reason}
+              {state.phase === 'trying' && state.sourceName ? `，正在试「${state.sourceName}」` : '，正在找同一部的其他源'}
+            </p>
+          </>
+        )}
+        <div className="flex items-center gap-2 pt-1">
+          <button
+            type="button"
+            onClick={onManual}
+            className="flex-1 px-3 py-2 rounded-xl bg-white text-slate-950 hover:bg-slate-100 text-xs font-semibold cursor-pointer"
+          >
+            手动换源
+          </button>
+          <button
+            type="button"
+            onClick={onRetry}
+            className="px-3 py-2 rounded-xl border border-white/20 bg-white/10 hover:bg-white/20 text-xs font-medium cursor-pointer"
+          >
+            重试这个源
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

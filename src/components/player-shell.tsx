@@ -24,6 +24,11 @@ import { formatTime } from '@/lib/utils';
  * 重建 <video> 元素，触发「黑屏有声」的渲染竞态。
  */
 
+/** 开播后连续卡住这么久就换源 */
+const STALL_TIMEOUT_MS = 25_000;
+/** 换到新地址后这么久还没开始播就换源（含直连失败改走代理的时间） */
+const START_TIMEOUT_MS = 35_000;
+
 interface PlayerShellProps {
   url: string;
   title: string;
@@ -39,8 +44,11 @@ interface PlayerShellProps {
   onTimeUpdate?: (position: number, duration: number) => void;
   onEnded?: () => void;
   onPause?: (position: number, duration: number) => void;
-  /** 恢复策略判源不可用（重试耗尽/格式硬失败）时回调：父级弹出换源面板 */
-  onRequestSwitchSource?: (reason: string) => void;
+  /**
+   * 这个源播不了时回调（重试耗尽 / 格式硬失败 / 卡住太久 / 起播太久），父级自动换源。
+   * 每集最多回调一次；提供了它就不再显示「请尝试其他视频源」的错误遮罩。
+   */
+  onRequestSwitchSource?: (reason: string, position: number) => void;
   /** 下一集预热状态回调：用于在下一集倒计时大卡上展示「已预热下一集」 */
   onNextPrefetchState?: (state: 'idle' | 'running' | 'done') => void;
   /** 播放器表面浮层（如播完时的下一集倒计时大卡、「还在看吗？」询问卡），支持全屏内展示 */
@@ -101,6 +109,43 @@ export function PlayerShell({
   const recoveryRef = useRef<PlaybackRecovery | null>(null);
   // 自然播完标记，卸载时不回写进度（避免覆盖「已看完」记录）
   const endedRef = useRef(false);
+  // 本集已经请求过换源（只请求一次，换源中不再重复触发）
+  const switchRequestedRef = useRef(false);
+  // 卡顿 / 起播看门狗
+  const stallTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const startTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /** 这个源播不了：交给父级换源；父级没接就显示错误遮罩 */
+  const giveUp = (reason: string, fallbackError: string) => {
+    clearWatchdogs();
+    const cb = propsRef.current.onRequestSwitchSource;
+    if (!cb) {
+      setError(fallbackError);
+      return;
+    }
+    if (switchRequestedRef.current) return;
+    switchRequestedRef.current = true;
+    hlsRef.current?.stopLoad();
+    showHint(`${reason}，正在换源…`);
+    cb(reason, artRef.current?.currentTime ?? 0);
+  };
+
+  const clearWatchdogs = () => {
+    if (stallTimerRef.current) clearTimeout(stallTimerRef.current);
+    if (startTimerRef.current) clearTimeout(startTimerRef.current);
+    stallTimerRef.current = null;
+    startTimerRef.current = null;
+  };
+
+  /** 起播看门狗：换到新地址后这么久还没开始播，就算这个源不行 */
+  const armStartWatchdog = () => {
+    if (startTimerRef.current) clearTimeout(startTimerRef.current);
+    startTimerRef.current = setTimeout(() => {
+      // 浏览器挡了自动播放时画面已经加载好、只是停着：不算源的问题
+      const loaded = (artRef.current?.video?.readyState ?? 0) >= 2;
+      if (!playbackStartedRef.current && !loaded) giveUp(`${START_TIMEOUT_MS / 1000} 秒还没开始播放`, '视频加载超时，请尝试其他视频源');
+    }, START_TIMEOUT_MS);
+  };
 
   const showHint = (text: string) => {
     setHint(text);
@@ -245,12 +290,7 @@ export function PlayerShell({
           // 覆盖播放开始后的场景：起播失败走 setError 遮罩；
           // 播放中失败走回调弹换源面板（父级未提供回调时同样 setError）
           const message = `${describeHlsError(data.type, data.details)}：${decision.reason}`;
-          if (playbackStartedRef.current) {
-            showHint(message);
-            propsRef.current.onRequestSwitchSource?.(decision.reason);
-          } else {
-            setError(`视频加载失败，${message}，请尝试其他视频源`);
-          }
+          giveUp(describeHlsError(data.type, data.details), `视频加载失败，${message}，请尝试其他视频源`);
           break;
         }
       }
@@ -267,6 +307,9 @@ export function PlayerShell({
     lastPrefetchEnsureRef.current = 0;
     recoveryRef.current = new PlaybackRecovery();
     endedRef.current = false;
+    switchRequestedRef.current = false;
+    clearWatchdogs();
+    armStartWatchdog();
     // 换集时清掉上一集的预取窗口，避免带宽被旧集占用
     getVideoPrefetcher().stop();
     propsRef.current.onNextPrefetchState?.('idle');
@@ -289,6 +332,8 @@ export function PlayerShell({
     restoredRef.current = false;
     recoveryRef.current = new PlaybackRecovery();
     endedRef.current = false;
+    switchRequestedRef.current = false;
+    armStartWatchdog();
     propsRef.current.onNextPrefetchState?.('idle');
 
     let lastSave = 0;
@@ -340,6 +385,7 @@ export function PlayerShell({
 
     art.on('video:playing', () => {
       playbackStartedRef.current = true;
+      clearWatchdogs();
       setShowPoster(false);
       // 仅在媒体真正恢复（有分片进入 buffer）后清错误遮罩：
       // 否则「视频轨挂了、音频轨先播出来」时会清掉遮罩，留下黑屏假死态
@@ -355,7 +401,7 @@ export function PlayerShell({
         setupHls(art.video, currentMediaUrlRef.current, true);
         return;
       }
-      setError('视频播放失败，请尝试其他视频源');
+      giveUp('视频解码失败', '视频播放失败，请尝试其他视频源');
     });
     art.on('video:timeupdate', () => {
       const now = Date.now();
@@ -388,9 +434,25 @@ export function PlayerShell({
     art.on('video:waiting', () => {
       // 卡顿：预取临时让出带宽给播放
       getVideoPrefetcher().setThrottled(true);
+      // 已经开播后卡住太久（且不是暂停）→ 这个源不行了
+      if (playbackStartedRef.current && !stallTimerRef.current) {
+        const at = art.currentTime;
+        stallTimerRef.current = setTimeout(() => {
+          stallTimerRef.current = null;
+          if (!art.video.paused && Math.abs(art.currentTime - at) < 1) {
+            giveUp(`卡住超过 ${STALL_TIMEOUT_MS / 1000} 秒`, '视频卡住了，请尝试其他视频源');
+          }
+        }, STALL_TIMEOUT_MS);
+      }
+    });
+    art.on('video:pause', () => {
+      if (stallTimerRef.current) clearTimeout(stallTimerRef.current);
+      stallTimerRef.current = null;
     });
     art.on('video:playing', () => {
       getVideoPrefetcher().setThrottled(false);
+      if (stallTimerRef.current) clearTimeout(stallTimerRef.current);
+      stallTimerRef.current = null;
     });
     art.on('video:ended', () => {
       endedRef.current = true;
@@ -489,6 +551,7 @@ export function PlayerShell({
       document.removeEventListener('keydown', shortcuts);
       document.removeEventListener('visibilitychange', saveOnHide);
       if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
+      clearWatchdogs();
       el?.removeEventListener('touchstart', onTouchStart);
       el?.removeEventListener('touchend', onTouchEnd);
       el?.removeEventListener('touchcancel', onTouchEnd);

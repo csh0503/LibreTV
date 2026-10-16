@@ -186,7 +186,13 @@ function TitleModalBody({
 
   // 选集：默认用推荐的源，点别的源就换成那个源的剧集
   const [selected, setSelected] = useState<SearchResultItem | null>(null);
-  const current = selected ?? best;
+  // 看过这部：默认用上次看的那个源（还在列表里的话），选集也是那个源的
+  const lastWatched = useMemo(
+    () =>
+      history ? ranked.flatMap((g) => g.items).find((i) => i.sourceKey === history.sourceKey && i.vodId === history.vodId) : undefined,
+    [history, ranked],
+  );
+  const current = selected ?? lastWatched ?? best;
   const currentSrc = current
     ? resolveSource({ customAPIs, envSources }, current.sourceKey, { url: current.sourceUrl })
     : undefined;
