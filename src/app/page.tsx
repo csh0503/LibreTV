@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { Header } from '@/components/header';
 import { RecommendSection } from '@/components/douban-section';
+import { ForYouRows } from '@/components/for-you';
 import { DetailModal } from '@/components/detail-modal';
 import { AggregatedCard, aggregateResults } from '@/components/video-card';
 import { useAppStore, resolveSource, isInDisabledSubscription, isSourceDisabled } from '@/lib/store';
@@ -406,15 +407,23 @@ function HomeContent() {
           </section>
         )}
 
-        {/* 首页推荐（有搜索时隐藏） */}
+        {/* 首页推荐（有搜索时隐藏）。上面两行是这个设定档自己的口味。 */}
         {!urlQuery && (
-          <RecommendSection
-            onPick={(title) => {
-              setInput(title);
-              runSearch(title);
-            }}
-            onOpen={(item) => setDetailItem(item)}
-          />
+          <>
+            <ForYouRows
+              onPick={(title) => {
+                setInput(title);
+                runSearch(title);
+              }}
+            />
+            <RecommendSection
+              onPick={(title) => {
+                setInput(title);
+                runSearch(title);
+              }}
+              onOpen={(item) => setDetailItem(item)}
+            />
+          </>
         )}
       </main>
 

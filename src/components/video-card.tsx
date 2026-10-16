@@ -272,6 +272,7 @@ export function VideoCard({ item, onClick }: { item: SearchResultItem; onClick: 
 export function DoubanCard({
   item,
   onClick,
+  onFavorite,
 }: {
   item: {
     title: string;
@@ -282,6 +283,7 @@ export function DoubanCard({
     favorite?: FavoriteDraft;
   };
   onClick: () => void;
+  onFavorite?: () => void;
 }) {
   const imageProxyMode = useAppStore((s) => s.imageProxyMode);
   const customImageProxy = useAppStore((s) => s.customImageProxy);
@@ -323,6 +325,9 @@ export function DoubanCard({
           <FavoriteButton
             entry={item.favorite}
             className="absolute top-1.5 left-1.5 z-10 bg-black/55 text-white hover:bg-black/70"
+            onToggle={(saved) => {
+              if (saved) onFavorite?.();
+            }}
           />
         )}
         {item.rating && (

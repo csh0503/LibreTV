@@ -11,9 +11,11 @@ import { useToast } from './toast';
 export function FavoriteButton({
   entry,
   className,
+  onToggle,
 }: {
   entry: FavoriteDraft;
   className?: string;
+  onToggle?: (saved: boolean) => void;
 }) {
   const profileId = useProfile().id;
   const saved = useLiveQuery(
@@ -35,7 +37,10 @@ export function FavoriteButton({
       onClick={(event) => {
         event.stopPropagation();
         event.preventDefault();
-        void toggleFavorite(entry).then((on) => toast(on ? `已收藏「${entry.title}」` : '已取消收藏', 'success'));
+        void toggleFavorite(entry).then((on) => {
+          onToggle?.(on);
+          toast(on ? `已收藏「${entry.title}」` : '已取消收藏', 'success');
+        });
       }}
     >
       <Icon name="star" filled={!!saved} className="w-4 h-4" />

@@ -8,6 +8,17 @@ export interface ProfileBundle {
   favorites: Record<string, unknown>[];
   progress: { localKey: string; position: number; duration: number; updatedAt: number }[];
   searches: { text: string; timestamp: number }[];
+  /** 豆瓣题材。旧包裹没有这份时当作还没记过。 */
+  tastes?: {
+    title: string;
+    updatedAt: number;
+    doubanId?: string;
+    channel?: string;
+    genres?: string;
+    area?: string;
+    year?: string;
+    rating?: string;
+  }[];
   device?: {
     customAPIs?: { url?: string; key?: string }[];
     selectedKeys?: string[];

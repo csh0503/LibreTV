@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { expandSearchTerms, titleMatchesQuery } from './title-aliases';
+import { canonicalTitle, expandSearchTerms, titleMatchesQuery } from './title-aliases';
 
 describe('片名别名', () => {
   it('航海王会带上海贼王', () => {
@@ -11,6 +11,12 @@ describe('片名别名', () => {
   it('没有别名的词原样返回，剧场版不拆成整部别名', () => {
     expect(expandSearchTerms('测试剧')).toEqual(['测试剧']);
     expect(expandSearchTerms('海贼王剧场版')).toEqual(['海贼王剧场版']);
+  });
+
+  it('海贼王和航海王是同一部', () => {
+    expect(canonicalTitle('海贼王')).toBe(canonicalTitle('航海王'));
+    expect(canonicalTitle('ONE PIECE')).toBe(canonicalTitle('航海王'));
+    expect(canonicalTitle('海贼王剧场版')).not.toBe(canonicalTitle('海贼王'));
   });
 
   it('别名结果归到用户搜的那个名字下', () => {

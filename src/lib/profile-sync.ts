@@ -1,5 +1,7 @@
 import { api, ApiError } from './client-api';
 import { db, MAX_FAVORITES, MAX_HISTORY, MAX_SEARCH_HISTORY, type HistoryEntry, type FavoriteEntry } from './db';
+import { canonicalTitle } from './title-aliases';
+import { readTasteSnapshot, snapshotFromStored, unionTasteSnapshots, type TasteSnapshot } from './taste';
 import type { ProfileBundle } from './profile-bundle';
 import { clearActiveProfile, eraseLocalProfile, switchProfile } from './profile';
 import {
@@ -61,11 +63,12 @@ export async function forgetProfilesRemovedFromCloud(): Promise<CatalogProfile[]
 }
 
 async function buildBundle(profileId: string, name: string): Promise<ProfileBundle> {
-  const [history, favorites, progress, searches] = await Promise.all([
+  const [history, favorites, progress, searches, tasteRows] = await Promise.all([
     db.history.where('profileId').equals(profileId).toArray(),
     db.favorites.where('profileId').equals(profileId).toArray(),
     db.progress.where('profileId').equals(profileId).toArray(),
     db.savedSearches.where('profileId').equals(profileId).toArray(),
+    db.tastes.where('profileId').equals(profileId).toArray(),
   ]);
   const state = useAppStore.getState();
   const prefix = `${profileId}::`;
@@ -92,6 +95,26 @@ async function buildBundle(profileId: string, name: string): Promise<ProfileBund
       updatedAt: row.updatedAt,
     })),
     searches: searches.map((row) => ({ text: row.text, timestamp: row.timestamp })),
+    tastes: unionTasteSnapshots(
+      tasteRows.map((row) => ({
+        title: row.title,
+        updatedAt: row.updatedAt,
+        doubanId: row.doubanId,
+        channel: row.channel,
+        genres: row.genres,
+        area: row.area,
+        year: row.year,
+        rating: row.rating,
+      })),
+      history.flatMap((row) => {
+        const snap = snapshotFromStored(row);
+        return snap ? [snap] : [];
+      }),
+      favorites.flatMap((row) => {
+        const snap = snapshotFromStored(row);
+        return snap ? [snap] : [];
+      }),
+    ),
     device: {
       customAPIs: state.customAPIs,
       selectedKeys: state.selectedKeys,
@@ -153,7 +176,7 @@ async function applyBundle(profileId: string, bundle: ProfileBundle, opts?: { li
   const remoteProgress = bundle.progress.filter((row) => row.localKey);
   const remoteSearches = bundle.searches.filter((row) => row.text);
   await withoutProfileDirty(async () => {
-    await db.transaction('rw', [db.history, db.favorites, db.progress, db.savedSearches, db.profiles], async () => {
+    await db.transaction('rw', [db.history, db.favorites, db.progress, db.savedSearches, db.profiles, db.tastes], async () => {
       const profile = await db.profiles.get(profileId);
       const base = profile?.cloudUpdatedAt ?? 0;
       const prefix = `${profileId}::`;
@@ -189,6 +212,24 @@ async function applyBundle(profileId: string, bundle: ProfileBundle, opts?: { li
       const searches = mergeSyncedRows(base, localSearches, remoteSearches, (row) => row.text, (row) => row.timestamp)
         .sort((a, b) => b.timestamp - a.timestamp)
         .slice(0, MAX_SEARCH_HISTORY);
+      const localTastes = (await db.tastes.where('profileId').equals(profileId).toArray()).map((row) => ({
+        title: row.title,
+        updatedAt: row.updatedAt,
+        doubanId: row.doubanId,
+        channel: row.channel,
+        genres: row.genres,
+        area: row.area,
+        year: row.year,
+        rating: row.rating,
+      }));
+      const remoteTastes = (bundle.tastes ?? [])
+        .map((row) => readTasteSnapshot(row))
+        .filter((row): row is TasteSnapshot => row !== null);
+      const carried = [...history, ...favorites].flatMap((row) => {
+        const snap = snapshotFromStored(row);
+        return snap ? [snap] : [];
+      });
+      const tastes = unionTasteSnapshots(localTastes, remoteTastes, carried);
       await db.history.where('profileId').equals(profileId).delete();
       await db.favorites.where('profileId').equals(profileId).delete();
       await db.progress.where('profileId').equals(profileId).delete();
@@ -222,6 +263,14 @@ async function applyBundle(profileId: string, bundle: ProfileBundle, opts?: { li
           profileId,
           text: row.text,
           timestamp: row.timestamp,
+        })));
+      }
+      await db.tastes.where('profileId').equals(profileId).delete();
+      if (tastes.length) {
+        await db.tastes.bulkAdd(tastes.map((row) => ({
+          ...row,
+          profileId,
+          id: `${profileId}::${canonicalTitle(row.title)}`,
         })));
       }
       if (profile) {

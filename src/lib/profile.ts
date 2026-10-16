@@ -252,12 +252,13 @@ export async function renameProfile(id: string, name: string): Promise<void> {
 
 /** 只删这台浏览器里的档，不动云端。别的设备已经删掉时用这个。 */
 export async function eraseLocalProfile(id: string): Promise<void> {
-  await db.transaction('rw', [db.profiles, db.history, db.favorites, db.progress, db.savedSearches], async () => {
+  await db.transaction('rw', [db.profiles, db.history, db.favorites, db.progress, db.savedSearches, db.tastes], async () => {
     await db.profiles.delete(id);
     await db.history.where('profileId').equals(id).delete();
     await db.favorites.where('profileId').equals(id).delete();
     await db.progress.where('profileId').equals(id).delete();
     await db.savedSearches.where('profileId').equals(id).delete();
+    await db.tastes.where('profileId').equals(id).delete();
   });
 }
 

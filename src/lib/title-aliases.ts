@@ -78,6 +78,16 @@ export function expandSearchTerms(wd: string): string[] {
   return [raw];
 }
 
+/** 同一作品的不同译名收成同一个键。没有别名时就是去掉标点后的原名。 */
+export function canonicalTitle(title: string): string {
+  const normalized = normalizeTitle(title.trim());
+  if (!normalized) return '';
+  for (const group of ALIAS_GROUPS) {
+    if (group.some((alias) => normalizeTitle(alias) === normalized)) return normalizeTitle(group[0]);
+  }
+  return normalized;
+}
+
 /** 结果标题是否属于这次搜索的别名（用来把航海王和海贼王收成一张卡片） */
 export function titleMatchesQuery(name: string, query: string): boolean {
   const terms = expandSearchTerms(query);

@@ -22,6 +22,7 @@ import {
 import { SortArrows } from './sort-arrows';
 import { DoubanCard } from './video-card';
 import { favoriteIdOf } from '@/lib/db';
+import { absorbHallTaste, rememberDoubanItem } from '@/lib/taste-store';
 import { AdultLibrary } from './adult-library';
 import { useLoadMore } from './use-load-more';
 
@@ -177,6 +178,13 @@ export function RecommendSection({
 
   const loadedPages = doubanData?.pages.length ?? 0;
   useEffect(() => {
+    if (channel === 'adult' || items.length === 0) return;
+    const handle = window.setTimeout(() => {
+      void absorbHallTaste(items, channel, genre);
+    }, 500);
+    return () => window.clearTimeout(handle);
+  }, [items, channel, genre]);
+  useEffect(() => {
     // 年份区间会裁掉一整页。最多再补 2 页，避免某个标签把 500 条全部翻完、骨架一直不消失。
     if (weekdayMode || items.length > 0 || isError) return;
     if (!hasNextPage || isFetching || loadedPages >= 3) return;
@@ -301,7 +309,17 @@ export function RecommendSection({
             <>
               <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2.5 sm:gap-3">
                 {items.map((item) => (
-                  <DoubanCard key={`${item.id}_${item.title}`} item={toCard(item)} onClick={() => onPick(item.title)} />
+                  <DoubanCard
+                    key={`${item.id}_${item.title}`}
+                    item={toCard(item)}
+                    onClick={() => {
+                      void rememberDoubanItem(item, channel, genre === '全部' ? undefined : genre);
+                      onPick(item.title);
+                    }}
+                    onFavorite={() => {
+                      void rememberDoubanItem(item, channel, genre === '全部' ? undefined : genre);
+                    }}
+                  />
                 ))}
               </div>
               {!weekdayMode && hasNextPage && (

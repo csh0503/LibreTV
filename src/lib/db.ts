@@ -1,6 +1,8 @@
 import Dexie, { type EntityTable } from 'dexie';
 import type { SourceConfig } from './types';
 import { normalizeTitle } from './cms-parser';
+import { canonicalTitle } from './title-aliases';
+import { tasteColumns, unionGenres, type TasteChannel } from './taste';
 // 仅类型引入：store.ts 运行时会引用本模块，反向只取类型不会形成运行时循环
 import type { LiveProbeEntry } from './store';
 import { PERSIST_KEY, flushPendingPersist } from './persist-storage';
@@ -29,6 +31,13 @@ export interface HistoryEntry {
   playbackPosition: number;
   duration: number;
   timestamp: number;
+  /** 豆瓣卡片上的题材，空格分隔。有了才参与「为你推荐」。 */
+  tasteGenres?: string;
+  tasteArea?: string;
+  tasteYear?: string;
+  tasteChannel?: TasteChannel;
+  tasteRating?: string;
+  tasteDoubanId?: string;
 }
 
 export interface ProgressEntry {
@@ -107,6 +116,27 @@ export interface FavoriteEntry {
   year?: string;
   isAdult?: boolean;
   addedAt: number;
+  tasteGenres?: string;
+  tasteArea?: string;
+  tasteYear?: string;
+  tasteChannel?: TasteChannel;
+  tasteRating?: string;
+  tasteDoubanId?: string;
+}
+
+/** 一部片子在豆瓣上的题材。按设定档和片名保存，换设备时跟收藏一起走。 */
+export interface TasteEntry {
+  /** `${profileId}::` + 归一化片名（别名算同一部） */
+  id: string;
+  profileId: string;
+  title: string;
+  updatedAt: number;
+  doubanId?: string;
+  channel?: TasteChannel;
+  genres?: string;
+  area?: string;
+  year?: string;
+  rating?: string;
 }
 
 /** 界面上收藏一部片子时要带的字段，主键由当前设定档补上 */
@@ -122,6 +152,7 @@ export const db = new Dexie('libretv') as Dexie & {
   downloads: EntityTable<DownloadTaskEntry, 'id'>;
   favorites: EntityTable<FavoriteEntry, 'id'>;
   profiles: EntityTable<UserProfile, 'id'>;
+  tastes: EntityTable<TasteEntry, 'id'>;
 };
 
 db.version(1).stores({
@@ -152,6 +183,11 @@ db.version(5).stores({
   favorites: 'id, profileId, addedAt',
   progress: 'key, profileId, updatedAt',
   savedSearches: 'id, profileId, timestamp',
+});
+
+// v6：推荐用的题材。不进索引的字段仍会存，换设备靠设定档包裹带走。
+db.version(6).stores({
+  tastes: 'id, profileId, updatedAt',
 });
 
 async function profileId(): Promise<string> {
@@ -194,9 +230,20 @@ export async function upsertHistory(entry: Omit<HistoryEntry, 'id' | 'profileId'
   const pid = await profileId();
   const id = `${pid}::${entry.sourceKey}_${entry.vodId}`;
   const existing = await db.history.get(id);
+  const key = canonicalTitle(entry.title);
+  const seed = key ? await db.tastes.get(`${pid}::${key}`) : undefined;
+  const columns = tasteColumns({
+    genres: unionGenres(existing?.tasteGenres, seed?.genres),
+    area: existing?.tasteArea || seed?.area,
+    year: existing?.tasteYear || seed?.year,
+    channel: existing?.tasteChannel || seed?.channel,
+    rating: existing?.tasteRating || seed?.rating,
+    doubanId: existing?.tasteDoubanId || seed?.doubanId,
+  });
   const merged: HistoryEntry = {
     ...existing,
     ...entry,
+    ...columns,
     id,
     profileId: pid,
     playbackPosition: entry.playbackPosition > 10 ? entry.playbackPosition : existing?.playbackPosition ?? 0,
