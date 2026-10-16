@@ -49,12 +49,14 @@ export function subjectToItem(subject: BangumiSubject): DoubanItem | undefined {
   const cover = subject.images?.large || subject.images?.common || subject.images?.medium;
   if (!subject.id || !title || !cover) return undefined;
   const score = subject.rating?.score ?? 0;
+  const popularity = (subject.collection?.doing ?? 0) + (subject.rating?.total ?? 0) * 2;
   return {
     id: String(subject.id),
     title,
     cover,
     rating: score > 0 ? score.toFixed(1) : undefined,
     isTv: true,
+    ...(popularity > 0 ? { popularity } : {}),
   };
 }
 
@@ -113,26 +115,19 @@ export async function fetchBangumiCalendar(): Promise<Record<number, DoubanItem[
 export async function fetchBangumiHotAiring(limit = 24): Promise<DoubanItem[]> {
   const days = await fetchBangumiCalendar();
   const nowYear = String(new Date().getFullYear());
-  const all: DoubanItem[] = [];
-  // 各星期交替抽取头部高热番剧（因为每个 weekday 内部已按 popularity 降序排列）
-  const dayLists = Object.values(days);
-  const maxLen = Math.max(0, ...dayLists.map((l) => l.length));
-  for (let i = 0; i < maxLen && all.length < limit; i++) {
-    for (const list of dayLists) {
-      const item = list[i];
-      if (!item) continue;
-      all.push({
-        ...item,
-        year: item.year || nowYear,
-        area: '日本',
-        genres: '动画 番剧',
-        status: 'airing',
-        sourceLabel: 'Bangumi 在播',
-      });
-      if (all.length >= limit) break;
-    }
-  }
-  return all;
+  // 全周放在一起按热度排：以前按星期交替抽取，名次只是「周几的第几名」，不是真实热度
+  return Object.values(days)
+    .flat()
+    .sort((a, b) => (b.popularity ?? 0) - (a.popularity ?? 0))
+    .slice(0, limit)
+    .map((item) => ({
+      ...item,
+      year: item.year || nowYear,
+      area: '日本',
+      genres: '动画 番剧',
+      status: 'airing' as const,
+      sourceLabel: 'Bangumi 在播',
+    }));
 }
 
 interface BangumiV0SubjectRaw {

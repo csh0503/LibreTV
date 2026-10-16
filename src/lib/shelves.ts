@@ -52,13 +52,13 @@ async function discoverOne(kind: 'tv' | 'movie', spec: DiscoverSpec, now: number
   const today = cnDate(now);
   const since = cnDate(now - 3 * 365 * 24 * 3600_000);
   const dateField = kind === 'tv' ? 'first_air_date' : 'primary_release_date';
-  // 去重会吃掉一部分，多取一页留出余量
+  // 整页去重会吃掉不少，多取几页留出余量
   const pages = await Promise.all(
-    [1, 2].map((page) =>
+    [1, 2, 3].map((page) =>
       tmdbGet<{ results?: TmdbTrendingRaw[] }>(`/discover/${kind}`, {
         ...(spec.genres ? { with_genres: spec.genres } : {}),
         sort_by: 'popularity.desc',
-        'vote_count.gte': kind === 'tv' ? '150' : '400',
+        'vote_count.gte': kind === 'tv' ? '80' : '200',
         'vote_average.gte': '6.5',
         [`${dateField}.gte`]: since,
         [`${dateField}.lte`]: today,
@@ -94,6 +94,7 @@ const notCn = (items: DoubanItem[]) => items.filter((i) => !i.area || !CN_AREA.t
 const onlyCn = (items: DoubanItem[]) => items.filter((i) => !i.area || CN_AREA.test(i.area));
 /** 剧集补充源里不要动画、综艺、纪录片，它们各有自己的行 */
 const LIVE_ACTION_TV = { without_genres: '16,99,10764,10767' };
+const NO_ANIME = { without_genres: '16' };
 
 async function settled(tasks: Promise<DoubanItem[]>[]): Promise<DoubanItem[][]> {
   const res = await Promise.allSettled(tasks);
@@ -113,7 +114,22 @@ const LOADERS: Record<string, (now: number) => Promise<DoubanItem[]>> = {
     notCn(
       await withBackfill(
         hot('bili_bangumi'),
-        discoverOne('tv', { genres: '16', extra: { with_origin_country: 'JP', 'vote_count.gte': '20', 'vote_average.gte': '6' } }, now),
+        // 「新番」= 最近一个月内有新集播出的，而不是近几年热门的老番
+        discoverOne(
+          'tv',
+          {
+            genres: '16',
+            extra: {
+              with_origin_country: 'JP',
+              'vote_count.gte': '5',
+              'vote_average.gte': '6',
+              'first_air_date.gte': cnDate(now - 5 * 365 * 24 * 3600_000),
+              'air_date.gte': cnDate(now - 30 * 24 * 3600_000),
+              'air_date.lte': cnDate(now),
+            },
+          },
+          now,
+        ),
       ),
     ),
   guoman: async (now) =>
@@ -157,10 +173,14 @@ const LOADERS: Record<string, (now: number) => Promise<DoubanItem[]>> = {
       { tv: { genres: '80|9648', extra: { without_genres: '16' } }, movie: { genres: '80|9648', extra: { without_genres: '16' } } },
       now,
     ),
-  'g-scifi': (now) => discoverMix({ tv: { genres: '10765' }, movie: { genres: '878|14' } }, now),
+  // 题材行只放真人作品，动画各有自己的行
+  'g-scifi': (now) =>
+    discoverMix({ tv: { genres: '10765', extra: NO_ANIME }, movie: { genres: '878|14', extra: NO_ANIME } }, now),
   'g-romance': (now) => discoverMix({ movie: { genres: '10749', extra: { without_genres: '16' } } }, now),
-  'g-comedy': (now) => discoverMix({ tv: { genres: '35' }, movie: { genres: '35' } }, now),
-  'g-action': (now) => discoverMix({ tv: { genres: '10759' }, movie: { genres: '28|12' } }, now),
+  'g-comedy': (now) =>
+    discoverMix({ tv: { genres: '35', extra: { without_genres: '16,10764,10767' } }, movie: { genres: '35', extra: NO_ANIME } }, now),
+  'g-action': (now) =>
+    discoverMix({ tv: { genres: '10759', extra: NO_ANIME }, movie: { genres: '28|12', extra: NO_ANIME } }, now),
   doc: async (now) =>
     interleave(
       await settled([hot('bili_doc'), discoverMix({ tv: { genres: '99' }, movie: { genres: '99' } }, now)]),

@@ -93,6 +93,8 @@ export interface DoubanItem {
   subtitle?: string;
   /** 榜单来源标签，如「豆瓣实时」「B站国创」「B站番剧」「百度热播」「TMDB」 */
   sourceLabel?: string;
+  /** 来源自带的热度值（如 Bangumi 在看 + 评分人数），只用于同一来源内部排序 */
+  popularity?: number;
 }
 
 export interface SourceSearchOutcome {

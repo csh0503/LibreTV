@@ -16,9 +16,7 @@ import { DoubanCard } from './video-card';
 const BATCH = 3;
 /** 一行至少要有几部才值得显示 */
 const MIN_ITEMS = 4;
-/** 每行前这么多部算这一行「占用」的，后面的行不再重复 */
-const CLAIM_PER_SHELF = 20;
-/** 去重后一行最多展示（超出 CLAIM 的部分只做补深度，不占用） */
+/** 去重后一行最多展示；展示出来的都算这一行占用，后面的行不再重复 */
 const MAX_PER_SHELF = 40;
 
 const CHANNEL_LABEL: Record<ShelfChannel, string> = {
@@ -84,9 +82,9 @@ export function ShelfRows({
         items.push(item);
         if (items.length >= MAX_PER_SHELF) break;
       }
-      // 只有真正展示的行才占用，且只占前 CLAIM 部
+      // 只有真正展示的行才占用
       const show = items.length >= MIN_ITEMS;
-      if (show) for (const item of items.slice(0, CLAIM_PER_SHELF)) seen.add(shelfItemKey(item));
+      if (show) for (const key of own) seen.add(key);
       return {
         def,
         items: show ? items : [],

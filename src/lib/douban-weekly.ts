@@ -515,18 +515,78 @@ export function interleaveAndDedupeLists(lists: DoubanItem[][], limit = 24): Dou
   return result;
 }
 
+export type RankPlatform = 'douban' | 'bilibili' | 'baidu' | 'bangumi' | 'tmdb' | 'other';
+
+const PLATFORM_LABEL: Record<RankPlatform, string> = {
+  douban: '豆瓣',
+  bilibili: 'B站',
+  baidu: '百度',
+  bangumi: 'Bangumi',
+  tmdb: 'TMDB',
+  other: '其他',
+};
+
+/** 榜单名 → 所属平台（同一平台的多个榜只算一票） */
+export function platformOf(name: string): RankPlatform {
+  if (/^B站/.test(name)) return 'bilibili';
+  if (/百度/.test(name)) return 'baidu';
+  if (/Bangumi/i.test(name)) return 'bangumi';
+  if (/TMDB/i.test(name)) return 'tmdb';
+  if (/豆瓣|口碑|热门综艺/.test(name)) return 'douban';
+  return 'other';
+}
+
 export interface RankedSourceInput {
   name: string;
   items: DoubanItem[];
   weight?: number;
+  /** 不填时按 name 推断 */
+  platform?: RankPlatform;
+}
+
+/** 用于多样性配额的大类 */
+export function rankCategory(item: DoubanItem): 'anime' | 'guoman' | 'doc' | 'show' | 'tv' | 'movie' {
+  const genres = item.genres ?? '';
+  if (/动画|番剧|国创|动漫/.test(genres)) return item.area && /中国/.test(item.area) ? 'guoman' : 'anime';
+  if (/纪录/.test(genres)) return 'doc';
+  if (/综艺|真人秀|脱口秀/.test(genres)) return 'show';
+  return item.isTv ? 'tv' : 'movie';
+}
+
+/** 前 window 名里同一大类最多 cap 部，超出的顺延到后面（相对顺序不变） */
+export function diversifyRanking(items: DoubanItem[], window = 10, cap = 4): DoubanItem[] {
+  const head: DoubanItem[] = [];
+  const rest: DoubanItem[] = [];
+  const counts = new Map<string, number>();
+  for (const item of items) {
+    if (head.length < window) {
+      const cat = rankCategory(item);
+      const n = counts.get(cat) ?? 0;
+      if (n < cap) {
+        head.push(item);
+        counts.set(cat, n + 1);
+        continue;
+      }
+    }
+    rest.push(item);
+  }
+  return [...head, ...rest];
+}
+
+/** 评分系数：7 分为中性，±2 分封顶，最多影响 ±12%；没评分不加不减 */
+function ratingFactor(rating?: string): number {
+  const r = parseFloat(rating ?? '');
+  if (!Number.isFinite(r) || r <= 0) return 1;
+  return 1 + 0.12 * Math.max(-1, Math.min(1, (r - 7) / 2));
 }
 
 /**
- * 多源综合排名算法（Reciprocal Rank Fusion 倒数排名融合 + 跨平台共现加权 + 元数据择优合成）：
- * 1. 各平台第 r 名（0-based）贡献基础分：weight / (K + r + 1)（K = 10）；
- * 2. 跨平台共识加成：同一作品每多出现在 1 个不同平台的热榜上，额外获得 +0.06 共识奖励；
- * 3. 在播与高分微调：连载中 +0.008，8.0 分以上按评分微幅加权；
- * 4. 元数据择优合并：自动挑选最新季度标题、16:9 横图 backdrop、权威评分与连载状态，并生成「多源共推」标签。
+ * 多源综合排名（按平台分组的 Reciprocal Rank Fusion）：
+ * 1. 各榜第 r 名（0-based）贡献 weight / (K + r + 1)，K = 60（RRF 常用值），名次差距被压平，靠多平台共现取胜；
+ * 2. 同一平台的多个榜只取该作品在本平台的最好成绩，避免「豆瓣热剧 + 豆瓣口碑 + 豆瓣全球」被当成三源共识；
+ * 3. 评分作为乘法系数（±12% 以内），连载中只做极小的平分决胜；
+ * 4. 可选多样性配额：前 10 名同一大类（电影 / 剧集 / 日漫 / 国漫……）最多 4 部；
+ * 5. 元数据择优合并：最新季度标题、16:9 横图、权威评分与连载状态，并生成「多源共推」标签（按平台数）。
  */
 export function fuseMultiSourceRankings(
   sources: RankedSourceInput[],
@@ -535,16 +595,17 @@ export function fuseMultiSourceRankings(
     maxEpisodes?: number;
     filterEvergreen?: boolean;
     dropEndedCatalog?: boolean;
+    diversify?: boolean;
   } = {}
 ): DoubanItem[] {
   const limit = opts.limit ?? 24;
-  const K = 10;
+  const K = 60;
 
   interface CandidateEntry {
     item: DoubanItem;
-    rrfScore: number;
+    /** 平台 → 该作品在此平台的最好贡献分 */
+    platformScores: Map<RankPlatform, number>;
     bestTitleScore: number;
-    sourceNames: string[];
     firstSeenRank: number;
   }
 
@@ -552,6 +613,7 @@ export function fuseMultiSourceRankings(
 
   for (const src of sources) {
     const weight = src.weight ?? 1;
+    const platform = src.platform ?? platformOf(src.name);
     const curated = curateRealtimeList(src.items, {
       filterEvergreen: opts.filterEvergreen ?? true,
       dropEndedCatalog: opts.dropEndedCatalog,
@@ -562,7 +624,7 @@ export function fuseMultiSourceRankings(
       const stem = extractSeriesStem(item.title) || canonicalTitle(item.title);
       if (!stem) return;
 
-      const rrfDelta = weight / (K + rank + 1);
+      const contribution = weight / (K + rank + 1);
       const seasonNum = extractSeasonNumber(item.title);
       const airingBonus = item.status === 'airing' ? 100 : 0;
       const yearNum = parseInt(item.year ?? '0', 10) || 0;
@@ -572,78 +634,67 @@ export function fuseMultiSourceRankings(
       if (!existing) {
         map.set(stem, {
           item: { ...item },
-          rrfScore: rrfDelta,
+          platformScores: new Map([[platform, contribution]]),
           bestTitleScore: titleScore,
-          sourceNames: [src.name],
           firstSeenRank: rank,
         });
-      } else {
-        existing.rrfScore += rrfDelta;
-        if (!existing.sourceNames.includes(src.name)) {
-          existing.sourceNames.push(src.name);
-        }
-        if (rank < existing.firstSeenRank) {
-          existing.firstSeenRank = rank;
-        }
-        const prev = existing.item;
-        const preferNewTitle = titleScore > existing.bestTitleScore;
-        if (preferNewTitle) {
-          existing.bestTitleScore = titleScore;
-        }
-        existing.item = {
-          ...prev,
-          title: preferNewTitle ? item.title : prev.title,
-          cover: prev.cover || item.cover,
-          backdrop: prev.backdrop || item.backdrop,
-          rating: prev.rating || item.rating,
-          year: (preferNewTitle ? item.year : prev.year) || prev.year || item.year,
-          area: prev.area || item.area,
-          genres: prev.genres || item.genres,
-          remarks:
-            prev.status === 'airing' && prev.remarks
-              ? prev.remarks
-              : item.status === 'airing' && item.remarks
-                ? item.remarks
-                : prev.remarks || item.remarks,
-          status:
-            prev.status === 'airing' || item.status === 'airing'
-              ? 'airing'
-              : prev.status || item.status,
-          subtitle: prev.subtitle || item.subtitle,
-        };
+        return;
       }
+      existing.platformScores.set(platform, Math.max(existing.platformScores.get(platform) ?? 0, contribution));
+      if (rank < existing.firstSeenRank) existing.firstSeenRank = rank;
+      const prev = existing.item;
+      const preferNewTitle = titleScore > existing.bestTitleScore;
+      if (preferNewTitle) existing.bestTitleScore = titleScore;
+      existing.item = {
+        ...prev,
+        title: preferNewTitle ? item.title : prev.title,
+        cover: prev.cover || item.cover,
+        backdrop: prev.backdrop || item.backdrop,
+        rating: prev.rating || item.rating,
+        year: (preferNewTitle ? item.year : prev.year) || prev.year || item.year,
+        area: prev.area || item.area,
+        genres: prev.genres || item.genres,
+        isTv: prev.isTv ?? item.isTv,
+        remarks:
+          prev.status === 'airing' && prev.remarks
+            ? prev.remarks
+            : item.status === 'airing' && item.remarks
+              ? item.remarks
+              : prev.remarks || item.remarks,
+        status:
+          prev.status === 'airing' || item.status === 'airing'
+            ? 'airing'
+            : prev.status || item.status,
+        subtitle: prev.subtitle || item.subtitle,
+      };
     });
   }
 
   const ranked = [...map.values()].map((entry) => {
-    const consensusBonus = Math.max(0, entry.sourceNames.length - 1) * 0.06;
-    const airingTieBreaker = entry.item.status === 'airing' ? 0.008 : 0;
-    const ratingVal = parseFloat(entry.item.rating ?? '0');
-    const ratingBonus = Number.isFinite(ratingVal) && ratingVal >= 7.5 ? (ratingVal - 7.5) * 0.003 : 0;
-    const finalScore = entry.rrfScore + consensusBonus + airingTieBreaker + ratingBonus;
+    const base = [...entry.platformScores.values()].reduce((sum, v) => sum + v, 0);
+    const airingTieBreaker = entry.item.status === 'airing' ? 1e-4 : 0;
+    const finalScore = base * ratingFactor(entry.item.rating) + airingTieBreaker;
+    const platforms = [...entry.platformScores.keys()].map((p) => PLATFORM_LABEL[p]);
 
     const sourceLabel =
-      entry.sourceNames.length >= 2
-        ? `${entry.sourceNames.slice(0, 2).join(' · ')} ${entry.sourceNames.length}源共推`
-        : entry.item.sourceLabel || entry.sourceNames[0];
+      platforms.length >= 2
+        ? `${platforms.slice(0, 2).join(' · ')} ${platforms.length}源共推`
+        : entry.item.sourceLabel || platforms[0];
 
     return {
-      item: {
-        ...entry.item,
-        sourceLabel,
-      },
+      item: { ...entry.item, sourceLabel },
       finalScore,
       firstSeenRank: entry.firstSeenRank,
     };
   });
 
-  return ranked
+  const sorted = ranked
     .sort((a, b) => {
-      if (Math.abs(b.finalScore - a.finalScore) > 1e-6) return b.finalScore - a.finalScore;
+      if (Math.abs(b.finalScore - a.finalScore) > 1e-9) return b.finalScore - a.finalScore;
       return a.firstSeenRank - b.firstSeenRank;
     })
-    .slice(0, limit)
     .map((r) => r.item);
+  return (opts.diversify ? diversifyRanking(sorted) : sorted).slice(0, limit);
 }
 
 function assertArray<T>(value: unknown, what: string): T[] {
@@ -801,7 +852,7 @@ async function fetchTmdbTrending(mediaType: 'all' | 'tv' | 'movie' = 'all'): Pro
 /** 并发拉取多源榜单并用 RRF + 跨源共现算法融合排名 */
 async function collectAndFuse(
   tasks: { name: string; weight: number; run: () => Promise<DoubanItem[]> }[],
-  opts: { maxEpisodes?: number; dropEndedCatalog?: boolean } = {}
+  opts: { maxEpisodes?: number; dropEndedCatalog?: boolean; diversify?: boolean } = {}
 ): Promise<DoubanItem[]> {
   const settled = await Promise.allSettled(tasks.map((t) => t.run()));
   const sources: RankedSourceInput[] = [];
@@ -819,6 +870,7 @@ async function collectAndFuse(
     filterEvergreen: true,
     maxEpisodes: opts.maxEpisodes ?? 120,
     dropEndedCatalog: opts.dropEndedCatalog,
+    diversify: opts.diversify,
   });
   if (fused.length === 0) throw new Error('多源榜单聚合失败');
   return fused;
@@ -846,7 +898,8 @@ export async function fetchHotList(id: HotListId): Promise<DoubanItem[]> {
           { name: 'Bangumi', weight: 0.9, run: () => fetchBangumiHotAiring(16) },
           ...(hasTmdbKey ? [{ name: 'TMDB趋势', weight: 1.05, run: () => fetchTmdbTrending('all') }] : []),
         ],
-        { maxEpisodes: 260 }
+        // 综合总榜也是首页大图的来源：前 10 名同一大类最多 4 部，避免一屏全是电影或全是番
+        { maxEpisodes: 260, diversify: true }
       );
       break;
     }

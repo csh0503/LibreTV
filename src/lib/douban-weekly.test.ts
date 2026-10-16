@@ -256,3 +256,56 @@ describe('doubanCollectionToItem & biliRankToItem & tmdbTrendingToItem', () => {
   });
 });
 
+
+describe('TOP 10 排名：按平台分组的 RRF', () => {
+  const item = (title: string, extra: Partial<import('./types').DoubanItem> = {}) => ({ id: title, title, cover: 'c', ...extra });
+
+  it('同一平台的多个榜只算一票，跨平台共现才算共识', async () => {
+    const { fuseMultiSourceRankings } = await import('./douban-weekly');
+    const ranked = fuseMultiSourceRankings([
+      { name: '豆瓣热剧', items: [item('甲'), item('豆瓣三连')] },
+      { name: '华语口碑', items: [item('乙'), item('豆瓣三连')] },
+      { name: '全球口碑', items: [item('丙'), item('豆瓣三连')] },
+      { name: '百度热播', items: [item('跨平台')] },
+      { name: 'B站剧集', items: [item('跨平台')] },
+    ]);
+    const labelOf = (t: string) => ranked.find((r) => r.title === t)?.sourceLabel;
+    expect(labelOf('豆瓣三连')).not.toContain('共推');
+    expect(labelOf('跨平台')).toContain('2源共推');
+    expect(ranked[0].title).toBe('跨平台');
+  });
+
+  it('评分会影响名次，但不会压过明显的热度差', async () => {
+    const { fuseMultiSourceRankings } = await import('./douban-weekly');
+    const close = fuseMultiSourceRankings([
+      { name: '豆瓣实时影', items: [item('低分', { rating: '5.6' }), item('高分', { rating: '8.8' })] },
+    ]);
+    expect(close.map((r) => r.title)).toEqual(['高分', '低分']);
+    const far = fuseMultiSourceRankings([
+      { name: '豆瓣实时影', items: [item('低分', { rating: '5.6' }), ...Array.from({ length: 30 }, (_, i) => item(`填充${i}`)), item('高分', { rating: '8.8' })] },
+    ]);
+    const pos = (t: string) => far.findIndex((r) => r.title === t);
+    expect(pos('低分')).toBeLessThan(pos('高分'));
+  });
+
+  it('多样性配额：前 10 名同一大类最多 4 部', async () => {
+    const { diversifyRanking, rankCategory } = await import('./douban-weekly');
+    const movies = Array.from({ length: 8 }, (_, i) => item(`电影${i}`, { isTv: false }));
+    const shows = Array.from({ length: 8 }, (_, i) => item(`剧${i}`, { isTv: true }));
+    const anime = Array.from({ length: 8 }, (_, i) => item(`番${i}`, { isTv: true, genres: '动画 番剧', area: '日本' }));
+    const out = diversifyRanking([...movies, ...shows, ...anime]);
+    expect(out.slice(0, 10).filter((r) => rankCategory(r) === 'movie')).toHaveLength(4);
+    expect(out.slice(0, 10).filter((r) => rankCategory(r) === 'anime')).toHaveLength(2);
+    expect(out).toHaveLength(24);
+    expect(rankCategory(item('国漫', { genres: '动画 国创', area: '中国大陆' }))).toBe('guoman');
+  });
+
+  it('榜单名能归到平台', async () => {
+    const { platformOf } = await import('./douban-weekly');
+    expect(platformOf('豆瓣实时影')).toBe('douban');
+    expect(platformOf('一周口碑影')).toBe('douban');
+    expect(platformOf('B站国创')).toBe('bilibili');
+    expect(platformOf('TMDB趋势')).toBe('tmdb');
+    expect(platformOf('Bangumi')).toBe('bangumi');
+  });
+});
