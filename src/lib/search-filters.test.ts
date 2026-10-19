@@ -99,6 +99,9 @@ describe('作品身份认错的判断', () => {
     // 没有集数信息的不判断；正在更新、片源多几集的正常
     expect(identityContradicts(0, { episodes: 2 })).toBe(false);
     expect(identityContradicts(14, { episodes: 12 })).toBe(false);
+    // 还没登记集数的新作：按首播年份不可能有 1115 集
+    expect(identityContradicts(1115, { date: '2026-07-05' }, 2026)).toBe(true);
+    expect(identityContradicts(1115, { date: '1999-10-20' }, 2026)).toBe(false);
   });
 });
 

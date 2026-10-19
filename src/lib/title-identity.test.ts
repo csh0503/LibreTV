@@ -31,6 +31,18 @@ describe('pickBestMatch', () => {
     });
   });
 
+  it('别名算同一个名字；片名对不上的不能只靠年份（「海贼王」+ 2025 不再认成《海贼王女英雄们的故事》）', () => {
+    const op = [
+      { id: 37854, media_type: 'tv', name: '航海王', original_name: 'ワンピース', first_air_date: '1999-10-20', popularity: 200 },
+      { id: 999, media_type: 'tv', name: '海贼王女英雄们的故事', first_air_date: '2026-07-05', popularity: 30 },
+      { id: 318918, media_type: 'tv', name: '航海王', first_air_date: '2026-09-29', popularity: 20 },
+    ];
+    // 带着标错的年份：只会认到同名的（乐高版），交给集数检查再纠正
+    expect(pickBestMatch(op, { title: '海贼王', year: '2025' })).toEqual({ id: 318918, kind: 'tv' });
+    // 不带年份：同名里人气最高的老番
+    expect(pickBestMatch(op, { title: '海贼王' })).toEqual({ id: 37854, kind: 'tv' });
+  });
+
   it('没有年份时片名必须一致', () => {
     expect(pickBestMatch([{ id: 4, media_type: 'movie', title: '大师计划之外' }], { title: '大师计划' })).toBeUndefined();
   });

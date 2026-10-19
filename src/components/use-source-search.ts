@@ -139,7 +139,7 @@ export function useTitleIdentity(pick: TitlePick, enabled: boolean) {
   // 片源站年份标错（360 把 1999 年的《航海王》标成 2025）时，按年份会认成同名的别的作品（2026 年 2 集的乐高特别篇）：
   // 集数对不上就不带年份再认一次，还对不上就当作认不出
   const eps = episodeCount(pick.remarks);
-  const wrong = (info?: { episodes?: number }) => identityContradicts(eps, info);
+  const wrong = (info?: { episodes?: number; date?: string }) => identityContradicts(eps, info);
   const retryNeeded = !tmdb && Boolean(pick.year) && wrong(first.data?.identity?.info);
   const retry = useQuery({
     queryKey: ['identity', pick.title, undefined, kind, undefined],
@@ -153,9 +153,17 @@ export function useTitleIdentity(pick: TitlePick, enabled: boolean) {
   return retry;
 }
 
-/** 片源已经播到的集数远多于认到的作品的总集数（多三倍以上）：认错了 */
-export function identityContradicts(sourceEpisodes: number, info?: { episodes?: number }): boolean {
-  return Boolean(sourceEpisodes && info?.episodes && sourceEpisodes > info.episodes * 3 + 10);
+/**
+ * 认到的作品和片源对不上：
+ * - 片源已经播到的集数远多于它的总集数（多三倍以上）；
+ * - 或者按它的首播年份不可能有这么多集（每年最多 150 集，和片库合并的规则一样）——
+ *   TMDB 上还没登记集数的新作（2026 年的《海贼王女英雄们的故事》）也能认出不是播到 1115 集的老番。
+ */
+export function identityContradicts(sourceEpisodes: number, info?: { episodes?: number; date?: string }, nowYear = new Date().getFullYear()): boolean {
+  if (!sourceEpisodes || !info) return false;
+  if (info.episodes && sourceEpisodes > info.episodes * 3 + 10) return true;
+  const start = parseInt(info.date?.slice(0, 4) ?? '', 10);
+  return Number.isFinite(start) && sourceEpisodes > (Math.max(0, nowYear - start) + 1) * 150;
 }
 
 export function useAliasFallback(pick: TitlePick, primaryMissing: boolean) {

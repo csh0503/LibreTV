@@ -1,6 +1,7 @@
 import { Converter } from 'opencc-js';
 import { getCache, setCache } from './fetch-utils';
 import { normalizeTitle } from './cms-parser';
+import { canonicalTitle } from './title-aliases';
 import { tmdbGet } from './tmdb';
 import { extractSeasonNumber } from './douban-weekly';
 
@@ -76,17 +77,22 @@ export function pickBestMatch(
   results: TmdbSearchResult[],
   query: { title: string; year?: string; kind?: IdentityKind },
 ): { id: number; kind: IdentityKind } | undefined {
-  const want = normalizeTitle(query.title);
+  // 用别名表统一（「海贼王」=「航海王」）：TMDB 上老番的中文名是「航海王」，搜「海贼王」要认得出它
+  const want = canonicalTitle(query.title);
   const wantYear = parseInt(query.year ?? '', 10);
   let best: { id: number; kind: IdentityKind; score: number } | undefined;
   for (const r of results) {
     if (!r.id || (r.media_type !== 'movie' && r.media_type !== 'tv')) continue;
     const kind = r.media_type;
-    const names = [r.title, r.name, r.original_title, r.original_name].filter((n): n is string => Boolean(n));
-    const exact = names.some((n) => normalizeTitle(toSimplified(n)) === want);
+    const names = [r.title, r.name, r.original_title, r.original_name]
+      .filter((n): n is string => Boolean(n))
+      .map((n) => canonicalTitle(toSimplified(n)));
+    const exact = names.some((n) => n === want);
     const year = parseInt((r.release_date || r.first_air_date || '').slice(0, 4), 10);
     if (Number.isFinite(wantYear) && Number.isFinite(year) && Math.abs(year - wantYear) > 1) continue;
-    if (!exact && !Number.isFinite(wantYear)) continue; // 片名对不上又没有年份佐证，宁可不认
+    // 片名对不上时：必须互相包含（「大师计划」/「大师计划之外」）而且年份对得上才考虑。
+    // 以前只要年份接近就行，「海贼王」+ 2025 认成了 2026 年的《海贼王女英雄们的故事》
+    if (!exact && (!Number.isFinite(wantYear) || !names.some((n) => n.includes(want) || want.includes(n)))) continue;
     const score =
       (exact ? 100 : 0) + (query.kind && query.kind === kind ? 20 : 0) + Math.min(10, (r.popularity ?? 0) / 10);
     if (!best || score > best.score) best = { id: r.id, kind, score };
@@ -202,7 +208,7 @@ export async function resolveTitleIdentity(input: {
 }): Promise<TitleIdentity | null | undefined> {
   const title = input.title.trim().slice(0, 100);
   if (!title) return null;
-  const cacheKey = `identity:v3:${input.tmdbId ?? ''}:${input.kind ?? ''}:${title}:${input.year ?? ''}`;
+  const cacheKey = `identity:v4:${input.tmdbId ?? ''}:${input.kind ?? ''}:${title}:${input.year ?? ''}`;
   const cached = getCache<TitleIdentity | null>(cacheKey);
   if (cached !== undefined) return cached;
 
@@ -216,9 +222,23 @@ export async function resolveTitleIdentity(input: {
   let target: { id: number; kind: IdentityKind } | undefined =
     input.tmdbId && input.kind ? { id: input.tmdbId, kind: input.kind } : undefined;
   if (!target) {
-    const res = await tmdbGet<{ results?: TmdbSearchResult[] }>('/search/multi', { query: baseTitle, include_adult: 'false' });
-    if (!res) return undefined; // 没有 TMDB key 或请求失败：不缓存，下次再试
-    target = pickBestMatch(res.results ?? [], {
+    // 搜索词是别名（「海贼王」）时再用通行名（「航海王」）搜一次：TMDB 按「海贼王」搜出来全是剧场版，正片不在里面
+    const main = canonicalTitle(baseTitle);
+    const queries = [baseTitle, ...(main && main !== normalizeTitle(baseTitle) ? [main] : [])];
+    const pages = await Promise.all(
+      queries.map((query) => tmdbGet<{ results?: TmdbSearchResult[] }>('/search/multi', { query, include_adult: 'false' })),
+    );
+    if (pages.every((p) => !p)) return undefined; // 没有 TMDB key 或请求失败：不缓存，下次再试
+    const seen = new Set<string>();
+    const results = pages
+      .flatMap((p) => p?.results ?? [])
+      .filter((r) => {
+        const key = `${r.media_type}:${r.id}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    target = pickBestMatch(results, {
       title: baseTitle,
       year: hasSeason ? undefined : input.year,
       kind: hasSeason ? 'tv' : input.kind,
