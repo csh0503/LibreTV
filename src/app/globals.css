@@ -203,6 +203,14 @@ body {
   padding-right: max(10px, env(safe-area-inset-right)) !important;
   padding-bottom: env(safe-area-inset-bottom) !important;
 }
+/* 全屏时控制栏收起（或锁住）就什么都不留：ArtPlayer 默认在底部留一条细进度条，看片时很显眼 */
+.art-video-player.art-fullscreen-web.art-mini-progress-bar .art-bottom,
+.art-video-player.art-fullscreen.art-mini-progress-bar .art-bottom,
+.art-video-player.art-fullscreen-web.art-lock .art-bottom,
+.art-video-player.art-fullscreen.art-lock .art-bottom {
+  opacity: 0 !important;
+  pointer-events: none;
+}
 .art-video-player.art-fullscreen-web .player-overlay-host {
   top: env(safe-area-inset-top);
   left: env(safe-area-inset-left);
