@@ -19,6 +19,29 @@ import { buildWatchUrl, cn, formatRelativeTime, formatTime } from '@/lib/utils';
 import { useToast } from './toast';
 import { resolveSource, useAppStore } from '@/lib/store';
 import { useProfile } from '@/lib/use-profile';
+import { markNotInterested, unmarkNotInterested } from '@/lib/not-interested';
+
+const rowKey = (item: HistoryEntry) => `${item.sourceKey}_${item.vodId}`;
+
+/** 删掉的记录写回去（撤销用） */
+function restoreHistory(items: HistoryEntry[]) {
+  return Promise.all(
+    items.map((item) =>
+      upsertHistory({
+        sourceKey: item.sourceKey,
+        sourceUrl: item.sourceUrl,
+        vodId: item.vodId,
+        title: item.title,
+        pic: item.pic,
+        episodeIndex: item.episodeIndex,
+        totalEpisodes: item.totalEpisodes,
+        playbackPosition: item.playbackPosition,
+        duration: item.duration,
+        timestamp: item.timestamp,
+      }),
+    ),
+  );
+}
 
 /**
  * 观看历史面板（IndexedDB 实时查询）。
@@ -42,11 +65,43 @@ export function HistoryPanel({ open, onClose }: { open: boolean; onClose: () => 
   const { toast } = useToast();
   const [confirmClear, setConfirmClear] = useState(false);
   const [query, setQuery] = useState('');
+  // 批量管理：选几条一起删 / 一起「不再推荐」
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  // 关闭后重置搜索词：下次打开回到完整列表，不残留上次的过滤状态
+  // 关闭后重置搜索词和选择：下次打开回到完整列表，不残留上次的状态
   useEffect(() => {
-    if (!open) setQuery('');
+    if (!open) {
+      setQuery('');
+      setSelecting(false);
+      setSelected(new Set());
+    }
   }, [open]);
+
+  /** 删掉这些记录；notInterested = 同时标「不再推荐」。都能在提示里撤销 */
+  const removeMany = (items: HistoryEntry[], notInterested: boolean) => {
+    if (items.length === 0) return;
+    const titles = items.map((i) => i.title);
+    void Promise.all(items.map((i) => removeHistory(i.sourceKey, i.vodId))).then(() => {
+      if (notInterested) markNotInterested(profileId, titles);
+      setSelected(new Set());
+      toast(
+        notInterested
+          ? `已删除 ${items.length} 条记录，这些不会再推荐给你`
+          : `已删除 ${items.length} 条记录`,
+        'info',
+        {
+          action: {
+            label: '撤销',
+            onClick: () => {
+              if (notInterested) unmarkNotInterested(profileId, titles);
+              void restoreHistory(items).then(() => toast('已恢复', 'success'));
+            },
+          },
+        },
+      );
+    });
+  };
 
   const keyword = query.trim().toLowerCase();
   const visible = useMemo(() => {
@@ -92,11 +147,25 @@ export function HistoryPanel({ open, onClose }: { open: boolean; onClose: () => 
               )}
             </div>
             <button
-              className="shrink-0 px-2 py-1.5 rounded-lg text-xs text-faint hover:text-danger hover:bg-hover transition-colors"
-              onClick={() => setConfirmClear(true)}
+              className={cn(
+                'shrink-0 px-2 py-1.5 rounded-lg text-xs transition-colors',
+                selecting ? 'text-accent hover:bg-hover' : 'text-faint hover:text-content hover:bg-hover',
+              )}
+              onClick={() => {
+                setSelecting((v) => !v);
+                setSelected(new Set());
+              }}
             >
-              清空历史
+              {selecting ? '完成' : '管理'}
             </button>
+            {!selecting && (
+              <button
+                className="shrink-0 px-2 py-1.5 rounded-lg text-xs text-faint hover:text-danger hover:bg-hover transition-colors"
+                onClick={() => setConfirmClear(true)}
+              >
+                清空历史
+              </button>
+            )}
           </div>
         ) : undefined
       }
@@ -114,9 +183,56 @@ export function HistoryPanel({ open, onClose }: { open: boolean; onClose: () => 
               共 {total} 条记录，仅显示最近 {VISIBLE_LIMIT} 条，可用上方搜索查找更早的记录
             </p>
           )}
+          {selecting && (
+            <div className="sticky top-0 z-10 -mx-1 mb-2 px-1 py-2 flex flex-wrap items-center gap-2 bg-surface/95 backdrop-blur">
+              <button
+                type="button"
+                className="btn-ghost btn-sm"
+                onClick={() =>
+                  setSelected((prev) => (prev.size === visible.length ? new Set() : new Set(visible.map(rowKey))))
+                }
+              >
+                {selected.size === visible.length ? '全不选' : '全选'}
+              </button>
+              <span className="text-xs text-faint">已选 {selected.size} 条</span>
+              <div className="ml-auto flex gap-2">
+                <button
+                  type="button"
+                  className="btn-ghost btn-sm"
+                  disabled={selected.size === 0}
+                  title="删除记录，并且不再推荐这些作品（误点进去的、不喜欢的）"
+                  onClick={() => removeMany(visible.filter((i) => selected.has(rowKey(i))), true)}
+                >
+                  不再推荐
+                </button>
+                <button
+                  type="button"
+                  className="btn-sm btn-ghost text-danger"
+                  disabled={selected.size === 0}
+                  onClick={() => removeMany(visible.filter((i) => selected.has(rowKey(i))), false)}
+                >
+                  删除
+                </button>
+              </div>
+            </div>
+          )}
           <ul className="space-y-2">
             {visible.map((item) => (
-              <HistoryItem key={`${item.sourceKey}_${item.vodId}`} item={item} />
+              <HistoryItem
+                key={rowKey(item)}
+                item={item}
+                selecting={selecting}
+                checked={selected.has(rowKey(item))}
+                onToggle={() =>
+                  setSelected((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(rowKey(item))) next.delete(rowKey(item));
+                    else next.add(rowKey(item));
+                    return next;
+                  })
+                }
+                onNotInterested={() => removeMany([item], true)}
+              />
             ))}
           </ul>
         </>
@@ -139,7 +255,19 @@ export function HistoryPanel({ open, onClose }: { open: boolean; onClose: () => 
   );
 }
 
-function HistoryItem({ item }: { item: HistoryEntry }) {
+function HistoryItem({
+  item,
+  selecting,
+  checked,
+  onToggle,
+  onNotInterested,
+}: {
+  item: HistoryEntry;
+  selecting: boolean;
+  checked: boolean;
+  onToggle: () => void;
+  onNotInterested: () => void;
+}) {
   // 精确订阅：整份 useAppStore() 会让每条历史在任意 store 变化（搜索健康度、测活写回等）时重渲染
   const imageProxyMode = useAppStore((s) => s.imageProxyMode);
   const customImageProxy = useAppStore((s) => s.customImageProxy);
@@ -169,35 +297,26 @@ function HistoryItem({ item }: { item: HistoryEntry }) {
         action: {
           label: '撤销',
           onClick: () => {
-            void upsertHistory({
-              sourceKey: item.sourceKey,
-              sourceUrl: item.sourceUrl,
-              vodId: item.vodId,
-              title: item.title,
-              pic: item.pic,
-              episodeIndex: item.episodeIndex,
-              totalEpisodes: item.totalEpisodes,
-              playbackPosition: item.playbackPosition,
-              duration: item.duration,
-              timestamp: item.timestamp,
-            }).then(() => toast('已恢复', 'success'));
+            void restoreHistory([item]).then(() => toast('已恢复', 'success'));
           },
         },
       });
     });
   };
 
-  return (
-    <li className="relative group">
-      <Link
-        href={href}
-        onClick={() => {
-          // 点击即同步一次时间戳，置顶最近观看
-          upsertHistory({ ...item, timestamp: Date.now() }).catch(() => {});
-        }}
-        className="block bg-card hover:bg-hover rounded-xl p-3 pr-10 transition-colors"
-      >
+  const body = (
         <div className="flex items-center gap-3">
+          {selecting && (
+            <span
+              aria-hidden
+              className={cn(
+                'w-5 h-5 shrink-0 rounded-full border flex items-center justify-center',
+                checked ? 'bg-accent border-accent text-on-accent' : 'border-line',
+              )}
+            >
+              {checked && <Icon name="check" className="w-3 h-3" />}
+            </span>
+          )}
           {item.pic && !imgFailed ? (
             <SmartImage
               url={item.pic}
@@ -228,20 +347,55 @@ function HistoryItem({ item }: { item: HistoryEntry }) {
             )}
           </div>
         </div>
-      </Link>
-      <button
-        className={cn(
-          'absolute right-2 top-2 p-2 rounded-full text-faint hover:text-danger',
-          'opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity'
-        )}
-        aria-label="删除记录"
-        title="删除记录（可在提示中撤销）"
-        onClick={remove}
+  );
+
+  if (selecting) {
+    return (
+      <li>
+        <button
+          type="button"
+          role="checkbox"
+          aria-checked={checked}
+          onClick={onToggle}
+          className={cn('w-full text-left rounded-xl p-3 transition-colors', checked ? 'bg-hover' : 'bg-card hover:bg-hover')}
+        >
+          {body}
+        </button>
+      </li>
+    );
+  }
+
+  return (
+    <li className="relative group">
+      <Link
+        href={href}
+        onClick={() => {
+          // 点击即同步一次时间戳，置顶最近观看
+          upsertHistory({ ...item, timestamp: Date.now() }).catch(() => {});
+        }}
+        className="block bg-card hover:bg-hover rounded-xl p-3 pr-20 transition-colors"
       >
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-        </svg>
-      </button>
+        {body}
+      </Link>
+      <div className="absolute right-2 top-2 flex gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity">
+        <button
+          className="px-2 py-1.5 rounded-full text-[11px] text-faint hover:text-content hover:bg-hover"
+          title="删除记录，并且不再推荐这部（误点进去的、不喜欢的）"
+          onClick={onNotInterested}
+        >
+          不再推荐
+        </button>
+        <button
+          className="p-2 rounded-full text-faint hover:text-danger"
+          aria-label="删除记录"
+          title="删除记录（可在提示中撤销）"
+          onClick={remove}
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
     </li>
   );
 }

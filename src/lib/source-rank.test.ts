@@ -38,3 +38,24 @@ describe('rankSources：加上质检', () => {
     expect(ranked.map((r) => r.sourceKey)).toEqual(['c', 'b', 'a', 'd']);
   });
 });
+
+describe('rankSources：你真的播过的表现', () => {
+  it('起播快的优先、常卡的往后、老播不了的算出错、没测出清晰度时用播放时看到的', () => {
+    const health = {
+      a: { ok: true, ms: 200, failStreak: 0, timestamp: 0 },
+      b: { ok: true, ms: 200, failStreak: 0, timestamp: 0 },
+      c: { ok: true, ms: 200, failStreak: 0, timestamp: 0 },
+      d: { ok: true, ms: 200, failStreak: 0, timestamp: 0 },
+      e: { ok: true, ms: 200, failStreak: 0, timestamp: 0 },
+    };
+    const playback = {
+      a: { plays: 3, startMs: 4000, stalls: 0, fails: 0, at: 0 },
+      b: { plays: 3, startMs: 900, stalls: 0, fails: 0, at: 0 },
+      c: { plays: 3, startMs: 500, stalls: 2.4, fails: 0, at: 0 },
+      d: { plays: 0, stalls: 0, fails: 3, at: 0 },
+      e: { plays: 2, startMs: 3000, height: 1080, stalls: 0, fails: 0, at: 0 },
+    };
+    const ranked = rankSources([item('a'), item('b'), item('c'), item('d'), item('e')], health, {}, playback);
+    expect(ranked.map((r) => r.sourceKey)).toEqual(['e', 'b', 'a', 'c', 'd']);
+  });
+});

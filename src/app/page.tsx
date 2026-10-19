@@ -11,6 +11,7 @@ import {
   ContinueWatchingRow,
   HeroBillboard,
   MyListRow,
+  ScheduleRow,
   TopTenRow,
   UpcomingRow,
 } from '@/components/home-rows';
@@ -447,6 +448,7 @@ function HomeContent() {
               onPick={pickTitle}
               onOpen={(item) => setDetailItem(item)}
             />
+            <ScheduleRow onPick={pickTitle} />
             <ForYouRows
               onPick={pickTitle}
             />

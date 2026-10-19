@@ -7,6 +7,8 @@ import { isAdultContent } from '@/lib/cms-parser';
 import { favoriteIdOf } from '@/lib/db';
 import { SHELF_DEFS, shelfItemKey, type ShelfChannel } from '@/lib/shelf-defs';
 import { useAppStore } from '@/lib/store';
+import { isNotInterested, useNotInterested } from '@/lib/not-interested';
+import { useProfile } from '@/lib/use-profile';
 import { rememberDoubanItem } from '@/lib/taste-store';
 import type { DoubanItem, TitlePick } from '@/lib/types';
 import { ShelfRow } from './home-rows';
@@ -67,6 +69,9 @@ export function ShelfRows({
   // TOP 10 落地前先不排货架，否则它回来时货架里的卡片会突然消失
   const topPending = topQuery.isLoading;
 
+  // 你标了「不再推荐」的不放
+  const notInterested = useNotInterested(useProfile().id);
+
   // TOP 10 和前面行已用掉的作品，后面的行不再重复
   const shelves = useMemo(() => {
     const seen = new Set<string>((topQuery.data?.items ?? []).slice(0, 10).map(shelfItemKey));
@@ -76,6 +81,7 @@ export function ShelfRows({
       const own = new Set<string>();
       for (const item of q.data?.items ?? []) {
         if (yellowFilter && isAdultContent(item.title)) continue;
+        if (isNotInterested(notInterested, item.title)) continue;
         const key = shelfItemKey(item);
         if (!key || seen.has(key) || own.has(key)) continue;
         own.add(key);
@@ -93,7 +99,7 @@ export function ShelfRows({
         requested: idx < revealed,
       };
     });
-  }, [queries, yellowFilter, revealed, topQuery.data, topPending]);
+  }, [queries, yellowFilter, revealed, topQuery.data, topPending, notInterested]);
 
   const allRevealed = revealed >= SHELF_DEFS.length;
   const settledCount = shelves.filter((s) => s.requested && !s.loading).length;

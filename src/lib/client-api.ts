@@ -279,6 +279,15 @@ export const api = {
     }
   },
 
+  /** 追剧日历：这些剧 21 天内哪天出新一集 */
+  schedule: (titles: { title: string; year?: string }[], signal?: AbortSignal) =>
+    request<{ entries: import('./airing-schedule').ScheduleEntry[] }>('/api/schedule', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ titles }),
+      signal,
+    }),
+
   /** 点播源探活：以搜索 "test" 的耗时与结果量衡量可用性 */
   testSource: (url: string) =>
     request<{ ok: boolean; ms: number; count?: number; error?: string }>('/api/source/test', {

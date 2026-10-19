@@ -443,8 +443,28 @@ function WatchContent() {
                   onRequestSwitchSource={vodId ? failover.requestSwitch : undefined}
                   skip={episodeSkip}
                   adSkips={adMarks}
-                  onNextEpisode={currentIndex + 1 < episodes.length ? () => goEpisode(currentIndex + 1) : undefined}
+                  onNextEpisode={
+                    currentIndex + 1 < episodes.length
+                      ? (opts) => {
+                          if (!opts?.auto) return goEpisode(currentIndex + 1);
+                          // 「下一集」卡倒数完自动切：算一次自动连播，连看太多集先问「还在看吗？」
+                          const decision = decideEpisodeEndAction({
+                            currentIndex,
+                            totalEpisodes: episodes.length,
+                            autoplayNext: store.autoplayNext,
+                            consecutiveAutoPlays: autoPlayStreakRef.current,
+                          });
+                          if (decision.mode === 'still-watching') {
+                            setEndOverlay({ mode: 'still-watching', nextIndex: decision.nextIndex, streak: decision.streak });
+                            return;
+                          }
+                          autoPlayStreakRef.current += 1;
+                          goEpisode(currentIndex + 1, { fromAuto: true });
+                        }
+                      : undefined
+                  }
                   positionRef={positionRef}
+                  nextTitle={currentIndex + 1 < episodes.length ? `第 ${labelOf(currentIndex + 1)} 集` : undefined}
                   overlay={
                     failover.state.phase !== 'idle' ? (
                       <FailoverOverlayCard

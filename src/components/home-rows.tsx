@@ -1444,3 +1444,87 @@ export function UpcomingRow({ onPick }: { onPick: (title: string, pick?: TitlePi
     </ShelfRow>
   );
 }
+
+
+/** 「今天更新 / 明天更新 / 周三更新」：按北京时间算差几天 */
+function scheduleLabel(date: string, weekday: number, now = Date.now()): { text: string; today: boolean } {
+  const today = new Date(now + 8 * 3600_000).toISOString().slice(0, 10);
+  const days = Math.round((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000);
+  if (days <= 0) return { text: '今天更新', today: true };
+  if (days === 1) return { text: '明天更新', today: false };
+  if (days < 7) return { text: `${WEEKDAY_CN[weekday % 7]}更新`, today: false };
+  return { text: `${date.slice(5).replace('-', '月')}日更新`, today: false };
+}
+
+/**
+ * 首页「追剧日历」：片单里的、最近一个半月在看的连载，接下来哪天出新一集（今天的排最前）。
+ * 日期来自 Bangumi 放送表（动漫）和 TMDB 的下一集播出日期（见 lib/airing-schedule）。
+ */
+export function ScheduleRow({ onPick }: { onPick: (title: string, pick?: TitlePick) => void }) {
+  const profileId = useProfile().id;
+  const yellowFilter = useAppStore((s) => s.yellowFilter);
+  const favorites = useLiveQuery(
+    () => (profileId ? db.favorites.where('profileId').equals(profileId).toArray() : []),
+    [profileId],
+  );
+  const history = useLiveQuery(
+    () => (profileId ? db.history.where('profileId').equals(profileId).toArray() : []),
+    [profileId],
+  );
+
+  // 要查的剧：片单 + 45 天内看过的多集剧，同一部只查一次，最多 20 部（越近越先）
+  const tracked = useMemo(() => {
+    const since = Date.now() - 45 * 86_400_000;
+    const rows = [
+      ...(history ?? [])
+        .filter((h) => h.totalEpisodes > 1 && h.timestamp >= since)
+        .map((h) => ({ title: h.title, cover: h.pic, at: h.timestamp, year: undefined as string | undefined })),
+      ...(favorites ?? []).filter((f) => !f.isAdult).map((f) => ({ title: f.title, cover: f.pic, at: f.addedAt, year: f.year })),
+    ]
+      .filter((r) => !(yellowFilter && isAdultContent(r.title)))
+      .sort((a, b) => b.at - a.at);
+    const seen = new Map<string, (typeof rows)[number]>();
+    for (const r of rows) {
+      const key = canonicalTitle(r.title);
+      if (!key) continue;
+      const prev = seen.get(key);
+      if (!prev) seen.set(key, r);
+      else if (!prev.cover && r.cover) seen.set(key, { ...prev, cover: r.cover });
+    }
+    return [...seen.values()].slice(0, 20);
+  }, [favorites, history, yellowFilter]);
+
+  const query = useQuery({
+    queryKey: ['schedule', tracked.map((t) => t.title).join('|')],
+    queryFn: ({ signal }) => api.schedule(tracked.map((t) => ({ title: t.title, year: t.year })), signal),
+    enabled: tracked.length > 0,
+    staleTime: 3 * 3600_000,
+    retry: 0,
+  });
+
+  const entries = query.data?.entries ?? [];
+  if (!profileId || entries.length === 0) return null;
+  const coverOf = new Map(tracked.map((t) => [t.title, t.cover]));
+  const todayCount = entries.filter((e) => scheduleLabel(e.date, e.weekday).today).length;
+
+  return (
+    <ShelfRow title={todayCount > 0 ? `追剧日历 · 今天 ${todayCount} 部更新` : '追剧日历'}>
+      {entries.map((e) => {
+        const label = scheduleLabel(e.date, e.weekday);
+        return (
+          <div key={e.title} className="w-[7.25rem] sm:w-32 shrink-0">
+            <DoubanCard
+              item={{
+                title: e.title,
+                cover: coverOf.get(e.title) || '',
+                meta: e.episode ? `${label.text} · 第 ${e.episode} 集` : label.text,
+                badge: label.today ? { text: '今天更新', tone: 'ok' } : undefined,
+              }}
+              onClick={() => onPick(e.title, { title: e.title, cover: coverOf.get(e.title) })}
+            />
+          </div>
+        );
+      })}
+    </ShelfRow>
+  );
+}

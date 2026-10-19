@@ -4,7 +4,8 @@ import { useEffect, useState } from 'react';
 import { createProfile, deleteProfile, listProfiles } from '@/lib/profile';
 import { api } from '@/lib/client-api';
 import { openCloudProfile, syncCloudProfilesToDevice } from '@/lib/profile-sync';
-import type { UserProfile } from '@/lib/db';
+import { db, type UserProfile } from '@/lib/db';
+import { rememberedProfileId } from '@/lib/profile-session';
 
 
 const COLORS = ['#e11d48', '#0ea5e9', '#16a34a', '#d97706', '#7c3aed', '#db2777', '#0891b2'];
@@ -17,9 +18,16 @@ function colorFor(name: string): string {
   return COLORS[n] ?? COLORS[0];
 }
 
-/** 登录后先选设定档，选完才进入首页。刷新或重新登录会再出现一次。 */
+/** 本机一个设定档都没有时建「默认」：只建一次（同时有两处调用时不会建出两个） */
+let creatingDefault: Promise<void> | null = null;
+
+/**
+ * 「谁在看？」：选过一次就记住（rememberProfileChoice），以后打开直接进、不问密码；
+ * 只有手动切换设定档时才再选（有密码的要输密码）。第一次打开、只有一个没密码的设定档时也直接进。
+ */
 export function ProfileGate() {
-  const [open, setOpen] = useState(true);
+  // 记住了就先不显示，免得闪一下；确认那个设定档还在这台设备上，不在了再打开
+  const [open, setOpen] = useState(() => !rememberedProfileId());
   const [profiles, setProfiles] = useState<GateProfile[]>([]);
   const [unlockId, setUnlockId] = useState('');
   const [unlockPin, setUnlockPin] = useState('');
@@ -36,7 +44,8 @@ export function ProfileGate() {
       // 云端没连上时不要把本机档清掉，也不要当成「云端是空的」再新建一个默认
       const cloud = listed ?? [];
       if (listed && local.length === 0 && cloud.length === 0) {
-        await createProfile('默认');
+        if (!creatingDefault) creatingDefault = createProfile('默认');
+        await creatingDefault;
         local = await listProfiles();
       }
       const byId = new Map<string, GateProfile>();
@@ -52,12 +61,26 @@ export function ProfileGate() {
           onDevice: Boolean(existing),
         });
       }
-      setProfiles([...byId.values()]);
+      const all = [...byId.values()];
+      setProfiles(all);
+      // 只有一个、没有密码：不用选
+      if (!rememberedProfileId() && all.length === 1 && !all[0].pinHash) void enter(all[0]);
     })().catch(() => setError('设定档还没准备好'));
   };
 
   useEffect(() => {
+    const remembered = rememberedProfileId();
+    if (remembered) {
+      void db.profiles.get(remembered).then((p) => {
+        if (!p) {
+          setOpen(true);
+          reload();
+        }
+      });
+      return;
+    }
     reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const enter = async (profile: UserProfile, password?: string) => {

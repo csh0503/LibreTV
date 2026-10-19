@@ -34,6 +34,33 @@ export function subscribeProfile(listener: () => void): () => void {
   return () => listeners.delete(listener);
 }
 
+const REMEMBER_KEY = 'libretv-profile-remembered';
+
+/**
+ * 记住「这台设备用这个设定档」：选过一次以后，下次打开直接进，不再弹「谁在看？」、也不再问密码。
+ * 只有手动切换到别的设定档（有密码的要输密码）时才会变。
+ */
+export function rememberProfileChoice(id: string): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    if (id) localStorage.setItem(REMEMBER_KEY, id);
+    else localStorage.removeItem(REMEMBER_KEY);
+  } catch {
+    // 存不了就每次问
+  }
+}
+
+/** 记住的设定档，而且就是当前这个（换过 / 删过就不算） */
+export function rememberedProfileId(): string {
+  if (typeof localStorage === 'undefined') return '';
+  try {
+    const id = localStorage.getItem(REMEMBER_KEY) || '';
+    return id && id === readStoredProfileId() ? id : '';
+  } catch {
+    return '';
+  }
+}
+
 export function readStoredProfileId(): string {
   if (typeof localStorage === 'undefined') return '';
   return localStorage.getItem('libretv-active-profile') || '';

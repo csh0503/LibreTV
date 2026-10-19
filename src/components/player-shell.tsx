@@ -15,6 +15,7 @@ import { loadCacheSettings } from '@/lib/video-cache';
 import { cn, formatTime } from '@/lib/utils';
 import type { SkipSegment } from '@/lib/skip-segment';
 import { PLAYBACK_RATES, SEEK_STEPS, loadPlayerPrefs, savePlayerPrefs } from '@/lib/player-prefs';
+import { recordPlaybackFail, recordPlaybackStart, recordStall } from '@/lib/playback-stats';
 
 /**
  * 播放器外壳：ArtPlayer + hls.js（旧版 player.js 的 React 化）。
@@ -29,6 +30,12 @@ import { PLAYBACK_RATES, SEEK_STEPS, loadPlayerPrefs, savePlayerPrefs } from '@/
 
 /** 长按画面时的速度 */
 const LONG_PRESS_RATE = 2;
+/** 片尾时长不知道时，最后这么多秒出「下一集」卡 */
+const UP_NEXT_FALLBACK_SECONDS = 15;
+/** 「下一集」卡出来后，开了自动连播的倒数秒数 */
+const UP_NEXT_COUNTDOWN = 10;
+/** 手指从画面左边滑到右边 = 快进这么多秒 */
+const SWIPE_SEEK_SPAN = 120;
 
 // 手机上双击画面交给我们处理（左右快退快进、中间播放暂停），不用 ArtPlayer 自带的「双击暂停」
 Artplayer.MOBILE_DBCLICK_PLAY = false;
@@ -69,10 +76,12 @@ interface PlayerShellProps {
   skip?: { intro?: SkipSegment; outro?: SkipSegment; auto: boolean };
   /** 你手动标的广告位置：播到就自动跳过 */
   adSkips?: SkipSegment[];
-  /** 片尾一直到结尾时，「跳过片尾」直接进下一集 */
-  onNextEpisode?: () => void;
+  /** 片尾一直到结尾时，「跳过片尾」直接进下一集；auto = 「下一集」卡倒数完自动切的 */
+  onNextEpisode?: (opts?: { auto?: boolean }) => void;
   /** 实时的播放位置（父级点「下一集」时用来记片尾位置） */
   positionRef?: React.MutableRefObject<{ time: number; duration: number }>;
+  /** 「下一集」预览卡上的文字，如「第 5 集」 */
+  nextTitle?: string;
 }
 
 export function PlayerShell({
@@ -94,6 +103,7 @@ export function PlayerShell({
   adSkips,
   onNextEpisode,
   positionRef,
+  nextTitle,
 }: PlayerShellProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [overlayHost, setOverlayHost] = useState<HTMLDivElement | null>(null);
@@ -110,12 +120,12 @@ export function PlayerShell({
   const propsRef = useRef({
     url, title, adFilter, autoplayNext, episodeKey, nextUrl, nextEpisodeKey,
     getRestorePosition, onTimeUpdate, onEnded, onPause, onRequestSwitchSource, onNextPrefetchState,
-    skip, onNextEpisode, positionRef, adSkips,
+    skip, onNextEpisode, positionRef, adSkips, overlay,
   });
   propsRef.current = {
     url, title, adFilter, autoplayNext, episodeKey, nextUrl, nextEpisodeKey,
     getRestorePosition, onTimeUpdate, onEnded, onPause, onRequestSwitchSource, onNextPrefetchState,
-    skip, onNextEpisode, positionRef, adSkips,
+    skip, onNextEpisode, positionRef, adSkips, overlay,
   };
 
   // 跨集共享、每次换集重置的播放链路状态
@@ -148,6 +158,13 @@ export function PlayerShell({
   const [autoLeft, setAutoLeft] = useState<number | null>(null);
   // 长按加速中
   const [holdFast, setHoldFast] = useState(false);
+  // 「下一集」预览卡：left = 还有几秒自动播（没开自动连播是 null）
+  const [upNext, setUpNext] = useState<{ left: number | null } | null>(null);
+  const upNextDismissedRef = useRef(false);
+  // 滑动手势进行中的提示（拖进度 / 亮度 / 音量）
+  const [gestureHint, setGestureHint] = useState<string | null>(null);
+  // 画面亮度（手势调的，换集保持）
+  const brightnessRef = useRef(1);
   // 双击快退 / 快进的提示：方向 + 这一串连点累计的秒数
   const [tapSeekInfo, setTapSeekInfo] = useState<{ dir: -1 | 1; seconds: number; id: number } | null>(null);
   const tapSeekTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -162,8 +179,48 @@ export function PlayerShell({
   // 这中间触发的 timeupdate / pause 是上一集的位置，不能记到新的一集上
   const loadedKeyRef = useRef<string | undefined>(undefined);
 
+  // 这一集从什么时候开始加载（记起播耗时）；记过了就清掉
+  const loadStartedAtRef = useRef(0);
+  /** 当前这一集是哪个点播源（episodeKey 的第一段） */
+  const currentSourceKey = () => propsRef.current.episodeKey?.split(':')[0] ?? '';
+
   /** 现在报的进度是不是这一集的、而且真的开播了（没开播时位置是 0，会盖掉上次看到的位置） */
   const canReport = () => playbackStartedRef.current && loadedKeyRef.current === propsRef.current.episodeKey;
+
+  /**
+   * 「下一集」预览卡：片尾开始（片尾一直到结尾时用片尾起点，否则最后 15 秒）就出来；
+   * 开了自动连播按播放时间倒数 10 秒切下一集（这一集记成看完），没开只给按钮。往回拖到片尾前收起。
+   */
+  const updateUpNext = (t: number, d: number) => {
+    const p = propsRef.current;
+    if (!p.nextUrl || !p.onNextEpisode || p.overlay || upNextDismissedRef.current || !(d > 60)) {
+      setUpNext((prev) => (prev === null ? prev : null));
+      return;
+    }
+    const outro = p.skip?.outro;
+    const creditsStart = outro && outro.end >= d - 3 && outro.start > d * 0.5 ? outro.start : d - UP_NEXT_FALLBACK_SECONDS;
+    if (t < creditsStart) {
+      setUpNext((prev) => (prev === null ? prev : null));
+      return;
+    }
+    const left = p.autoplayNext ? Math.ceil(Math.min(creditsStart + UP_NEXT_COUNTDOWN, d) - t) : null;
+    if (left !== null && left <= 0) {
+      setUpNext(null);
+      upNextDismissedRef.current = true;
+      playNextNow(true);
+      return;
+    }
+    setUpNext((prev) => (prev && prev.left === left ? prev : { left }));
+  };
+
+  /** 现在就放下一集：这一集记成看完（位置 = 总长），卸载时不再回写进度 */
+  const playNextNow = (auto = false) => {
+    const art = artRef.current;
+    const p = propsRef.current;
+    if (art && art.duration > 0 && canReport()) p.onPause?.(art.duration, art.duration);
+    endedRef.current = true;
+    p.onNextEpisode?.({ auto });
+  };
 
   const seekTo = (time: number) => {
     const art = artRef.current;
@@ -243,6 +300,7 @@ export function PlayerShell({
     }
     if (switchRequestedRef.current) return;
     switchRequestedRef.current = true;
+    recordPlaybackFail(currentSourceKey());
     hlsRef.current?.stopLoad();
     showHint(`${reason}，正在换源…`);
     // 还没开播就失败：位置是 0，换源后要接着的是本来打算恢复的位置
@@ -444,6 +502,7 @@ export function PlayerShell({
     playbackStartedRef.current = false;
     videoErrorRetryUsedRef.current = false;
     loadedKeyRef.current = propsRef.current.episodeKey;
+    loadStartedAtRef.current = resumeAt === undefined ? Date.now() : 0;
     startAtRef.current = null;
     restoreRef.current = resumeAt !== undefined ? Promise.resolve(resumeAt > 1 ? resumeAt : null) : null;
     setResumedFrom(null);
@@ -452,6 +511,8 @@ export function PlayerShell({
     endedRef.current = false;
     switchRequestedRef.current = false;
     skippedRef.current = new Set();
+    upNextDismissedRef.current = false;
+    setUpNext(null);
     autoPendingRef.current = null;
     setAutoLeft(null);
     setActiveSkip(null);
@@ -479,6 +540,7 @@ export function PlayerShell({
     restoreRef.current = null;
     startAtRef.current = null;
     loadedKeyRef.current = propsRef.current.episodeKey;
+    loadStartedAtRef.current = Date.now();
     recoveryRef.current = new PlaybackRecovery();
     endedRef.current = false;
     switchRequestedRef.current = false;
@@ -515,6 +577,8 @@ export function PlayerShell({
       hotkey: false,
       // 手机上左边的小锁：锁住后点画面不出控制栏、不响应手势，躺着看不怕误触
       lock: true,
+      // ArtPlayer 自带的左右滑拖进度关掉：滑动手势（进度 / 亮度 / 音量）由我们自己处理
+      gesture: false,
       theme: '#0a84ff',
       lang: navigator.language.toLowerCase().startsWith('zh') ? 'zh-cn' : 'en',
       moreVideoAttr: { crossOrigin: 'anonymous', playsInline: true },
@@ -681,6 +745,11 @@ export function PlayerShell({
       playbackStartedRef.current = true;
       clearWatchdogs();
       setShowPoster(false);
+      // 这个源这次起播花了多久、画面多高：以后排序和自动换源参考（playback-stats）
+      if (loadStartedAtRef.current) {
+        recordPlaybackStart(currentSourceKey(), Date.now() - loadStartedAtRef.current, art.video.videoHeight);
+        loadStartedAtRef.current = 0;
+      }
       // 从上次的位置接着播：提示一下，给个「从头播放」
       const startAt = startAtRef.current;
       if (startAt !== null || art.currentTime > 5) unfreezePicture(art.video);
@@ -759,6 +828,7 @@ export function PlayerShell({
         setAutoLeft(null);
       }
       setActiveSkip((prev) => (prev === active ? prev : active));
+      updateUpNext(t, d);
       const now = Date.now();
       // 还没真正开播时（hls.js 还没跳到上次的位置）不存：会用 0 盖掉上次看到的位置
       if (canReport() && now - lastSave > 5000) {
@@ -791,6 +861,8 @@ export function PlayerShell({
     art.on('video:waiting', () => {
       // 卡顿：预取临时让出带宽给播放
       getVideoPrefetcher().setThrottled(true);
+      // 播放中卡住（不是拖动进度引起的）：记一次卡顿
+      if (playbackStartedRef.current && !art.video.seeking) recordStall(currentSourceKey());
       // 已经开播后卡住太久（且不是暂停）→ 这个源不行了
       if (playbackStartedRef.current && !stallTimerRef.current) {
         const at = art.currentTime;
@@ -900,15 +972,45 @@ export function PlayerShell({
       return ratio < 1 / 3 ? -1 : ratio > 2 / 3 ? 1 : 0;
     };
 
+    // —— 滑动手势：左右滑拖进度（整个画面宽约 2 分钟，松手才跳），左半边上下滑调亮度、右半边调音量 ——
+    let swipe:
+      | { axis: 'x'; from: number; target: number }
+      | { axis: 'y'; side: 'left' | 'right'; from: number }
+      | null = null;
+    let swipeTracking = false;
+    /** 手指相对按下时移动了多少（按画面方向：网页全屏竖着拿时画面顺时针转了 90 度） */
+    const videoDelta = (t: Touch) => {
+      const rect = art.template.$player.getBoundingClientRect();
+      const dx = t.clientX - touchStart.x;
+      const dy = t.clientY - touchStart.y;
+      return art.isRotate
+        ? { dx: dy, dy: -dx, width: rect.height, height: rect.width }
+        : { dx, dy, width: rect.width, height: rect.height };
+    };
     const onTouchStart = (e: TouchEvent) => {
       // 已有触控在处理时忽略新手指：否则第二指会把 originalRate 捕获成加速后的值，松手后倍速卡住
-      if (e.touches.length > 1) { endHold(); return; }
+      if (e.touches.length > 1) { endHold(); swipeTracking = false; return; }
+      swipe = null;
+      swipeTracking = false;
       if (onChrome(e.target)) return;
       const t = e.touches[0];
       touchStart = { x: t.clientX, y: t.clientY, at: Date.now() };
+      swipeTracking = !art.isLock;
       startHold();
     };
+    const finishSwipe = () => {
+      if (!swipe) return false;
+      if (swipe.axis === 'x' && Math.abs(swipe.target - swipe.from) >= 1) seekTo(swipe.target);
+      swipe = null;
+      setGestureHint(null);
+      return true;
+    };
     const onTouchEnd = (e: TouchEvent) => {
+      swipeTracking = false;
+      if (finishSwipe()) {
+        e.preventDefault();
+        return;
+      }
       if (endHold()) {
         e.preventDefault();
         return;
@@ -928,11 +1030,46 @@ export function PlayerShell({
       }
     };
     const onTouchMove = (e: TouchEvent) => {
-      if (isLongPress) e.preventDefault();
-      else if (longPressTimer) {
-        // 手指在滑（拖进度、滚页面）：不是长按
-        const t = e.touches[0];
-        if (t && Math.hypot(t.clientX - touchStart.x, t.clientY - touchStart.y) > 12) endHold();
+      if (isLongPress) {
+        e.preventDefault();
+        return;
+      }
+      const t = e.touches[0];
+      if (!t) return;
+      if (longPressTimer && Math.hypot(t.clientX - touchStart.x, t.clientY - touchStart.y) > 12) {
+        // 手指在滑：不是长按
+        endHold();
+      }
+      if (!swipeTracking) return;
+      const { dx, dy, width, height } = videoDelta(t);
+      if (!swipe) {
+        if (Math.hypot(dx, dy) < 14) return;
+        const rect = art.template.$player.getBoundingClientRect();
+        const startRatio = art.isRotate ? (touchStart.y - rect.top) / rect.height : (touchStart.x - rect.left) / rect.width;
+        if (Math.abs(dx) > Math.abs(dy)) {
+          if (!(art.duration > 0)) { swipeTracking = false; return; }
+          swipe = { axis: 'x', from: art.currentTime, target: art.currentTime };
+        } else {
+          const side = startRatio < 0.5 ? 'left' : 'right';
+          swipe = { axis: 'y', side, from: side === 'left' ? brightnessRef.current : art.video.volume };
+        }
+      }
+      e.preventDefault();
+      if (swipe.axis === 'x') {
+        const d = art.duration || 0;
+        swipe.target = Math.max(0, Math.min(d - 1, swipe.from + (dx / width) * SWIPE_SEEK_SPAN));
+        const delta = Math.round(swipe.target - swipe.from);
+        setGestureHint(`${delta >= 0 ? '快进' : '快退'} ${Math.abs(delta)} 秒 · ${formatTime(swipe.target)} / ${formatTime(d)}`);
+      } else if (swipe.side === 'left') {
+        const v = Math.max(0.3, Math.min(1.5, swipe.from - (dy / height) * 1.2));
+        brightnessRef.current = v;
+        art.video.style.filter = Math.abs(v - 1) < 0.02 ? '' : `brightness(${v.toFixed(2)})`;
+        setGestureHint(`亮度 ${Math.round(v * 100)}%`);
+      } else {
+        const v = Math.max(0, Math.min(1, swipe.from - dy / height));
+        art.video.volume = v;
+        // iPhone 不让网页改音量（video.volume 只读，设了也还是 1）
+        setGestureHint(Math.abs(art.video.volume - v) > 0.01 ? '这台设备请用侧边的音量键' : `音量 ${Math.round(v * 100)}%`);
       }
     };
     const onMouseDown = (e: MouseEvent) => {
@@ -975,6 +1112,7 @@ export function PlayerShell({
         } catch { /* 忽略 */ }
       }
       document.removeEventListener('keydown', shortcuts);
+      swipe = null;
       window.removeEventListener('orientationchange', onOrientation);
       if (orientTimer) clearTimeout(orientTimer);
       document.documentElement.style.overflow = '';
@@ -1055,6 +1193,11 @@ export function PlayerShell({
                 {hint}
               </div>
             )}
+            {gestureHint && (
+              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-black/60 backdrop-blur-xl text-white text-sm font-medium px-4 py-2 rounded-2xl pointer-events-none whitespace-nowrap">
+                {gestureHint}
+              </div>
+            )}
             {holdFast && (
               <div className="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-1.5 bg-black/55 backdrop-blur-xl border border-white/10 text-white text-sm font-medium px-4 py-1.5 rounded-full pointer-events-none whitespace-nowrap">
                 <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6l8 6-8 6zM12 6l8 6-8 6z" fill="currentColor" /></svg>
@@ -1091,7 +1234,24 @@ export function PlayerShell({
           </>,
           overlayHost,
         )}
-      {activeSkip && !error && !overlay && overlayHost &&
+      {upNext && !error && !overlay && overlayHost &&
+        createPortal(
+          <UpNextCard
+            title={nextTitle}
+            countdown={upNext.left ?? undefined}
+            onPlay={() => {
+              setUpNext(null);
+              upNextDismissedRef.current = true;
+              playNextNow();
+            }}
+            onDismiss={() => {
+              setUpNext(null);
+              upNextDismissedRef.current = true;
+            }}
+          />,
+          overlayHost,
+        )}
+      {activeSkip && !upNext && !error && !overlay && overlayHost &&
         createPortal(
           <SkipButton
             label={
@@ -1175,6 +1335,47 @@ function seekIcon(dir: -1 | 1, step: number): string {
       ? '<path d="M12 5V2L7 6l5 4V7a6 6 0 1 1-6 6H4a8 8 0 1 0 8-8z" fill="currentColor"/>'
       : '<path d="M12 5V2l5 4-5 4V7a6 6 0 1 0 6 6h2a8 8 0 1 1-8-8z" fill="currentColor"/>';
   return `<svg width="26" height="26" viewBox="0 0 24 24" aria-hidden="true">${arrow}<text x="12" y="16.2" text-anchor="middle" font-size="7.2" font-weight="700" fill="currentColor" font-family="system-ui,sans-serif">${step}</text></svg>`;
+}
+
+/** 片尾开始时右下角的「下一集」卡（Netflix 式）：倒数条 + 立即播放 + 继续看片尾 */
+function UpNextCard({
+  title,
+  countdown,
+  onPlay,
+  onDismiss,
+}: {
+  title?: string;
+  countdown?: number;
+  onPlay: () => void;
+  onDismiss: () => void;
+}) {
+  return (
+    <div className="pointer-events-auto absolute right-3 bottom-16 sm:right-5 sm:bottom-20 w-56 sm:w-64 rounded-2xl border border-white/15 bg-black/70 backdrop-blur-xl text-white p-3 shadow-2xl space-y-2.5 animate-fade-in">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-[11px] text-white/60">{countdown !== undefined ? `${countdown} 秒后播放` : '接下来'}</p>
+          <p className="text-sm font-semibold truncate">下一集{title ? ` · ${title}` : ''}</p>
+        </div>
+        <button type="button" onClick={onDismiss} className="shrink-0 text-xs text-white/60 hover:text-white px-1 cursor-pointer" aria-label="继续看片尾">
+          继续看片尾
+        </button>
+      </div>
+      <button
+        type="button"
+        onClick={onPlay}
+        className="relative w-full overflow-hidden rounded-xl bg-white text-slate-950 text-sm font-semibold py-2 cursor-pointer"
+      >
+        {countdown !== undefined && (
+          <span
+            aria-hidden
+            className="absolute inset-y-0 left-0 bg-slate-300/70"
+            style={{ width: `${Math.round(((UP_NEXT_COUNTDOWN - countdown + 1) / UP_NEXT_COUNTDOWN) * 100)}%`, transition: 'width 1s linear' }}
+          />
+        )}
+        <span className="relative">▶ 播放下一集</span>
+      </button>
+    </div>
+  );
 }
 
 /** Netflix 式右下角「跳过片头 / 跳过片尾 / 下一集」按钮（挂在播放器里，全屏时也在） */

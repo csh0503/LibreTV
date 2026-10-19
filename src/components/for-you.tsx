@@ -14,6 +14,7 @@ import { rememberDoubanItem } from '@/lib/taste-store';
 import { canonicalTitle } from '@/lib/title-aliases';
 import type { DoubanItem, TitlePick } from '@/lib/types';
 import { useProfile } from '@/lib/use-profile';
+import { isNotInterested, useNotInterested } from '@/lib/not-interested';
 import { ShelfRow } from './home-rows';
 import { DoubanCard } from './video-card';
 
@@ -35,11 +36,14 @@ export function ForYouRows({ onPick }: { onPick: (title: string, pick?: TitlePic
     [profileId],
   );
 
+  // 标了「不再推荐」的：不算口味，也不再推荐
+  const notInterested = useNotInterested(profileId);
+
   const tasteInput = useMemo(() => {
     if (!history || !favorites || !tastes) return null;
     return {
       now: Date.now(),
-      watches: history.map((row) => ({
+      watches: history.filter((row) => !isNotInterested(notInterested, row.title)).map((row) => ({
         title: row.title,
         playbackPosition: row.playbackPosition,
         duration: row.duration,
@@ -67,7 +71,7 @@ export function ForYouRows({ onPick }: { onPick: (title: string, pick?: TitlePic
         channel: row.channel,
       })),
     };
-  }, [history, favorites, tastes]);
+  }, [history, favorites, tastes, notInterested]);
 
   const assembled = useMemo(() => {
     if (!tasteInput) return null;
@@ -176,7 +180,7 @@ export function ForYouRows({ onPick }: { onPick: (title: string, pick?: TitlePic
       userPool,
       anchorPool,
       anchorTitle: assembled.anchorTitle,
-      blocked: assembled.blocked,
+      blocked: [...assembled.blocked, ...notInterested],
       now: Date.now(),
       hideAdult: yellowFilter,
       channelOf: (item) => channels.get(item.id),
@@ -212,7 +216,7 @@ export function ForYouRows({ onPick }: { onPick: (title: string, pick?: TitlePic
   }
 
   if (singleFallback) {
-    const blockedSet = new Set(singleFallback.blocked.map((t) => canonicalTitle(t)).filter(Boolean));
+    const blockedSet = new Set([...singleFallback.blocked.map((t) => canonicalTitle(t)).filter(Boolean), ...notInterested]);
     const singleItems = anchorPool
       .filter((item) => {
         if (yellowFilter && (isAdultContent(item.title) || isAdultContent(item.genres) || isAdultContent(item.remarks))) {

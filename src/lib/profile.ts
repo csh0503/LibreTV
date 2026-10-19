@@ -2,6 +2,7 @@ import { db, type UserProfile } from './db';
 import {
   getActiveProfileId,
   readStoredProfileId,
+  rememberProfileChoice,
   registerProfileStarter,
   resetProfileReady,
   setProfileSnapshot,
@@ -220,6 +221,7 @@ export async function createProfile(name: string, pin?: string): Promise<void> {
   await db.profiles.add(profile);
   syncing = true;
   setProfileSnapshot({ id, name: profile.name });
+  rememberProfileChoice(id);
   applyPrefs(defaultPrefs());
   syncing = false;
   markProfileDirty();
@@ -227,16 +229,21 @@ export async function createProfile(name: string, pin?: string): Promise<void> {
 
 export async function switchProfile(id: string, pin?: string): Promise<void> {
   await startProfiles();
-  if (id === getActiveProfileId()) return;
   const next = await db.profiles.get(id);
   if (!next) throw new Error('设定档不存在');
+  // 先验密码再看是不是当前这个：以前选「正在用的」有密码的设定档时，随便输什么都能进
   if (next.pinHash && (await hashPin(id, pin || '')) !== next.pinHash) {
     throw new Error('密码不对');
+  }
+  if (id === getActiveProfileId()) {
+    rememberProfileChoice(id);
+    return;
   }
   const current = getActiveProfileId();
   if (current) await savePrefs(current, readPrefs());
   syncing = true;
   setProfileSnapshot({ id: next.id, name: next.name });
+  rememberProfileChoice(next.id);
   applyPrefs(prefsOf(next) ?? defaultPrefs());
   syncing = false;
 }

@@ -1,6 +1,7 @@
 import type { SearchResultItem } from './types';
 import type { SourceHealthEntry } from './store';
 import { qualityTier, type SourceQuality } from './stream-quality';
+import { loadPlaybackStats, playbackFailing, type PlaybackStats } from './playback-stats';
 
 /**
  * 同一部作品有好几个源时谁排前面（「播放」默认用第一个）：
@@ -8,7 +9,9 @@ import { qualityTier, type SourceQuality } from './stream-quality';
  * 2. 清晰度高的优先（1080P > 720P > 更低 / 还没测出）；
  * 3. 集数更新得多的优先（有的源落后好几集）；
  * 4. 插入广告少的优先（能识别的广告播放时会跳过，但少总比多好）；
- * 5. 上次搜索响应快的优先（没有测过的按 3 秒算）。
+ * 5. 起播快的优先：你在这台设备上真的播过的用实际起播耗时，没播过的用上次搜索的响应时间（没有测过的按 3 秒算）；
+ * 6. 你播的时候常卡的排后面。
+ * 「真的播过」的数据见 playback-stats：最近老播不了的算出错，质检还没测出清晰度的用播放时看到的。
  */
 const UNKNOWN_MS = 3000;
 
@@ -25,12 +28,16 @@ export function rankSources(
   items: SearchResultItem[],
   health: Record<string, SourceHealthEntry | undefined>,
   quality: Record<string, SourceQuality | undefined> = {},
+  playback: PlaybackStats = loadPlaybackStats(),
 ): SearchResultItem[] {
   const scored = items.map((item, index) => {
     const h = health[item.sourceKey];
     const q = quality[qualityKey(item)];
-    const tier = qualityTier(q);
-    const failing = (h ? (h.ok === false ? 1 : 0) + Math.min(h.failStreak ?? 0, 5) : 0) + (tier === 0 ? 1 : 0);
+    const p = playback[item.sourceKey];
+    // 质检没测出清晰度（没测 / 测不了），就用你播放时看到的
+    const tier = q?.ok && q.height ? qualityTier(q) : p?.height && (!q || q.ok) ? qualityTier({ key: '', ok: true, height: p.height }) : qualityTier(q);
+    const failing =
+      (h ? (h.ok === false ? 1 : 0) + Math.min(h.failStreak ?? 0, 5) : 0) + (tier === 0 ? 1 : 0) + (playbackFailing(p) ? 1 : 0);
     return {
       item,
       index,
@@ -39,7 +46,9 @@ export function rankSources(
       eps: episodeCount(item.remarks),
       // 新规则疑似的广告播放时还不跳过，比已跳过的更影响观看，加倍算
       ads: (q?.adSeconds ?? 0) + 2 * (q?.suspectSeconds ?? 0),
-      ms: h?.ok && h.ms ? h.ms : UNKNOWN_MS,
+      ms: p?.startMs ?? (h?.ok && h.ms ? h.ms : UNKNOWN_MS),
+      // 每次播放平均卡顿超过 1 次才算「常卡」，按整数档比，免得一点点差别就打乱顺序
+      stalls: Math.floor(p?.stalls ?? 0),
     };
   });
   return scored
@@ -48,6 +57,7 @@ export function rankSources(
       if (a.tier !== b.tier) return b.tier - a.tier;
       if (a.eps !== b.eps) return b.eps - a.eps;
       if (a.ads !== b.ads) return a.ads - b.ads;
+      if (a.stalls !== b.stalls) return a.stalls - b.stalls;
       if (a.ms !== b.ms) return a.ms - b.ms;
       return a.index - b.index;
     })
