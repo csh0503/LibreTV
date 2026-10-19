@@ -234,8 +234,9 @@ export const api = {
   /** 即将播出：接下来 7 天的未播出内容 */
   /** 作品的其他中文名（港台译名转简体等），找片源时当备用搜索词 */
   identity: (query: { title: string; year?: string; kind?: 'movie' | 'tv'; tmdb?: string }, signal?: AbortSignal) => {
-    // v=3：返回里加了作品资讯、带季数的片名改了认法，换个网址让边缘节点上的旧缓存不再命中
-    const sp = new URLSearchParams({ title: query.title, v: '3' });
+    // 认法改了就换版本号，让边缘节点上的旧缓存（s-maxage 一天）不再命中。
+    // v=4：别名算同名、片名对不上不再只靠年份认（「海贼王」+ 2025 认成《海贼王女英雄们的故事》）
+    const sp = new URLSearchParams({ title: query.title, v: '4' });
     if (query.year) sp.set('year', query.year);
     if (query.kind) sp.set('kind', query.kind);
     if (query.tmdb) sp.set('tmdb', query.tmdb);

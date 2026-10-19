@@ -31,6 +31,9 @@ export const viewport: Viewport = {
   themeColor: '#0a0a0c',
   width: 'device-width',
   initialScale: 1,
+  // 铺满整个屏幕（含刘海 / 灵动岛那一侧）：iPhone 横着网页全屏时视频才能铺满，不留一条空白；
+  // 平时的页面用 safe-area 内边距避开（globals.css）
+  viewportFit: 'cover',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

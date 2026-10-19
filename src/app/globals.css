@@ -190,6 +190,29 @@ h1, h2, h3 {
   50% { opacity: 0.55; box-shadow: 0 0 0 4px rgba(239, 68, 68, 0); }
 }
 
+/*
+ * viewport-fit=cover（layout.tsx）：页面铺到刘海 / 灵动岛那一侧。平时的页面左右留出安全边距；
+ * 网页全屏时视频铺满整个屏幕，控制栏和我们的按钮避开灵动岛和底部横条。
+ */
+body {
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+.art-video-player.art-fullscreen-web .art-bottom {
+  padding-left: max(10px, env(safe-area-inset-left)) !important;
+  padding-right: max(10px, env(safe-area-inset-right)) !important;
+  padding-bottom: env(safe-area-inset-bottom) !important;
+}
+.art-video-player.art-fullscreen-web .player-overlay-host {
+  top: env(safe-area-inset-top);
+  left: env(safe-area-inset-left);
+  right: env(safe-area-inset-right);
+  bottom: env(safe-area-inset-bottom);
+}
+.art-video-player.art-fullscreen-web .art-layer-lock {
+  margin-left: env(safe-area-inset-left);
+}
+
 /* 播放器控制栏：手机上放不下就收起音量（用实体键）、截图、画中画、网页全屏，留出快退 / 快进 / 倍速 / 设置 / 全屏 */
 @media (max-width: 520px) {
   .art-video-player .art-control-volume,

@@ -551,7 +551,7 @@ export function PlayerShell({
 
     const prefs = loadPlayerPrefs();
     // iPhone 没有「整个元素全屏」，ArtPlayer 的全屏会交给系统播放器，我们的「跳过片头」等按钮就看不到了。
-    // 这种设备上全屏键改成网页全屏（铺满屏幕，竖着拿时自动转成横向），按钮照样在画面上
+    // 这种设备上全屏键改成网页全屏（铺满屏幕，按手机当前的方向：竖着就竖屏全屏，转过来就是横屏），按钮照样在画面上
     const elementFullscreen = Boolean(
       document.fullscreenEnabled || (document as unknown as { webkitFullscreenEnabled?: boolean }).webkitFullscreenEnabled,
     );
@@ -568,7 +568,7 @@ export function PlayerShell({
       aspectRatio: true,
       fullscreen: elementFullscreen,
       fullscreenWeb: true,
-      autoOrientation: !elementFullscreen,
+      // 不自动把画面转成横向（用户：竖着按全屏不要直接变横屏）；想横屏就转手机，fixed 铺满会跟着变
       miniProgressBar: true,
       mutex: true,
       backdrop: true,
@@ -708,26 +708,16 @@ export function PlayerShell({
     // 浮层宿主挂在 ArtPlayer 的 $player 里：全屏 / 网页全屏的就是这个元素，
     // 挂在外面的话一全屏「跳过片头」、下一集倒数卡、提示就都看不到了
     const host = document.createElement('div');
-    host.className = 'pointer-events-none absolute inset-0 z-[160] flex items-center justify-center';
+    host.className = 'player-overlay-host pointer-events-none absolute inset-0 z-[160] flex items-center justify-center';
     art.template.$player.appendChild(host);
     setOverlayHost(host);
 
-    // 网页全屏：锁住页面滚动；手机转方向后重新铺一次（竖屏时 ArtPlayer 会把画面转成横向，转了手机要重算）
+    // 网页全屏：锁住页面滚动
     art.on('fullscreenWeb', (on: boolean) => {
       document.documentElement.style.overflow = on ? 'hidden' : '';
       const el = controlEl(art, 'fullscreen-page');
       if (el) el.innerHTML = fullscreenIcon(on);
     });
-    let orientTimer: ReturnType<typeof setTimeout> | null = null;
-    const onOrientation = () => {
-      if (orientTimer) clearTimeout(orientTimer);
-      orientTimer = setTimeout(() => {
-        if (elementFullscreen || !art.fullscreenWeb) return;
-        art.fullscreenWeb = false;
-        art.fullscreenWeb = true;
-      }, 300);
-    };
-    window.addEventListener('orientationchange', onOrientation);
 
     art.on('video:loadedmetadata', () => {
       // 换集（换了媒体源）后浏览器会把速度重置成默认值：按你选的速度来
@@ -1113,8 +1103,6 @@ export function PlayerShell({
       }
       document.removeEventListener('keydown', shortcuts);
       swipe = null;
-      window.removeEventListener('orientationchange', onOrientation);
-      if (orientTimer) clearTimeout(orientTimer);
       document.documentElement.style.overflow = '';
       document.removeEventListener('visibilitychange', saveOnHide);
       if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
