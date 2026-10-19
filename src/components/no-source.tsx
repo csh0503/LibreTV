@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, favoriteIdOf, toggleFavorite } from '@/lib/db';
+import { loadListUpdates, markListUnavailable, saveListUpdates } from '@/lib/watchlist-updates';
 import { useAppStore } from '@/lib/store';
 import type { TitlePick } from '@/lib/types';
 import { useProfile } from '@/lib/use-profile';
@@ -52,7 +53,9 @@ export function NoSourceNotice({
 
   const addToList = async () => {
     const on = await toggleFavorite({ localId, title: pick.title, pic: pick.cover, year: pick.year });
-    toast(on ? `已加入我的片单，之后在片单里点开会重新查找片源` : '已移出我的片单', 'success');
+    // 确实查过、没有：之后搜到了在首页片单上标「上线了」
+    if (on && answered > 0 && profileId) saveListUpdates(profileId, markListUnavailable(loadListUpdates(profileId), localId));
+    toast(on ? `已加入我的片单，有片源了会在首页片单上提醒你` : '已移出我的片单', 'success');
   };
 
   const actions = (

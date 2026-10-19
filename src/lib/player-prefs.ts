@@ -7,7 +7,9 @@ import { useSyncExternalStore } from 'react';
  * - autoSkip：进入片头 / 片尾后倒数 5 秒自动跳；关掉只显示「跳过片头 / 跳过片尾」按钮；
  * - audioSkip：后台比对声音找片头片尾（要下载别的集的开头结尾，省流量时可以关）；
  * - seekStep：快进 / 快退一次几秒（控制栏按钮和 ← → 键）；
- * - rate：播放速度，换集后保持。
+ * - rate：播放速度，换集后保持；
+ * - systemFullscreen：iPhone 这类没有网页元素全屏的设备，全屏键用系统播放器（真全屏、收起状态栏，
+ *   但网页上的「跳过片头」等按钮放不进去，自动跳过照常生效）；默认用网页全屏（按钮都在）。
  */
 
 export interface PlayerPrefs {
@@ -15,6 +17,7 @@ export interface PlayerPrefs {
   audioSkip: boolean;
   seekStep: number;
   rate: number;
+  systemFullscreen: boolean;
 }
 
 export const SEEK_STEPS = [5, 10, 15, 30] as const;
@@ -33,7 +36,7 @@ function defaults(): PlayerPrefs {
   } catch {
     // 读不到按默认
   }
-  return { autoSkip: false, audioSkip, seekStep: 10, rate: 1 };
+  return { autoSkip: false, audioSkip, seekStep: 10, rate: 1, systemFullscreen: false };
 }
 
 let cache: PlayerPrefs | null = null;
@@ -49,6 +52,7 @@ export function loadPlayerPrefs(): PlayerPrefs {
       audioSkip: typeof raw.audioSkip === 'boolean' ? raw.audioSkip : base.audioSkip,
       seekStep: (SEEK_STEPS as readonly number[]).includes(raw.seekStep as number) ? (raw.seekStep as number) : base.seekStep,
       rate: (PLAYBACK_RATES as readonly number[]).includes(raw.rate as number) ? (raw.rate as number) : base.rate,
+      systemFullscreen: typeof raw.systemFullscreen === 'boolean' ? raw.systemFullscreen : base.systemFullscreen,
     };
   } catch {
     cache = base;
@@ -74,7 +78,7 @@ function subscribe(listener: () => void) {
   };
 }
 
-const SERVER_PREFS: PlayerPrefs = { autoSkip: false, audioSkip: false, seekStep: 10, rate: 1 };
+const SERVER_PREFS: PlayerPrefs = { autoSkip: false, audioSkip: false, seekStep: 10, rate: 1, systemFullscreen: false };
 
 export function usePlayerPrefs(): PlayerPrefs {
   return useSyncExternalStore(subscribe, loadPlayerPrefs, () => SERVER_PREFS);

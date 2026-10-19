@@ -19,6 +19,7 @@ import { EmptyState, LoadingState, Spinner } from '@/components/states';
 import { SwitchSourceModal } from '@/components/switch-source';
 import { useAutoFailover, type FailoverState } from '@/components/use-auto-failover';
 import { useToast } from '@/components/toast';
+import { EpisodeProgressBar, episodeProgressHint, useEpisodeProgress } from '@/components/episode-progress';
 import { useAudioSkip } from '@/components/use-audio-skip';
 import { usePlayerPrefs } from '@/lib/player-prefs';
 import { diagnosePlaylist, formatDiagnosis } from '@/lib/ad-diagnose';
@@ -35,7 +36,6 @@ import { SmartImage } from '@/components/smart-image';
 import { useAuth } from '@/components/auth';
 import { resolveSource, useAppStore } from '@/lib/store';
 import {
-  clearProgress,
   progressKeyOf,
   saveProgress,
   updateHistoryProgress,
@@ -298,7 +298,9 @@ function WatchContent() {
   }, [endOverlay, goEpisode]);
 
   const handleEnded = useCallback(() => {
-    if (vodId) clearProgress(sourceKey, vodId, currentIndex).catch(() => {});
+    // 记成「看完了」（位置 = 总长）：选集按钮标看过；下次点这一集从头播
+    const total = positionRef.current.duration;
+    if (vodId && total > 0) saveProgress(sourceKey, vodId, currentIndex, total, total).catch(() => {});
     const decision = decideEpisodeEndAction({
       currentIndex,
       totalEpisodes: episodes.length,
@@ -348,6 +350,7 @@ function WatchContent() {
     return () => document.removeEventListener('keydown', handler);
   }, [currentIndex, episodes.length, goEpisode]);
 
+  const episodeProgress = useEpisodeProgress(sourceKey, vodId);
   const orderedEpisodes = reversed ? [...episodes].map((_, i) => episodes.length - 1 - i) : episodes.map((_, i) => i);
 
   if (!verified) {
@@ -568,6 +571,7 @@ function WatchContent() {
                     key={realIndex}
                     label={labelOf(realIndex)}
                     hint={episodeNames?.[realIndex]}
+                    progress={episodeProgress.get(realIndex)}
                     active={realIndex === currentIndex}
                     onClick={() => goEpisode(realIndex)}
                   />
@@ -873,7 +877,20 @@ function FailoverOverlayCard({
 }
 
 /** 集数按钮：激活时自动滚动进可视区（长剧列表） */
-function EpisodeButton({ label, hint, active, onClick }: { label: string; hint?: string; active: boolean; onClick: () => void }) {
+function EpisodeButton({
+  label,
+  hint,
+  progress,
+  active,
+  onClick,
+}: {
+  label: string;
+  hint?: string;
+  /** 看过的比例（看完是 1） */
+  progress?: number;
+  active: boolean;
+  onClick: () => void;
+}) {
   const ref = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -890,11 +907,12 @@ function EpisodeButton({ label, hint, active, onClick }: { label: string; hint?:
   return (
     <button
       ref={ref}
-      className={cn('btn btn-sm !px-1', active ? 'episode-active' : 'btn-ghost')}
-      title={hint && hint !== label ? `源标的集名：${hint}` : undefined}
+      className={cn('btn btn-sm !px-1 relative overflow-hidden', active ? 'episode-active' : 'btn-ghost', !active && progress === 1 && 'text-faint')}
+      title={[episodeProgressHint(progress), hint && hint !== label ? `源标的集名：${hint}` : ''].filter(Boolean).join(' · ') || undefined}
       onClick={onClick}
     >
       {label}
+      <EpisodeProgressBar ratio={progress} active={active} />
     </button>
   );
 }

@@ -12,7 +12,7 @@ import {
   getNextEpisodePrefetcher,
 } from '@/lib/video-prefetcher';
 import { loadCacheSettings } from '@/lib/video-cache';
-import { formatTime } from '@/lib/utils';
+import { cn, formatTime } from '@/lib/utils';
 import type { SkipSegment } from '@/lib/skip-segment';
 import { PLAYBACK_RATES, SEEK_STEPS, loadPlayerPrefs, savePlayerPrefs } from '@/lib/player-prefs';
 
@@ -26,6 +26,12 @@ import { PLAYBACK_RATES, SEEK_STEPS, loadPlayerPrefs, savePlayerPrefs } from '@/
  * 而不销毁重建。否则在「网页全屏（页面全屏）」下整实例重建会丢失全屏上下文、
  * 重建 <video> 元素，触发「黑屏有声」的渲染竞态。
  */
+
+/** 长按画面时的速度 */
+const LONG_PRESS_RATE = 2;
+
+// 手机上双击画面交给我们处理（左右快退快进、中间播放暂停），不用 ArtPlayer 自带的「双击暂停」
+Artplayer.MOBILE_DBCLICK_PLAY = false;
 
 /** 开了自动跳过时，进入片头 / 片尾后先倒数几秒再跳 */
 const AUTO_SKIP_SECONDS = 5;
@@ -140,6 +146,11 @@ export function PlayerShell({
   // 自动跳过的倒数：进入片头 / 片尾后先倒数几秒（按播放时间），到了才跳
   const autoPendingRef = useRef<{ kind: 'intro' | 'outro'; at: number } | null>(null);
   const [autoLeft, setAutoLeft] = useState<number | null>(null);
+  // 长按加速中
+  const [holdFast, setHoldFast] = useState(false);
+  // 双击快退 / 快进的提示：方向 + 这一串连点累计的秒数
+  const [tapSeekInfo, setTapSeekInfo] = useState<{ dir: -1 | 1; seconds: number; id: number } | null>(null);
+  const tapSeekTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 这一集要从哪里开始播（上次看到的位置）；开始播放后清掉
   const startAtRef = useRef<number | null>(null);
   // setupHls 要先异步查进度：旧的一轮查完时已经换了别的地址就作废
@@ -169,6 +180,18 @@ export function PlayerShell({
     const target = Math.max(0, Math.min(art.currentTime + dir * step, d > 0 ? d - 0.5 : Infinity));
     seekTo(target);
     showHint(`${dir < 0 ? '快退' : '快进'} ${step} 秒`);
+  };
+
+  /** 双击两侧：跳一步，提示里累计这一串连点一共跳了多少 */
+  const tapSeek = (dir: -1 | 1) => {
+    const art = artRef.current;
+    if (!art) return;
+    const step = loadPlayerPrefs().seekStep;
+    const d = art.duration || 0;
+    seekTo(Math.max(0, Math.min(art.currentTime + dir * step, d > 0 ? d - 0.5 : Infinity)));
+    setTapSeekInfo((prev) => ({ dir, seconds: prev && prev.dir === dir ? prev.seconds + step : step, id: Date.now() }));
+    if (tapSeekTimerRef.current) clearTimeout(tapSeekTimerRef.current);
+    tapSeekTimerRef.current = setTimeout(() => setTapSeekInfo(null), 700);
   };
 
   const setRate = (rate: number) => {
@@ -490,6 +513,8 @@ export function PlayerShell({
       playsInline: true,
       airplay: true,
       hotkey: false,
+      // 手机上左边的小锁：锁住后点画面不出控制栏、不响应手势，躺着看不怕误触
+      lock: true,
       theme: '#0a84ff',
       lang: navigator.language.toLowerCase().startsWith('zh') ? 'zh-cn' : 'en',
       moreVideoAttr: { crossOrigin: 'anonymous', playsInline: true },
@@ -532,7 +557,13 @@ export function PlayerShell({
                 tooltip: '全屏',
                 click: () => {
                   const current = artRef.current;
-                  if (current) current.fullscreenWeb = !current.fullscreenWeb;
+                  if (!current) return;
+                  const video = current.video as HTMLVideoElement & { webkitEnterFullscreen?: () => void };
+                  if (loadPlayerPrefs().systemFullscreen && !current.fullscreenWeb && video.webkitEnterFullscreen) {
+                    video.webkitEnterFullscreen();
+                    return;
+                  }
+                  current.fullscreenWeb = !current.fullscreenWeb;
                 },
               },
             ]),
@@ -564,6 +595,25 @@ export function PlayerShell({
             return next;
           },
         },
+        ...(elementFullscreen
+          ? []
+          : [
+              {
+                name: 'fullscreen-mode',
+                html: '全屏方式',
+                tooltip: prefs.systemFullscreen ? '系统播放器' : '网页全屏',
+                selector: [
+                  { html: '网页全屏（有跳过按钮）', value: 'page', default: !prefs.systemFullscreen },
+                  { html: '系统播放器（收起状态栏）', value: 'system', default: prefs.systemFullscreen },
+                ],
+                onSelect: (item: { html: string; value?: string }) => {
+                  const system = item.value === 'system';
+                  savePlayerPrefs({ systemFullscreen: system });
+                  showHint(system ? '全屏用系统播放器：没有跳过按钮，自动跳过照常' : '全屏用网页全屏：跳过按钮都在');
+                  return system ? '系统播放器' : '网页全屏';
+                },
+              },
+            ]),
         {
           name: 'seek-step',
           html: '快进快退',
@@ -633,6 +683,7 @@ export function PlayerShell({
       setShowPoster(false);
       // 从上次的位置接着播：提示一下，给个「从头播放」
       const startAt = startAtRef.current;
+      if (startAt !== null || art.currentTime > 5) unfreezePicture(art.video);
       if (startAt !== null) {
         startAtRef.current = null;
         if (Math.abs(art.currentTime - startAt) < 30) {
@@ -727,6 +778,7 @@ export function PlayerShell({
       }
     });
     art.on('video:seeked', () => {
+      if (!art.video.paused) unfreezePicture(art.video);
       ensurePrefetch(currentMediaUrlRef.current, art.currentTime);
     });
     art.on('video:pause', () => {
@@ -805,38 +857,98 @@ export function PlayerShell({
     };
     document.addEventListener('keydown', shortcuts);
 
-    // —— 移动端长按 3 倍速 ——
+    // —— 长按 2 倍速（手机按住画面 / 电脑按住鼠标），松开恢复；手机双击左右两侧快退 / 快进 ——
     let longPressTimer: ReturnType<typeof setTimeout> | null = null;
     let isLongPress = false;
     let originalRate = 1.0;
+    // 刚结束长按：吞掉松手后的那次 click（否则 ArtPlayer 会当成点一下暂停）
+    let swallowClickUntil = 0;
     const el = containerRef.current;
+    /** 按在控制栏、设置面板、锁、我们自己的按钮上：不算点画面 */
+    const onChrome = (target: EventTarget | null) =>
+      Boolean((target as HTMLElement | null)?.closest?.('.art-bottom, .art-settings, .art-contextmenus, .art-layer-lock, button'));
 
-    const onTouchStart = (e: TouchEvent) => {
-      if (art.video?.paused) return;
-      // 已有触控在处理时忽略新手指：否则第二指会把 originalRate 捕获成 3.0，
-      // 松手后倍速永久卡在 3x；旧定时器句柄也会被覆盖成无法清除的幽灵触发
-      if (isLongPress || longPressTimer) return;
-      // 控制栏 / 设置面板上的长按不触发倍速（按住进度条拖动、长按倍速菜单项会误触）
-      if ((e.target as HTMLElement).closest?.('.art-controls, .art-settings')) return;
+    const startHold = () => {
+      if (isLongPress || longPressTimer || art.video?.paused || art.isLock) return false;
       originalRate = art.video.playbackRate;
       longPressTimer = setTimeout(() => {
+        longPressTimer = null;
         if (art.video?.paused) return;
-        art.video.playbackRate = 3.0;
+        art.video.playbackRate = Math.max(LONG_PRESS_RATE, originalRate);
         isLongPress = true;
-        showHint('3 倍速');
+        setHoldFast(true);
       }, 500);
+      return true;
     };
-    const onTouchEnd = () => {
+    const endHold = () => {
       if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
-      if (isLongPress) {
-        art.video.playbackRate = originalRate;
-        isLongPress = false;
-        showHint(`${originalRate} 倍速`);
+      if (!isLongPress) return false;
+      art.video.playbackRate = originalRate;
+      isLongPress = false;
+      setHoldFast(false);
+      swallowClickUntil = Date.now() + 400;
+      return true;
+    };
+
+    // 双击：两次轻点间隔 < 300ms。左边三分之一快退、右边三分之一快进（连点累加），中间播放 / 暂停
+    let lastTap = { at: 0, zone: 0 };
+    let touchStart = { x: 0, y: 0, at: 0 };
+    const tapZone = (clientX: number) => {
+      const rect = art.template.$player.getBoundingClientRect();
+      // 网页全屏竖着拿时画面顺时针转了 90 度：画面的左边在屏幕上方
+      const ratio = art.isRotate ? (touchStart.y - rect.top) / rect.height : (clientX - rect.left) / rect.width;
+      return ratio < 1 / 3 ? -1 : ratio > 2 / 3 ? 1 : 0;
+    };
+
+    const onTouchStart = (e: TouchEvent) => {
+      // 已有触控在处理时忽略新手指：否则第二指会把 originalRate 捕获成加速后的值，松手后倍速卡住
+      if (e.touches.length > 1) { endHold(); return; }
+      if (onChrome(e.target)) return;
+      const t = e.touches[0];
+      touchStart = { x: t.clientX, y: t.clientY, at: Date.now() };
+      startHold();
+    };
+    const onTouchEnd = (e: TouchEvent) => {
+      if (endHold()) {
+        e.preventDefault();
+        return;
+      }
+      if (e.type !== 'touchend' || onChrome(e.target) || art.isLock) return;
+      const t = e.changedTouches[0];
+      if (!t || Date.now() - touchStart.at > 300 || Math.hypot(t.clientX - touchStart.x, t.clientY - touchStart.y) > 20) return;
+      const now = Date.now();
+      const zone = tapZone(t.clientX);
+      if (now - lastTap.at < 300 && zone === lastTap.zone) {
+        if (zone === 0) art.toggle();
+        else tapSeek(zone as -1 | 1);
+        // 连点：第三下、第四下接着累加
+        lastTap = { at: zone === 0 ? 0 : now, zone };
+      } else {
+        lastTap = { at: now, zone };
       }
     };
     const onTouchMove = (e: TouchEvent) => {
       if (isLongPress) e.preventDefault();
+      else if (longPressTimer) {
+        // 手指在滑（拖进度、滚页面）：不是长按
+        const t = e.touches[0];
+        if (t && Math.hypot(t.clientX - touchStart.x, t.clientY - touchStart.y) > 12) endHold();
+      }
     };
+    const onMouseDown = (e: MouseEvent) => {
+      if (e.button !== 0 || onChrome(e.target)) return;
+      startHold();
+    };
+    const onMouseUp = () => { endHold(); };
+    const onClickCapture = (e: MouseEvent) => {
+      if (Date.now() < swallowClickUntil) {
+        e.stopPropagation();
+        e.preventDefault();
+      }
+    };
+    el?.addEventListener('mousedown', onMouseDown);
+    window.addEventListener('mouseup', onMouseUp);
+    el?.addEventListener('click', onClickCapture, true);
     // ArtPlayer 的 contextmenu 组件只在桌面端初始化（移动端构造函数里跳过 init），
     // 长按倍速因而会连带呼出系统原生菜单/气泡。播放器表面没有可用的原生菜单，统一抑制
     const onContextMenu = (e: Event) => e.preventDefault();
@@ -869,6 +981,7 @@ export function PlayerShell({
       document.removeEventListener('visibilitychange', saveOnHide);
       if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
       if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current);
+      if (tapSeekTimerRef.current) clearTimeout(tapSeekTimerRef.current);
       setupSeqRef.current += 1;
       clearWatchdogs();
       el?.removeEventListener('touchstart', onTouchStart);
@@ -876,6 +989,10 @@ export function PlayerShell({
       el?.removeEventListener('touchcancel', onTouchEnd);
       el?.removeEventListener('touchmove', onTouchMove);
       el?.removeEventListener('contextmenu', onContextMenu);
+      el?.removeEventListener('mousedown', onMouseDown);
+      window.removeEventListener('mouseup', onMouseUp);
+      el?.removeEventListener('click', onClickCapture, true);
+      endHold();
       hlsRef.current?.destroy();
       hlsRef.current = null;
       recoveryRef.current?.dispose();
@@ -938,7 +1055,25 @@ export function PlayerShell({
                 {hint}
               </div>
             )}
-            {resumedFrom !== null && !hint && !error && !overlay && (
+            {holdFast && (
+              <div className="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-1.5 bg-black/55 backdrop-blur-xl border border-white/10 text-white text-sm font-medium px-4 py-1.5 rounded-full pointer-events-none whitespace-nowrap">
+                <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6l8 6-8 6zM12 6l8 6-8 6z" fill="currentColor" /></svg>
+                {LONG_PRESS_RATE} 倍速播放中
+              </div>
+            )}
+            {tapSeekInfo && (
+              <div
+                key={tapSeekInfo.id}
+                className={cn(
+                  'absolute top-1/2 -translate-y-1/2 flex flex-col items-center gap-1 px-5 py-3 rounded-full bg-black/45 text-white text-xs font-semibold pointer-events-none animate-fade-in',
+                  tapSeekInfo.dir < 0 ? 'left-[12%]' : 'right-[12%]',
+                )}
+              >
+                <span className="text-lg leading-none">{tapSeekInfo.dir < 0 ? '«' : '»'}</span>
+                {tapSeekInfo.seconds} 秒
+              </div>
+            )}
+            {resumedFrom !== null && !hint && !holdFast && !error && !overlay && (
               <div className="pointer-events-auto absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-3 bg-black/55 backdrop-blur-xl border border-white/10 text-white text-sm pl-4 pr-1.5 py-1.5 rounded-full animate-fade-in whitespace-nowrap">
                 <span>已从 {formatTime(resumedFrom)} 继续播放</span>
                 <button
@@ -985,6 +1120,34 @@ export function PlayerShell({
       {overlay && (overlayHost ? createPortal(overlay, overlayHost) : overlay)}
     </div>
   );
+}
+
+/**
+ * 「黑屏有声」自救：从中间开始播（续播 / 拖动后），Safari 偶尔声音出来了画面却一直黑，
+ * 一全屏（重新排版）画面就回来。开播后先强制重绘一次；1.5 秒内还没有新画面送出来，
+ * 就原地往后挪一点点让解码器重新出画面。没有画面的音频流（videoWidth 为 0）不管。
+ */
+function unfreezePicture(video: HTMLVideoElement) {
+  const rvfc = (video as HTMLVideoElement & { requestVideoFrameCallback?: (cb: () => void) => number }).requestVideoFrameCallback;
+  requestAnimationFrame(() => {
+    video.style.transform = 'translateZ(0)';
+    requestAnimationFrame(() => {
+      video.style.transform = '';
+    });
+  });
+  if (typeof rvfc !== 'function') return;
+  let presented = false;
+  rvfc.call(video, () => {
+    presented = true;
+  });
+  setTimeout(() => {
+    if (presented || video.paused || video.seeking || !video.videoWidth || document.visibilityState !== 'visible') return;
+    // 挪一下本身会触发 seeked → 又进来：10 秒内只挪一次，真的坏了的视频轨不会一直跳
+    const last = Number(video.dataset.unfreezeAt || 0);
+    if (Date.now() - last < 10_000) return;
+    video.dataset.unfreezeAt = String(Date.now());
+    video.currentTime = video.currentTime + 0.05;
+  }, 1500);
 }
 
 /** 控制栏上某个按钮的元素（ArtPlayer 按 name 存在 controls.cache 里） */

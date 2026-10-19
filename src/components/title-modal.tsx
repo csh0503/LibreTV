@@ -5,12 +5,14 @@ import { useRouter } from 'next/navigation';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { recallAlias } from '@/lib/alias-memory';
 import { addSearchHistory, db, favoriteIdOf, toggleFavorite } from '@/lib/db';
+import { loadListUpdates, markListUnavailable, saveListUpdates } from '@/lib/watchlist-updates';
 import { describeContinueWatching } from '@/lib/home-features';
 import { resolveSource, useAppStore } from '@/lib/store';
 import { aggregateResults, canonicalTitle, matchingGroups, rankGroupsForPick, type AggregatedGroup } from '@/lib/title-aliases';
 import type { SearchResultItem, TitlePick } from '@/lib/types';
 import { useProfile } from '@/lib/use-profile';
 import { buildWatchUrl, cn, formatTime } from '@/lib/utils';
+import { EpisodeProgressBar, episodeProgressHint, useEpisodeProgress } from '@/components/episode-progress';
 import { Icon } from './icon';
 import { SmartImage } from './smart-image';
 import { Spinner } from './states';
@@ -166,6 +168,8 @@ function TitleModalBody({
 
   const toggleList = async () => {
     const on = await toggleFavorite({ localId, title: pick.title, pic: pick.cover, year: pick.year });
+    // 搜完了一部都没有：之后搜到了在首页片单上标「上线了」
+    if (on && nothingFound && profileId) saveListUpdates(profileId, markListUnavailable(loadListUpdates(profileId), localId));
     toast(on ? `已加入我的片单` : '已移出我的片单', 'success');
   };
 
@@ -205,6 +209,7 @@ function TitleModalBody({
   // 集数按列表位置算；源给的集名不可靠，只在鼠标停留时提示
   const episodeNames = episodesQuery.data?.episodeNames;
   const [reversed, setReversed] = useState(false);
+  const episodeProgress = useEpisodeProgress(current?.sourceKey, current?.vodId);
   const watchedIndex =
     history && current && history.sourceKey === current.sourceKey && history.vodId === current.vodId
       ? history.episodeIndex
@@ -443,18 +448,24 @@ function TitleModalBody({
                       type="button"
                       onClick={() => playEpisode(i)}
                       className={cn(
-                        'h-9 rounded-xl text-[13px] font-medium transition-colors',
+                        'relative overflow-hidden h-9 rounded-xl text-[13px] font-medium transition-colors',
                         i === watchedIndex
                           ? 'bg-content text-page'
-                          : 'bg-content/[0.06] text-content/80 hover:bg-content/[0.12] hover:text-content',
+                          : episodeProgress.get(i) === 1
+                            ? 'bg-content/[0.06] text-faint hover:bg-content/[0.12] hover:text-content'
+                            : 'bg-content/[0.06] text-content/80 hover:bg-content/[0.12] hover:text-content',
                       )}
                       title={
-                        [i === watchedIndex ? '上次看到这一集' : '', episodeNames?.[i] && episodeNames[i] !== String(i + 1) ? `源标的集名：${episodeNames[i]}` : '']
+                        [
+                          i === watchedIndex ? '上次看到这一集' : episodeProgressHint(episodeProgress.get(i)),
+                          episodeNames?.[i] && episodeNames[i] !== String(i + 1) ? `源标的集名：${episodeNames[i]}` : '',
+                        ]
                           .filter(Boolean)
                           .join(' · ') || undefined
                       }
                     >
                       {i + 1}
+                      <EpisodeProgressBar ratio={episodeProgress.get(i)} active={i === watchedIndex} />
                     </button>
                   ))}
                 </div>

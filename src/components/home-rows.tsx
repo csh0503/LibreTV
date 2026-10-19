@@ -21,7 +21,17 @@ import type { HotListId } from '@/lib/douban-weekly';
 import type { UpcomingItem, UpcomingKind } from '@/lib/upcoming';
 import { resolveSource, useAppStore } from '@/lib/store';
 import { rememberDoubanItem } from '@/lib/taste-store';
-import { canonicalTitle } from '@/lib/title-aliases';
+import { aggregateResults, canonicalTitle, hasTitleMatch } from '@/lib/title-aliases';
+import {
+  acknowledgeListUpdate,
+  listUpdateBadge,
+  loadListUpdates,
+  needsListSearch,
+  recordListCheck,
+  saveListUpdates,
+  type ListUpdates,
+} from '@/lib/watchlist-updates';
+import { useSelectedSources } from './use-source-search';
 import type { DoubanItem, SearchResultItem, TitlePick } from '@/lib/types';
 import { useProfile } from '@/lib/use-profile';
 import { buildWatchUrl, cn, formatTime } from '@/lib/utils';
@@ -814,9 +824,98 @@ export function MyListRow({
     );
   }, [favorites, yellowFilter]);
 
+  // —— 更新提醒：绑了片源的看集数有没有变多；没绑的（从「暂无片源」加的）整站搜一下上线了没有 ——
+  const selectedSources = useSelectedSources();
+  const [updates, setUpdates] = useState<ListUpdates>({});
+  useEffect(() => setUpdates(loadListUpdates(profileId)), [profileId]);
+  const commitUpdates = useCallback(
+    (fn: (prev: ListUpdates) => ListUpdates) =>
+      setUpdates((prev) => {
+        const next = fn(prev);
+        if (next !== prev) saveListUpdates(profileId, next);
+        return next;
+      }),
+    [profileId],
+  );
+  const boundTargets = useMemo(
+    () =>
+      visible
+        .slice(0, 12)
+        .map((row) => ({
+          row,
+          source: row.sourceKey && row.vodId ? resolveSource({ customAPIs, envSources }, row.sourceKey, { url: row.sourceUrl }) : undefined,
+        }))
+        .filter((t) => t.source),
+    [visible, customAPIs, envSources],
+  );
+  const boundQueries = useQueries({
+    queries: boundTargets.map(({ row, source }) => ({
+      // 和「继续观看」共用缓存键形状，同一部不会请求两次
+      queryKey: ['continue-watching-detail', row.sourceKey, row.vodId, source?.url],
+      queryFn: ({ signal }: { signal: AbortSignal }) => api.detail(row.vodId!, source!, signal),
+      staleTime: 15 * 60_000,
+      retry: 0,
+    })),
+  });
+  // 整站搜索比较重：最多 4 部，6 小时内搜过的不再搜（结果记在本机）
+  const searchTargets = useMemo(
+    () =>
+      visible
+        .filter((row) => !(row.sourceKey && row.vodId))
+        .filter((row) => needsListSearch(loadListUpdates(profileId)[row.localId]))
+        .slice(0, 4),
+    // updates 变了（搜完记下了）就重新算，搜过的会掉出去
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [visible, profileId, updates],
+  );
+  const searchQueries = useQueries({
+    queries: searchTargets.map((row) => ({
+      queryKey: ['list-availability', row.title, selectedSources.map((src) => src.key).join(',')],
+      queryFn: async ({ signal }: { signal: AbortSignal }) => {
+        const res = await api.search(row.title, selectedSources, yellowFilter, { signal });
+        // 一个源都没回应时说不准，不记
+        if (res.list.length === 0 && res.failures.length >= selectedSources.length) return null;
+        return hasTitleMatch(aggregateResults(res.list, row.title), row.title);
+      },
+      enabled: selectedSources.length > 0,
+      staleTime: 30 * 60_000,
+      retry: 0,
+    })),
+  });
+  const boundCounts = boundQueries.map((q) => q.data?.episodes?.length).join(',');
+  const searchResults = searchQueries.map((q) => String(q.data)).join(',');
+  useEffect(() => {
+    commitUpdates((prev) => {
+      let next = prev;
+      boundTargets.forEach(({ row }, i) => {
+        const eps = boundQueries[i]?.data?.episodes?.length;
+        if (eps && next[row.localId]?.now.eps !== eps) next = recordListCheck(next, row.localId, { eps });
+      });
+      searchTargets.forEach((row, i) => {
+        const avail = searchQueries[i]?.data;
+        if (typeof avail === 'boolean') next = recordListCheck(next, row.localId, { avail });
+      });
+      return next;
+    });
+    // 只在查询结果变化时记
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [boundCounts, searchResults]);
+
+  const badgeOf = (row: FavoriteEntry) => {
+    const key = canonicalTitle(row.title);
+    const watchedTotal = Math.max(
+      0,
+      ...(history ?? [])
+        .filter((h) => (row.sourceKey && h.sourceKey === row.sourceKey && h.vodId === row.vodId) || (key && canonicalTitle(h.title) === key))
+        .map((h) => h.totalEpisodes || 0),
+    );
+    return listUpdateBadge(updates[row.localId], watchedTotal);
+  };
+
   if (!profileId || visible.length === 0) return null;
 
   const handleOpenFavorite = (row: FavoriteEntry) => {
+    commitUpdates((prev) => acknowledgeListUpdate(prev, row.localId));
     // 1. 若有同片观看记录，优先直接续播
     const key = canonicalTitle(row.title);
     const hist = (history ?? [])
@@ -874,7 +973,8 @@ export function MyListRow({
 
   return (
     <ShelfRow title="我的片单">
-      {visible.map((row) => (
+      {/* 有更新的排前面 */}
+      {[...visible].sort((a, b) => Number(Boolean(badgeOf(b))) - Number(Boolean(badgeOf(a)))).map((row) => (
         <div key={row.id} className="w-[7.25rem] sm:w-32 shrink-0">
           <DoubanCard
             item={{
@@ -882,6 +982,10 @@ export function MyListRow({
               cover: row.pic || '',
               rating: row.tasteRating,
               meta: [row.year, row.tasteArea].filter(Boolean).join(' · ') || '已收藏',
+              badge: (() => {
+                const text = badgeOf(row);
+                return text ? { text, tone: 'ok' as const } : undefined;
+              })(),
               favorite: {
                 localId: row.localId,
                 title: row.title,
