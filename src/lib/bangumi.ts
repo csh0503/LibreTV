@@ -53,6 +53,7 @@ export function subjectToItem(subject: BangumiSubject): DoubanItem | undefined {
   const popularity = (subject.collection?.doing ?? 0) + (subject.rating?.total ?? 0) * 2;
   return {
     id: String(subject.id),
+    origin: 'bangumi',
     title,
     cover,
     rating: score > 0 ? score.toFixed(1) : undefined,
@@ -163,7 +164,7 @@ export async function fetchBangumiCatalog(opts: {
   pageSize: number;
   status?: 'airing' | 'ended';
 }): Promise<DoubanItem[]> {
-  const cacheKey = `bgm-catalog:${opts.tags.join(',')}:${opts.sort}:${opts.score}:${opts.status ?? 'all'}:${opts.pageStart}:${opts.pageSize}`;
+  const cacheKey = `bgm-catalog:v2:${opts.tags.join(',')}:${opts.sort}:${opts.score}:${opts.status ?? 'all'}:${opts.pageStart}:${opts.pageSize}`;
   const cached = getCache<DoubanItem[]>(cacheKey);
   if (cached) return cached;
 
@@ -191,6 +192,10 @@ export async function fetchBangumiCatalog(opts: {
   const seasonCutoff = new Date(Date.now() + 8 * 3600_000 - 120 * 86_400_000).toISOString().slice(0, 10);
   if (opts.status === 'airing') yearFilter = [...(yearFilter ?? []), `>=${seasonCutoff}`];
   if (opts.status === 'ended') yearFilter = [...(yearFilter ?? []), `<${seasonCutoff}`];
+  // 「热度」= 现在热：Bangumi 的 heat 是历来收藏数（命运石之门、EVA 永远在前），没选年份时只要近一年开播的
+  if (opts.sort === 'U' && !yearFilter && opts.status !== 'ended') {
+    yearFilter = [`>=${new Date(Date.now() - 400 * 86_400_000).toISOString().slice(0, 10)}`];
+  }
 
   const [minScoreStr] = opts.score.split(',');
   const minScore = parseFloat(minScoreStr || '0');

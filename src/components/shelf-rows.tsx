@@ -13,6 +13,7 @@ import { rememberDoubanItem } from '@/lib/taste-store';
 import type { DoubanItem, TitlePick } from '@/lib/types';
 import { ShelfRow } from './home-rows';
 import { DoubanCard } from './video-card';
+import { statusBadgeOf } from '@/lib/catalog-meta';
 
 /** 一次放出几行；滚动到底部再放下一批，避免首屏同时打十几个上游 */
 const BATCH = 3;
@@ -156,12 +157,7 @@ export function ShelfRows({
                       pic: item.cover,
                       year: item.year,
                     },
-                    badge:
-                      item.status === 'airing'
-                        ? { text: item.remarks && /更新至/.test(item.remarks) ? item.remarks.replace('更新至', '更至') : '连载', tone: 'warn' }
-                        : item.status === 'ended'
-                          ? { text: '完结', tone: 'ok' }
-                          : undefined,
+                    badge: statusBadgeOf(item),
                   }}
                   onClick={() => {
                     void rememberDoubanItem(item, def.channel);

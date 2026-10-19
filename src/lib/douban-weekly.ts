@@ -4,6 +4,7 @@ import { fetchUpstream, getCache, setCache } from './fetch-utils';
 import { WorkGroups, workKeys } from './work-identity';
 import { enrichBiliItems } from './bili-season';
 import { canonicalTitle } from './title-aliases';
+import { mergeWorkMeta } from './catalog-meta';
 import { fetchBangumiHotAiring } from './bangumi';
 import { dropUnreleased, fetchUnreleasedIndex } from './unreleased';
 
@@ -212,6 +213,7 @@ export function baiduTeleplayToItem(raw: BaiduTeleplayRaw, index: number): Douba
   if (!raw.title || !raw.cover) return undefined;
   const item: DoubanItem = {
     id: `baidu_${index}`,
+    origin: 'other',
     title: raw.title,
     cover: raw.cover,
     isTv: true,
@@ -644,6 +646,8 @@ export function fuseMultiSourceRankings(
     platformScores: Map<RankPlatform, number>;
     bestTitleScore: number;
     firstSeenRank: number;
+    /** 各来源原始条目：最后合成统一资料（评分 / 年份 / 题材 / 地区） */
+    members: DoubanItem[];
   }
 
   // 同一系列（不分季）才合并；同名的不同作品（集数和开播年份对不上、电影 vs 剧集）各算各的
@@ -677,9 +681,11 @@ export function fuseMultiSourceRankings(
           platformScores: new Map([[platform, contribution]]),
           bestTitleScore: titleScore,
           firstSeenRank: rank,
+          members: [item],
         });
         return;
       }
+      existing.members.push(item);
       existing.platformScores.set(platform, Math.max(existing.platformScores.get(platform) ?? 0, contribution));
       if (rank < existing.firstSeenRank) existing.firstSeenRank = rank;
       const prev = existing.item;
@@ -710,6 +716,13 @@ export function fuseMultiSourceRankings(
         originalTitle: prev.originalTitle || item.originalTitle,
       };
     });
+  }
+
+  // 统一资料：只拿和最后选定的那一季同名的成员合（榜单把不同季算一部，第一季的评分 / 年份不能算到第三季头上）
+  for (const entry of works.order) {
+    const chosen = canonicalTitle(entry.item.title);
+    const sameSeason = entry.members.filter((m) => canonicalTitle(m.title) === chosen);
+    entry.item = mergeWorkMeta(entry.item, sameSeason.length > 0 ? sameSeason : entry.members);
   }
 
   const ranked = works.order.map((entry) => {

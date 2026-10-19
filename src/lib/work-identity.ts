@@ -1,3 +1,4 @@
+import { mergeWorkMeta } from './catalog-meta';
 import type { DoubanItem } from './types';
 import { canonicalTitle } from './title-aliases';
 
@@ -135,6 +136,38 @@ interface Work<T> {
 }
 
 /**
+ * 同一部作品、各站译名不一样（「躲在超市后门抽烟的两人」/「在超市后门吸烟的二人」、「相反的你和我」/「正相反的你与我」），
+ * 又没有原名可对：按字重合度认。条件很严，宁可漏不可错——
+ * 两边都至少 5 个字、长度相差不到四分之一、短的那个至少四分之三的字在长的里面出现、
+ * 数字（季数、续作编号）一样、两边都有来源自己给的年份且同一年、电影 / 剧集一致。
+ */
+export function similarTitles(a: DoubanItem, b: DoubanItem): boolean {
+  const ta = canonicalTitle(a.title);
+  const tb = canonicalTitle(b.title);
+  if (!ta || !tb || ta === tb) return false;
+  const [short, long] = ta.length <= tb.length ? [ta, tb] : [tb, ta];
+  if (short.length < 5 || short.length / long.length < 0.75) return false;
+  // 只看阿拉伯数字和罗马数字（「两人」「二人」的两 / 二不是编号；第N季交给 seasonKey）
+  const digits = (t: string) => (t.match(/[0-9]+|[ⅡⅢⅣⅤⅥⅦⅧⅨⅩ]/g) ?? []).join(',');
+  if (digits(ta) !== digits(tb)) return false;
+  if (seasonKey(a.title) !== seasonKey(b.title)) return false;
+  const ya = firmYear(a);
+  const yb = firmYear(b);
+  if (!ya || !yb || ya !== yb) return false;
+  if (a.isTv === undefined || b.isTv === undefined || a.isTv !== b.isTv) return false;
+  const pool = [...long];
+  let hit = 0;
+  for (const ch of short) {
+    const at = pool.indexOf(ch);
+    if (at >= 0) {
+      hit++;
+      pool.splice(at, 1);
+    }
+  }
+  return hit / short.length >= 0.75;
+}
+
+/**
  * 按比对键分桶、桶里再按 sameWork 分成不同作品。
  * 一部作品记下所有并进来的条目，新条目要和每一条都对得上才并进去（不会 A≈B、B≈C 就把 A、C 拼一起）；
  * 并进来的条目带来的新键（另一种译名、原名）也记到这部作品上，后面用那个名字来的也能对上。
@@ -143,6 +176,7 @@ export class WorkGroups<T> {
   private readonly index = new Map<string, Work<T>[]>();
   /** 按第一次出现的顺序 */
   readonly order: T[] = [];
+  private readonly works: Work<T>[] = [];
 
   constructor(private readonly opts: { acrossSeasons?: boolean; nowYear?: number } = {}) {}
 
@@ -165,11 +199,22 @@ export class WorkGroups<T> {
         return hit.value;
       }
     }
+    // 键都对不上：最后看是不是译名不同的同一部（见 similarTitles）
+    if (!this.opts.acrossSeasons) {
+      for (const work of this.works) {
+        if (work.members.some((m) => similarTitles(m, item)) && work.members.every((m) => sameWork(m, item, this.opts))) {
+          work.members.push(item);
+          this.register(work, list);
+          return work.value;
+        }
+      }
+    }
     return undefined;
   }
 
   add(keys: string | string[], item: DoubanItem, value: T): void {
     const work: Work<T> = { members: [item], value };
+    this.works.push(work);
     this.register(work, typeof keys === 'string' ? [keys] : keys);
     this.order.push(value);
   }
@@ -180,28 +225,28 @@ export class WorkGroups<T> {
  * 片库翻页（各来源分页不同，同一部会落在不同页）和首页每一行的出口都过一遍。
  */
 export function mergeSameWorks(items: DoubanItem[]): DoubanItem[] {
-  const works = new WorkGroups<{ item: DoubanItem }>();
+  const works = new WorkGroups<{ item: DoubanItem; members: DoubanItem[] }>();
   for (const item of items) {
     const keys = workKeys(canonicalTitle(item.title), item);
     if (keys.length === 0) {
-      works.add([`id:${item.id}`], item, { item });
+      works.add([`id:${item.id}`], item, { item, members: [item] });
       continue;
     }
     const slot = works.find(keys, item);
     if (!slot) {
-      works.add(keys, item, { item });
+      works.add(keys, item, { item, members: [item] });
       continue;
     }
+    slot.members.push(item);
     const prev = slot.item;
     slot.item = {
       ...prev,
       cover: prev.cover || item.cover,
       backdrop: prev.backdrop || item.backdrop,
-      rating: prev.rating || item.rating,
-      year: prev.year && !prev.yearSoft ? prev.year : item.year || prev.year,
       originalTitle: prev.originalTitle || item.originalTitle,
       remarks: prev.remarks || item.remarks,
     };
   }
-  return works.order.map((slot) => slot.item);
+  // 评分 / 年份 / 题材 / 地区按全站统一的规则合（见 catalog-meta）
+  return works.order.map((slot) => (slot.members.length > 1 ? mergeWorkMeta(slot.item, slot.members) : slot.item));
 }

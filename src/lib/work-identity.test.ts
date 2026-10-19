@@ -135,7 +135,9 @@ describe('跨页合并', () => {
       item({ id: 'bgm_615835', title: '炒翻天', year: '2026', genres: '动画 美食' }),
     ]);
     expect(out.map((i) => i.title)).toEqual(['黄泉的使者', '别的', '炒翻天']);
-    expect(out[0].rating).toBe('7.9');
+    // Bangumi 7.9 按全站统一口径校正（Bangumi 打分比豆瓣严）
+    expect(out[0].rating).toBe('8.4');
+    expect(out[0].ratings).toEqual({ bangumi: 7.9 });
   });
 });
 

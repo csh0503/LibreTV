@@ -28,6 +28,7 @@ import { mergeSameWorks } from '@/lib/work-identity';
 import { absorbHallTaste, rememberDoubanItem } from '@/lib/taste-store';
 import { AdultLibrary } from './adult-library';
 import { useLoadMore } from './use-load-more';
+import { statusBadgeOf } from '@/lib/catalog-meta';
 
 /** 细线图标（1.6 描边，跟着文字颜色），不再用 emoji */
 const CHANNEL_ICON_PATHS: Record<Exclude<HallChannel, 'adult'>, string> = {
@@ -435,12 +436,7 @@ function toCard(item: DoubanItem) {
       pic: item.cover,
       year: item.year,
     },
-    badge:
-      item.status === 'ended'
-        ? { text: '完结', tone: 'ok' as const }
-        : item.status === 'airing'
-          ? { text: '连载', tone: 'warn' as const }
-          : undefined,
+    badge: statusBadgeOf(item),
   };
 }
 

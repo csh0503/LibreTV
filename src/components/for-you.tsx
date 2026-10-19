@@ -18,6 +18,7 @@ import { useProfile } from '@/lib/use-profile';
 import { isNotInterested, useNotInterested } from '@/lib/not-interested';
 import { ShelfRow } from './home-rows';
 import { DoubanCard } from './video-card';
+import { statusBadgeOf } from '@/lib/catalog-meta';
 
 /** 首页口味排：「为你推荐」与「因为你看过《某某》」。 */
 export function ForYouRows({ onPick }: { onPick: (title: string, pick?: TitlePick) => void }) {
@@ -347,12 +348,7 @@ function TasteRow({
                 pic: item.cover,
                 year: item.year,
               },
-              badge:
-                item.status === 'ended'
-                  ? { text: '完结', tone: 'ok' }
-                  : item.status === 'airing'
-                    ? { text: '连载', tone: 'warn' }
-                    : undefined,
+              badge: statusBadgeOf(item),
             }}
             onClick={() => onOpen(item)}
             onFavorite={() => onFavorite(item)}

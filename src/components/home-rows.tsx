@@ -40,6 +40,7 @@ import { SmartImage } from './smart-image';
 import { useToast } from './toast';
 import { DoubanCard } from './video-card';
 import { useIdleReady } from './use-idle-ready';
+import { statusBadgeOf } from '@/lib/catalog-meta';
 
 /**
  * 通用横向滚动货架（Netflix 风格）：
@@ -1171,11 +1172,7 @@ function TopTenCard({
         text: item.remarks.length > 10 ? item.remarks.slice(0, 10) : item.remarks,
         tone: (item.status === 'ended' ? 'ok' : 'warn') as 'ok' | 'warn',
       }
-    : item.status === 'ended'
-      ? { text: '完结', tone: 'ok' as const }
-      : item.status === 'airing'
-        ? { text: '连载', tone: 'warn' as const }
-        : undefined;
+    : statusBadgeOf(item);
 
   return (
     <div className="shrink-0 flex items-end group pl-1">

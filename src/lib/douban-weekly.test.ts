@@ -68,6 +68,7 @@ describe('baiduTeleplayToItem', () => {
   it('用序号生成 id，不输出 rating，支持热度与简介可选映射', () => {
     expect(baiduTeleplayToItem({ title: '某剧', cover: 'https://img.example/1.jpg' }, 3)).toEqual({
       id: 'baidu_3',
+      origin: 'other',
       title: '某剧',
       cover: 'https://img.example/1.jpg',
       isTv: true,

@@ -24,6 +24,7 @@ import { qualityLabel, type SourceQuality } from '@/lib/stream-quality';
 import { QualityTag, useSourceQuality } from './use-source-quality';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/client-api';
+import { describeRatings } from '@/lib/catalog-meta';
 
 /** 一组里最多直接列出几个源，其余折叠成「+N」 */
 const SOURCES_PER_GROUP = 6;
@@ -253,7 +254,7 @@ function TitleModalBody({
       ? pick.remarks && /更新至/.test(pick.remarks)
         ? pick.remarks
         : '连载中'
-      : pick.status === 'ended'
+      : pick.status === 'ended' && !pick.statusGuessed
         ? '已完结'
         : undefined;
 
@@ -347,7 +348,11 @@ function TitleModalBody({
         <div className="p-5 sm:p-6 pt-3 space-y-5">
           {(pick.rating || meta || statusBadge) && (
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm">
-              {pick.rating && <span className="text-rating font-semibold">★ {pick.rating}</span>}
+              {pick.rating && (
+                <span className="text-rating font-semibold" title={describeRatings(pick.ratings)}>
+                  ★ {pick.rating}
+                </span>
+              )}
               {meta && <span className="text-muted">{meta}</span>}
               {statusBadge && (
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-content/[0.08] text-[11px] font-medium text-content">
@@ -612,7 +617,8 @@ function TitleSynopsisAndInfo({
     ['主演', shortList(vi?.actor, 6) || info?.cast.join(' / ') || ''],
     ['地区', vi?.area || pick.area || ''],
     ['播出平台', info?.networks.join(' / ') || ''],
-    ['评分', [pick.rating && `综合 ${pick.rating}`, info?.rating && `TMDB ${info.rating}${info.votes ? `（${info.votes} 人）` : ''}`].filter(Boolean).join(' · ')],
+    // 综合分是各站按偏差校正后的加权平均，后面列出各站原始分
+    ['评分', [pick.rating && `综合 ${pick.rating}`, describeRatings(pick.ratings), !pick.ratings?.tmdb && info?.rating && `TMDB ${info.rating}${info.votes ? `（${info.votes} 人）` : ''}`].filter(Boolean).join(' · ')],
   ].filter((r): r is [string, string] => Boolean(r[1]));
 
   if (!synopsis && rows.length === 0) return null;

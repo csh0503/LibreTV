@@ -21,6 +21,7 @@ describe('subjectToItem', () => {
     });
     expect(item).toEqual({
       id: '123',
+      origin: 'bangumi',
       title: '中文名',
       originalTitle: 'Original Name',
       cover: 'https://lain.bgm.tv/pic/cover/l/1.jpg',
@@ -61,7 +62,7 @@ describe('groupCalendarByWeekday', () => {
       { weekday: { id: 7 }, items: [] },
     ]);
     expect(Object.keys(days).sort()).toEqual(['1', '7']);
-    expect(days[1]).toEqual([{ id: '10', title: '甲', cover: 'c1', rating: '7.0', isTv: true, originalTitle: 'a' }]);
+    expect(days[1]).toEqual([{ id: '10', origin: 'bangumi', title: '甲', cover: 'c1', rating: '7.0', isTv: true, originalTitle: 'a' }]);
     expect(days[7]).toEqual([]);
   });
 });

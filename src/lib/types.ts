@@ -81,15 +81,19 @@ export type TitlePick = Pick<DoubanItem, 'title'> &
       | 'backdrop'
       | 'year'
       | 'rating'
+      | 'ratings'
       | 'area'
       | 'genres'
       | 'isTv'
       | 'status'
+      | 'statusGuessed'
       | 'remarks'
       | 'subtitle'
       | 'sourceLabel'
     >
   >;
+
+export type RatingSource = 'douban' | 'bangumi' | 'tmdb' | 'bili';
 
 export interface DoubanItem {
   id: string;
@@ -98,6 +102,10 @@ export interface DoubanItem {
   /** 横版海报/剧照（如 B站 ss_horizontal_cover 或 TMDB backdrop），首页大图优先采用 */
   backdrop?: string;
   rating?: string;
+  /** 这条资料来自哪个站（编号看不出来时才标，比如 Bangumi 放送表的纯数字编号、百度热播） */
+  origin?: RatingSource | 'other';
+  /** 各站的原始评分（融合后才有）：rating 是按各站偏差校正后的加权平均 */
+  ratings?: Partial<Record<RatingSource, number>>;
   isTv?: boolean;
   /** 上映年，豆瓣 card_subtitle 或 year 字段 */
   year?: string;

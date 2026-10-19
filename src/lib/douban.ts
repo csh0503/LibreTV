@@ -6,7 +6,9 @@ import { fetchBangumiCalendar, fetchBangumiCatalog } from './bangumi';
 import { canonicalTitle } from './title-aliases';
 import { WorkGroups, workKeys } from './work-identity';
 import { disambiguateTitles } from './title-disambiguate';
-import { getTmdbApiKey, timeProbe, TMDB_CODE_TO_AREA, TMDB_ID_TO_GENRE, type UpstreamProbe } from './douban-weekly';
+import { freshnessFactor, getTmdbApiKey, timeProbe, TMDB_CODE_TO_AREA, TMDB_ID_TO_GENRE, type UpstreamProbe } from './douban-weekly';
+import { enrichBiliItems } from './bili-season';
+import { mergeWorkMeta } from './catalog-meta';
 import { dropUnreleased, fetchUnreleasedIndex } from './unreleased';
 
 /**
@@ -110,7 +112,9 @@ async function fetchBiliSeasonIndex(query: DoubanFetchQuery): Promise<DoubanItem
   const page = Math.floor(query.pageStart / Math.max(1, query.pageSize)) + 1;
   // order: 2=播放量/热度, 4=最高评分, 0=更新时间
   // 「连载中」按热度排时前面多是挂着「连载」标记的老番，改按最近更新排，当季在更新的才会在前面
-  const order = query.sort === 'S' ? 4 : query.sort === 'R' || query.status === 'airing' ? 0 : 2;
+  // 「热度」要的是现在热：B站片库的「播放量」是历来总播放（《三国演义》《全职猎人》排最前），
+  // 剧集类改按最近更新取（当季在更新的在前），再交给融合时的时效系数排；电影没有「更新」，仍按播放量、靠时效系数压后
+  const order = query.sort === 'S' ? 4 : query.sort === 'R' || query.status === 'airing' || (query.sort === 'U' && query.kind === 'tv') ? 0 : 2;
   const yearTag = tags.find((t) => /^\d{4}$/.test(t));
   const yearParam = yearTag ? `&year=${encodeURIComponent(`[${yearTag},${Number(yearTag) + 1})`)}` : '';
 
@@ -322,23 +326,62 @@ async function fetchTmdbDiscoverCatalog(query: DoubanFetchQuery): Promise<Douban
  * - 以豆瓣 + Bangumi v0 + B站官方索引 + TMDB 交叉合并；
  * - 同名条目自动互补：优先采信 B站/Bangumi 的准确完结/连载状态（解决豆瓣滞后标为「更新至N集」的问题），并合并横版剧照、评分、年代地区。
  */
-export function fuseCatalogItems(lists: DoubanItem[][], limit: number): DoubanItem[] {
+/** 片库融合的排序方式：U 现在热门 / S 高分 / R 最新 */
+export interface CatalogRank {
+  sort: 'U' | 'S' | 'R';
+  /** 每份列表的权重，和 lists 一一对应（缺省 1） */
+  weights?: number[];
+  /** 「历来热门」的来源（B站片库、Bangumi）：热度排序、没选年份时，一年多没新集 / 不是近一年的作品不放 */
+  freshOnly?: boolean[];
+  /** 没选年份：只有这时才按时效筛 */
+  anyYear?: boolean;
+  now?: number;
+}
+
+/** 名次融合常数：一页只有二三十条，K 取小一点，名次差距才有区分度 */
+const CATALOG_RRF_K = 8;
+
+function ratingOf(item: DoubanItem): number {
+  const r = parseFloat(item.rating ?? '');
+  return Number.isFinite(r) && r > 0 ? r : 0;
+}
+
+/**
+ * 多源片库融合与元数据互补：
+ * - 以豆瓣 + Bangumi v0 + B站官方索引 + TMDB 交叉合并；
+ * - 同名条目自动互补：优先采信 B站/Bangumi 的准确完结/连载状态（解决豆瓣滞后标为「更新至N集」的问题），并合并横版剧照、评分、年代地区。
+ * - 给了 rank 就按分数排（不再是各来源轮流各取一条）：
+ *   热度 = Σ 来源权重 / (K + 名次)（几个平台同时推的在前）× 时效系数（freshnessFactor）× 一点评分系数；
+ *   评分 = 可比较的评分（B站打折）；最新 = 年份 / 最新一集日期。
+ */
+export function fuseCatalogItems(lists: DoubanItem[][], limit: number, rank?: CatalogRank): DoubanItem[] {
   // 同名不一定是同一部（见 work-identity）：片名一样还要编号、年份、集数对得上才合并
-  const works = new WorkGroups<{ item: DoubanItem }>();
+  const works = new WorkGroups<{ item: DoubanItem; members: DoubanItem[]; score: number; seq: number; stale: boolean }>();
   const maxLen = Math.max(0, ...lists.map((l) => l.length));
+  let seq = 0;
 
   for (let i = 0; i < maxLen; i++) {
-    for (const list of lists) {
+    for (let li = 0; li < lists.length; li++) {
+      const list = lists[li];
       const item = list[i];
       if (!item) continue;
       const key = canonicalTitle(item.title);
       if (!key) continue;
+      const vote = (rank?.weights?.[li] ?? 1) / (CATALOG_RRF_K + i);
+      // 只出现在「历来热门」来源、又不是近期的：热度排序时不要
+      const stale = Boolean(
+        rank && rank.sort === 'U' && rank.anyYear && rank.freshOnly?.[li] && freshnessFactor(item, rank.now) < 0.65,
+      );
 
       const keys = workKeys(key, item);
       const slot = works.find(keys, item);
       if (!slot) {
-        works.add(keys, item, { item: { ...item } });
+        works.add(keys, item, { item: { ...item }, members: [item], score: vote, seq: seq++, stale });
       } else {
+        slot.score += vote;
+        slot.members.push(item);
+        // 别的来源也有它：不算只靠「历来热门」撑着
+        if (!stale) slot.stale = false;
         const existing = slot.item;
         // 有依据的状态（完结标记、更新说明、首播日期）优先于只按年份猜的；
         // 都有依据时 ended 优先——B站 / Bangumi 的完结会覆盖豆瓣滞后的「更新至N集」
@@ -369,6 +412,7 @@ export function fuseCatalogItems(lists: DoubanItem[][], limit: number): DoubanIt
           area: existing.area || item.area,
           genres: existing.genres || item.genres,
           originalTitle: existing.originalTitle || item.originalTitle,
+          lastAired: [existing.lastAired, item.lastAired].filter(Boolean).sort().pop(),
           status: authoritativeEnded,
           statusGuessed: guessed || undefined,
           remarks: authoritativeRemarks,
@@ -377,12 +421,34 @@ export function fuseCatalogItems(lists: DoubanItem[][], limit: number): DoubanIt
     }
   }
 
-  return works.order.slice(0, limit).map((slot) => slot.item);
+  // 评分 / 年份 / 题材 / 地区：各成员合成一份（不再是谁先到用谁的）
+  for (const slot of works.order) slot.item = mergeWorkMeta(slot.item, slot.members);
+
+  if (!rank) return works.order.slice(0, limit).map((slot) => slot.item);
+
+  const now = rank.now ?? Date.now();
+  const scored = works.order.filter((slot) => !slot.stale);
+  const keyOf = (slot: (typeof scored)[number]): number => {
+    if (rank.sort === 'S') return ratingOf(slot.item) * 10 + slot.score;
+    if (rank.sort === 'R') {
+      const date = slot.item.lastAired ? Date.parse(slot.item.lastAired) / 86_400_000 / 366 : NaN;
+      const year = slot.item.yearSoft ? NaN : parseInt(slot.item.year ?? '', 10);
+      return (Number.isFinite(date) ? 1970 + date : Number.isFinite(year) ? year + 0.5 : 0) * 10 + slot.score;
+    }
+    const r = parseFloat(slot.item.rating ?? '');
+    const ratingNudge = Number.isFinite(r) && r > 0 ? 1 + 0.06 * Math.max(-1, Math.min(1, (ratingOf(slot.item) - 7) / 2)) : 1;
+    return slot.score * freshnessFactor(slot.item, now) * ratingNudge;
+  };
+  return scored
+    .map((slot) => ({ slot, key: keyOf(slot) }))
+    .sort((a, b) => b.key - a.key || a.slot.seq - b.slot.seq)
+    .slice(0, limit)
+    .map(({ slot }) => slot.item);
 }
 
 export async function fetchDoubanRecommend(query: DoubanFetchQuery): Promise<{ items: DoubanItem[]; total?: number }> {
   const hasTmdb = Boolean(getTmdbApiKey());
-  const cacheKey = `douban:v4:${hasTmdb ? 'tmdb:' : ''}${query.kind}:${query.tags.join(',')}:${query.sort}:${query.score}:${query.status ?? 'all'}:${query.pageStart}:${query.pageSize}`;
+  const cacheKey = `douban:v5:${hasTmdb ? 'tmdb:' : ''}${query.kind}:${query.tags.join(',')}:${query.sort}:${query.score}:${query.status ?? 'all'}:${query.pageStart}:${query.pageSize}`;
   const cached = getCache<{ items: DoubanItem[]; total?: number }>(cacheKey);
   if (cached) return cached;
 
@@ -405,7 +471,8 @@ export async function fetchDoubanRecommend(query: DoubanFetchQuery): Promise<{ i
           status: query.status,
         })
       : Promise.resolve([]),
-    fetchBiliSeasonIndex(query),
+    // B站片库条目不带年份、最新一集日期：逐季补上（每季缓存 12 小时），年份交叉核对、时效排序都要用
+    fetchBiliSeasonIndex(query).then((items) => enrichBiliItems(items, query.pageSize * 2)),
     fetchTmdbDiscoverCatalog(query),
     fetchUnreleasedIndex(),
   ]);
@@ -445,11 +512,21 @@ export async function fetchDoubanRecommend(query: DoubanFetchQuery): Promise<{ i
     }
   }
 
+  // 各来源的权重和角色：豆瓣「近期热门」是现在热的主信号；Bangumi / B站片库的「热度」是历来累计的，
+  // 热度排序时只留近一年的（见 CatalogRank.freshOnly）
   const candidateLists: DoubanItem[][] = [];
-  if (doubanItems && doubanItems.length > 0) candidateLists.push(doubanItems);
-  if (bgmRes.status === 'fulfilled' && bgmRes.value.length > 0) candidateLists.push(bgmRes.value);
-  if (biliRes.status === 'fulfilled' && biliRes.value.length > 0) candidateLists.push(biliRes.value);
-  if (tmdbRes.status === 'fulfilled' && tmdbRes.value.length > 0) candidateLists.push(tmdbRes.value);
+  const weights: number[] = [];
+  const freshOnly: boolean[] = [];
+  const push = (list: DoubanItem[], weight: number, fresh: boolean) => {
+    candidateLists.push(list);
+    weights.push(weight);
+    freshOnly.push(fresh);
+  };
+  if (doubanItems && doubanItems.length > 0) push(doubanItems, 1, false);
+  if (bgmRes.status === 'fulfilled' && bgmRes.value.length > 0) push(bgmRes.value, 0.85, true);
+  // B站片库在「热度」下取的是「最近更新」，不是人气：只当弱信号（冷门的儿童番、泡面番不该排到前面）
+  if (biliRes.status === 'fulfilled' && biliRes.value.length > 0) push(biliRes.value, query.sort === 'U' ? 0.4 : 0.75, true);
+  if (tmdbRes.status === 'fulfilled' && tmdbRes.value.length > 0) push(tmdbRes.value, 0.8, false);
 
   if (candidateLists.length === 0 && !doubanItems) {
     throw new Error('片库推荐获取失败');
@@ -460,7 +537,8 @@ export async function fetchDoubanRecommend(query: DoubanFetchQuery): Promise<{ i
     candidateLists[candidateLists.indexOf(tmdbRes.value)] = await disambiguateTitles(tmdbRes.value);
   }
   // 豆瓣 / B站不过滤未播出的年番和定档作品，用开播日期索引统一剔除，它们只在「即将播出」里出现
-  const fused = fuseCatalogItems(candidateLists, query.pageSize * 2);
+  const anyYear = !query.tags.some((t) => /^\d{4}$|年代$/.test(t));
+  const fused = fuseCatalogItems(candidateLists, query.pageSize * 2, { sort: query.sort, weights, freshOnly, anyYear });
   const items = unreleasedRes.status === 'fulfilled' ? dropUnreleased(fused, unreleasedRes.value) : fused;
   const payload = { items, total };
   setCache(cacheKey, payload, CACHE_TTL);
