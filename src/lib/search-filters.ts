@@ -143,13 +143,13 @@ function seasonOf(rest: string): number | undefined {
  * 和搜索词有多像（越小越靠前），第二个数是季数：
  * 0 这部剧本身的各季（片名就是搜索词 = 第一季，搜索词 + 第N季），按季数排；
  * 1 以搜索词开头的其他作品（剧场版、总集篇、「死灭回游」这种副标题）；
- * 2 配音版（粤语 / 国语）、只是包含搜索词的；3 电影解说、预告和其他（别名搜到的等）。
+ * 2 配音版（粤语 / 国语）、只是包含搜索词的；3 其他（别名搜到的等）；4 电影解说、预告（看不了正片，放最后）。
  * 没给搜索词时都算 0。
  */
 export function relevanceRank(name: string, typeName: string | undefined, query?: string): [number, number] {
   const q = query ? normalizeTitle(query) : '';
   if (!q) return [0, 0];
-  if (COMMENTARY.test(`${name} ${typeName ?? ''}`)) return [3, 0];
+  if (COMMENTARY.test(`${name} ${typeName ?? ''}`)) return [4, 0];
   const n = normalizeTitle(name);
   if (DUBBED.test(name)) return [n.includes(q) ? 2 : 3, 0];
   if (n.startsWith(q)) {

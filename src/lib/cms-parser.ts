@@ -1,3 +1,4 @@
+import { T2S_FROM, T2S_TO } from './t2s-chars';
 import type { SearchResultItem, VideoDetail } from './types';
 
 /**
@@ -255,9 +256,29 @@ export function filterAdultResults<
  * 归一化标题/关键词：去空白、标点与符号，转小写。
  * 用于跨标点差异匹配（源站存「摔跤吧!爸爸」而用户搜「摔跤吧！爸爸」）。
  */
+let t2s: Map<string, string> | null = null;
+
+/** 繁体字逐字转简体（「龍之家族」→「龙之家族」）：只用于比较片名，不用于显示 */
+export function toSimplifiedChars(s: string): string {
+  if (!t2s) {
+    t2s = new Map();
+    const from = [...T2S_FROM];
+    const to = [...T2S_TO];
+    from.forEach((ch, i) => t2s!.set(ch, to[i]));
+  }
+  let out = '';
+  for (const ch of s) out += t2s.get(ch) ?? ch;
+  return out;
+}
+
+/**
+ * 片名比较用的规范形式：所有「是不是同一部」「和搜索词像不像」都经过这里。
+ * - 繁体转简体（搜「龍之家族」也认「龙之家族」）；
+ * - NFKC：全角数字字母（「坠落２」）和半角当成一样；
+ * - 去掉空白、标点、符号和不可见方向符（「神探之痕迹‎」），大小写不分。
+ */
 export function normalizeTitle(s: string): string {
-  // NFKC：全角数字字母（「坠落２」）和半角当成一样；\p{Cf}：片名里夹着的不可见方向符（「神探之痕迹‎」）
-  return s.normalize('NFKC').toLowerCase().replace(/[\s\p{P}\p{S}\p{Cf}]+/gu, '');
+  return toSimplifiedChars(s.normalize('NFKC')).toLowerCase().replace(/[\s\p{P}\p{S}\p{Cf}]+/gu, '');
 }
 
 /**

@@ -19,6 +19,7 @@ import { buildWatchUrl, cn, formatRelativeTime, formatTime } from '@/lib/utils';
 import { useToast } from './toast';
 import { resolveSource, useAppStore } from '@/lib/store';
 import { useProfile } from '@/lib/use-profile';
+import { normalizeTitle } from '@/lib/cms-parser';
 import { markNotInterested, unmarkNotInterested } from '@/lib/not-interested';
 
 const rowKey = (item: HistoryEntry) => `${item.sourceKey}_${item.vodId}`;
@@ -103,11 +104,12 @@ export function HistoryPanel({ open, onClose }: { open: boolean; onClose: () => 
     });
   };
 
-  const keyword = query.trim().toLowerCase();
+  // 不分繁简、全半角、标点：搜「龍之家族」也找得到「龙之家族」
+  const keyword = normalizeTitle(query.trim());
   const visible = useMemo(() => {
     const all = history ?? [];
     if (!keyword) return all.slice(0, VISIBLE_LIMIT);
-    return all.filter((h) => h.title.toLowerCase().includes(keyword));
+    return all.filter((h) => normalizeTitle(h.title).includes(keyword));
   }, [history, keyword]);
 
   const total = history?.length ?? 0;

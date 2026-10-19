@@ -1,3 +1,5 @@
+import { toSimplifiedChars } from './cms-parser';
+
 /**
  * 首页「货架」目录（Netflix 式的行）。
  * 只放元数据，客户端和服务端共用；每一行的取数逻辑在 shelves.ts。
@@ -39,7 +41,8 @@ const SEASON_SUFFIX = /\s*(?:第[一二三四五六七八九十百\d]+[季部篇
 const TV_TRAILING_NUMBER = /(?<=[一-龥])\s*[2-9]\d?$/;
 
 export function shelfDedupeKey(title: string, isTv = false): string {
-  let t = title.trim();
+  // 繁体 / 全角写法和简体半角算同一部
+  let t = toSimplifiedChars(title.normalize('NFKC')).trim();
   // 「第三季 Part 2」这类叠在一起的后缀逐层剥掉
   for (let prev = ''; prev !== t; ) {
     prev = t;

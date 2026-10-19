@@ -148,3 +148,13 @@ describe('撞名的新作换成更具体的名字', () => {
     expect(specificTitle('航海王', ['航海王剧场版：红发歌姬特别加长纪念版'])).toBeUndefined();
   });
 });
+
+describe('有的站写「第一季」、有的不写', () => {
+  it('「龙之家族第一季」和「龙之家族」（同年）合成一张卡；繁体也一样', () => {
+    const fused = fuseCatalogItems(
+      [[item({ id: '1', title: '龙之家族', year: '2022' })], [item({ id: 'tmdb_2', title: '龍之家族 第一季', year: '2022' })]],
+      10,
+    );
+    expect(fused).toHaveLength(1);
+  });
+});

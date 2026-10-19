@@ -1,4 +1,4 @@
-import { normalizeTitle } from './cms-parser';
+import { normalizeTitle, toSimplifiedChars } from './cms-parser';
 import type { SearchResultItem } from './types';
 
 /**
@@ -100,6 +100,9 @@ export function expandSearchTerms(wd: string): string[] {
   if (!raw) return [];
   const normalized = normalizeTitle(raw);
   const terms: string[] = [raw];
+  // 繁体搜索词（「龍之家族」）：片源站片名几乎都是简体，再用简体写法搜一次
+  const simplified = toSimplifiedChars(raw);
+  if (simplified !== raw) terms.push(simplified);
 
   for (const group of ALIAS_GROUPS) {
     const matched = group.find((alias) => {
@@ -338,11 +341,15 @@ function groupMatcher(title: string, strict = false): (g: AggregatedGroup) => bo
  * - 去除所有空格与全半角标点（使「Q版！黑色五叶草」与「Q版! 黑色五叶草」、「黑色五叶草 第二季」与「黑色五叶草第二季」合一）
  */
 export function buildGroupTitleKey(rawName: string, query?: string, commentary = false): string {
-  const aliased = replaceAliasInTitle(rawName, query);
+  // 先统一成简体半角：繁体片名（「龍之家族」）和简体的分到同一组，别名表也才对得上
+  const plain = (s: string) => toSimplifiedChars(s.normalize('NFKC'));
+  const aliased = replaceAliasInTitle(plain(rawName), query ? plain(query) : undefined);
   const normalized = aliased
     .toLowerCase()
     .replace(/第(0?[1-9]|10)([季部篇期])/g, (_, num: string, unit: string) => `第${CN_DIGITS[num] || num}${unit}`)
     .replace(/(?:剧场版|电影版)(?=\s*[:：·\-]?\s*[\u4e00-\u9fa5a-z0-9]{2,})/g, '')
+    // 结尾的「第一季」：有的站写、有的站不写（「龙之家族」/「龙之家族第一季」），同一部（年份不同的照样分开）
+    .replace(/\s*(?:第一[季部]|第1[季部]|season\s*1)\s*$/i, '')
     .replace(/[\s·:：!！?？,，.。、~～\-—_《》〈〉()（）]+/g, '');
   const baseKey = canonicalTitle(normalized) || normalized;
   return commentary ? `__commentary__:${baseKey}` : baseKey;
@@ -354,7 +361,8 @@ function pickBestDisplayName(items: SearchResultItem[], query?: string): string 
   if (searched) {
     const queryKey = buildGroupTitleKey(searched, searched, false);
     const firstKey = buildGroupTitleKey(aliasedNames[0] || '', searched, isCommentaryItem(items[0]));
-    if (queryKey === firstKey) return searched;
+    // 用你搜的写法（搜「海贼王」就显示海贼王）；繁体搜索词转成简体，和片源站的片名一致
+    if (queryKey === firstKey) return toSimplifiedChars(searched);
   }
   const freq = new Map<string, number>();
   for (const name of aliasedNames) {

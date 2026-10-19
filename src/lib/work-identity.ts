@@ -120,6 +120,12 @@ export function workKeys(primary: string, item: DoubanItem): string[] {
   if (orig && orig !== primary) keys.push(`orig:${orig}`);
   const season = seasonKey(item.title);
   if (season) keys.push(season);
+  // 「龙之家族第一季」和「龙之家族」：有的站写第一季、有的不写
+  const s1 = item.title.normalize('NFKC').match(/^(.+?)\s*(?:第一[季部]|第1[季部]|season\s*1)\s*$/i);
+  if (s1) {
+    const base = canonicalTitle(s1[1]);
+    if (base && !keys.includes(base)) keys.push(base);
+  }
   return keys;
 }
 

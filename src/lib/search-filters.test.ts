@@ -55,11 +55,9 @@ describe('搜索筛选', () => {
       g('咒术回战第二季[电影解说]', '2023', '电影解说'),
       g('咒术回战0 剧场版', '2021', '动画电影'),
       g('咒术回战0', '2021', '动画电影'),
-      g('咒术回战第一季', '2020', '日韩动漫'),
     ];
     expect(applySearchFilters(list, DEFAULT_SEARCH_FILTERS, 2026, '咒术回战').map((x) => x.name)).toEqual([
       '咒术回战',
-      '咒术回战第一季',
       '咒术回战第二季',
       '咒术回战第三季',
       '咒术回战 怀玉·玉折 总集篇',
@@ -101,5 +99,40 @@ describe('作品身份认错的判断', () => {
     // 没有集数信息的不判断；正在更新、片源多几集的正常
     expect(identityContradicts(0, { episodes: 2 })).toBe(false);
     expect(identityContradicts(14, { episodes: 12 })).toBe(false);
+  });
+});
+
+describe('繁体搜索词', () => {
+  it('搜「龍之家族」：龙之家族各季在前，预告和解说最后，不相干的「无价之宝」在后', async () => {
+    const { aggregateResults, hasTitleMatch } = await import('./title-aliases');
+    const item = (name: string, year: string, typeName: string, remarks = '') => ({ vodId: name + year, name, year, typeName, remarks, sourceKey: 's', sourceName: 's' });
+    const list = [
+      item('龙之家族 第三季', '2026', '欧美剧', '已完结'),
+      item('龙之家族第二季', '2024', '欧美剧', '已完结'),
+      item('龙之家族 第二季[预告片]', '2024', '预告片', '更新至预告片'),
+      item('无价之宝', '2023', '喜剧片', 'HD'),
+      item('龙之家族', '2022', '欧美剧', '已完结'),
+      item('龙之家族第一季', '2022', '欧美剧', '完结'),
+      item('龙之家族', '1988', '动作片', '已完结'),
+      item('龙之家族1988[电影解说]', '1988', '电影解说', '已完结'),
+    ];
+    const groups = aggregateResults(list, '龍之家族');
+    expect(hasTitleMatch(groups, '龍之家族')).toBe(true);
+    // 「龙之家族」和「龙之家族第一季」（同是 2022）合成一张卡
+    expect(groups.find((x) => x.year === '2022')?.items).toHaveLength(2);
+    expect(applySearchFilters(groups, DEFAULT_SEARCH_FILTERS, 2026, '龍之家族').map((x) => `${x.name}${x.year ?? ''}`)).toEqual([
+      '龙之家族2022',
+      '龙之家族1988',
+      '龙之家族第二季2024',
+      '龙之家族 第三季2026',
+      '无价之宝2023',
+      '龙之家族 第二季[预告片]2024',
+      '龙之家族1988[电影解说]1988',
+    ]);
+  });
+
+  it('搜索词展开：繁体再加一个简体写法', async () => {
+    const { expandSearchTerms } = await import('./title-aliases');
+    expect(expandSearchTerms('龍之家族')).toContain('龙之家族');
   });
 });

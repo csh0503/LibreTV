@@ -1,5 +1,6 @@
 'use client';
 
+import { normalizeTitle } from '@/lib/cms-parser';
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { addSearchHistory, clearSearchHistory, listSearchHistory, removeSearchHistory, restoreSearchHistory } from '@/lib/db';
@@ -28,8 +29,9 @@ export function useSearchHistory(input: string) {
 
   const matches = useMemo(() => {
     const all = history.data ?? [];
-    const keyword = input.trim().toLowerCase();
-    return keyword ? all.filter((h) => h.text.toLowerCase().includes(keyword)) : all;
+    // 不分繁简、全半角、标点
+    const keyword = normalizeTitle(input.trim());
+    return keyword ? all.filter((h) => normalizeTitle(h.text).includes(keyword)) : all;
   }, [history.data, input]);
 
   // 唯一命中项与输入内容完全一致时不展开：否则会盖住用户刚敲进去的内容
