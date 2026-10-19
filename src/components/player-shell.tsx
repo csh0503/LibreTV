@@ -925,7 +925,9 @@ export function PlayerShell({
     let originalRate = 1.0;
     // 刚结束长按：吞掉松手后的那次 click（否则 ArtPlayer 会当成点一下暂停）
     let swallowClickUntil = 0;
-    const el = containerRef.current;
+    // 挂在 ArtPlayer 的 $player 上而不是外面的容器：网页全屏时 ArtPlayer 会把 $player 整个搬到 <body> 下
+    // （FULLSCREEN_WEB_IN_BODY），挂在容器上的话全屏后双击、长按、滑动全都收不到
+    const el: HTMLElement = art.template.$player;
     /** 按在控制栏、设置面板、锁、我们自己的按钮上：不算点画面 */
     const onChrome = (target: EventTarget | null) =>
       Boolean((target as HTMLElement | null)?.closest?.('.art-bottom, .art-settings, .art-contextmenus, .art-layer-lock, button'));
