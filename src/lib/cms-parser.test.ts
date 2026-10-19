@@ -256,3 +256,10 @@ describe('集名', () => {
     expect(names).toEqual(['第02集', '第03集']);
   });
 });
+
+describe('normalizeTitle：全角和不可见字符', () => {
+  it('「坠落２：死点」=「坠落2：死点」，片名里的方向符去掉', () => {
+    expect(normalizeTitle('坠落２：死点')).toBe(normalizeTitle('坠落2：死点'));
+    expect(normalizeTitle('神探之痕迹‎')).toBe('神探之痕迹');
+  });
+});

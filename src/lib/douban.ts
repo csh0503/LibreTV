@@ -4,7 +4,7 @@ import { fetchUpstream, getCache, setCache } from './fetch-utils';
 import { rexxarToItem, type DoubanRequest } from './recommend';
 import { fetchBangumiCalendar, fetchBangumiCatalog } from './bangumi';
 import { canonicalTitle } from './title-aliases';
-import { WorkGroups } from './work-identity';
+import { WorkGroups, workKeys } from './work-identity';
 import { getTmdbApiKey, timeProbe, TMDB_CODE_TO_AREA, TMDB_ID_TO_GENRE, type UpstreamProbe } from './douban-weekly';
 import { dropUnreleased, fetchUnreleasedIndex } from './unreleased';
 
@@ -190,6 +190,8 @@ interface TmdbDiscoverRaw {
   id?: number;
   title?: string;
   name?: string;
+  original_title?: string;
+  original_name?: string;
   poster_path?: string | null;
   backdrop_path?: string | null;
   vote_average?: number;
@@ -240,6 +242,8 @@ async function fetchTmdbDiscoverCatalog(query: DoubanFetchQuery): Promise<Douban
     'vote_count.gte': query.sort === 'S' ? '80' : '15',
   });
   if (genreIds.size > 0) params.set('with_genres', [...genreIds].join(','));
+  // 电视剧频道：不要脱口秀 / 新闻 / 真人秀 / 动画 / 纪录片（TMDB 按热度排时美国深夜秀会占满前排）
+  if (isTv && query.tags.includes('电视剧')) params.set('without_genres', '16,99,10763,10764,10767');
   if (originCountry) params.set('with_origin_country', originCountry);
   // 动漫频道没选地区时只要日本 / 中国：否则连载中会被辛普森、南方公园这类美国长寿动画占满
   else if (query.tags.includes('动画') && isTv) params.set('with_origin_country', 'JP|CN');
@@ -247,6 +251,10 @@ async function fetchTmdbDiscoverCatalog(query: DoubanFetchQuery): Promise<Douban
     params.set(isTv ? 'first_air_date_year' : 'primary_release_year', yearFilter);
   }
   if (minScore > 0) params.set('vote_average.gte', String(minScore));
+  // 按热度、没选年份：TMDB 的热度会把播了二三十年的美剧（法律与秩序、海军罪案调查处）排在前面，只要近 6 年开播的
+  if (isTv && query.sort === 'U' && !yearFilter && query.status !== 'airing') {
+    params.set('first_air_date.gte', new Date(Date.now() - 6 * 365 * 86_400_000).toISOString().slice(0, 10));
+  }
   // 只要已经播出 / 上映的，未播出的交给「即将播出」
   const todayStr = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
   params.set(isTv ? 'first_air_date.lte' : 'primary_release_date.lte', todayStr);
@@ -301,6 +309,7 @@ async function fetchTmdbDiscoverCatalog(query: DoubanFetchQuery): Promise<Douban
       genres,
       // 按状态筛过的就知道状态，否则前端的「连载中 / 已完结」会把 TMDB 的条目全滤掉
       ...(isTv && query.status ? { status: query.status } : {}),
+      originalTitle: (row.original_title || row.original_name || '').trim() || undefined,
       sourceLabel: 'TMDB',
     });
   }
@@ -324,9 +333,10 @@ export function fuseCatalogItems(lists: DoubanItem[][], limit: number): DoubanIt
       const key = canonicalTitle(item.title);
       if (!key) continue;
 
-      const slot = works.find(key, item);
+      const keys = workKeys(key, item);
+      const slot = works.find(keys, item);
       if (!slot) {
-        works.add(key, item, { item: { ...item } });
+        works.add(keys, item, { item: { ...item } });
       } else {
         const existing = slot.item;
         // 有依据的状态（完结标记、更新说明、首播日期）优先于只按年份猜的；
@@ -357,6 +367,7 @@ export function fuseCatalogItems(lists: DoubanItem[][], limit: number): DoubanIt
           rating: existing.rating || item.rating,
           area: existing.area || item.area,
           genres: existing.genres || item.genres,
+          originalTitle: existing.originalTitle || item.originalTitle,
           status: authoritativeEnded,
           statusGuessed: guessed || undefined,
           remarks: authoritativeRemarks,
@@ -451,6 +462,27 @@ export async function fetchDoubanRecommend(query: DoubanFetchQuery): Promise<{ i
   return payload;
 }
 
+
+/**
+ * 豆瓣「选剧 / 选电影」按标签筛（近期热门排序），给首页题材行用：
+ * 比 TMDB discover 更贴近华语观众（国产剧、韩剧、日剧都有），新作和经典混排。
+ * 缓存 30 分钟；豆瓣拒绝时返回空数组，由 TMDB 接上。
+ */
+export async function fetchDoubanTagged(kind: 'tv' | 'movie', tags: string[], count = 40): Promise<DoubanItem[]> {
+  const cacheKey = `douban-tagged:v1:${kind}:${tags.join(',')}:${count}`;
+  const cached = getCache<DoubanItem[]>(cacheKey);
+  if (cached) return cached;
+  const url = `${REXXAR_API}/${kind}/recommend?start=0&count=${count}&tags=${encodeURIComponent(tags.join(','))}&sort=U&score_range=0,10&uncollect=false`;
+  const json = (await readJson(url, 'https://movie.douban.com/explore')) as { items?: unknown[] } | undefined;
+  const nowYear = new Date().getFullYear();
+  const items = (json?.items ?? [])
+    .map((row) => rexxarToItem(row, kind === 'tv', nowYear))
+    // 没有年份的是榜单卡片（「高分经典爱情片榜」），不是作品
+    .filter((item): item is DoubanItem => item !== undefined && Boolean(item.year))
+    .map((item) => ({ ...item, sourceLabel: '豆瓣' }));
+  setCache(cacheKey, items, items.length > 0 ? 30 * 60_000 : 5 * 60_000);
+  return items;
+}
 
 /**
  * 片库每个来源单独取一页（不融合、不缓存），给数据源体检页用；

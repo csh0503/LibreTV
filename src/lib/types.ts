@@ -103,6 +103,12 @@ export interface DoubanItem {
   year?: string;
   /** year 不是来源给的、是按筛选条件填的（B站片库按年份筛）：合并时不当作可靠年份 */
   yearSoft?: boolean;
+  /** 最新一集的播出日期（YYYY-MM-DD，目前只有 B站条目有）：判断热度是不是「现在」的 */
+  lastAired?: string;
+  /** 原名（TMDB 的 original_name、Bangumi 的日文名）：各站中文译名不一样时靠它认同一部 */
+  originalTitle?: string;
+  /** 还没开播（只在服务端取数过程中用来剔除） */
+  unreleased?: boolean;
   /** 地区，可能是「美国 加拿大」这种多地区 */
   area?: string;
   /** 题材，空格分隔，来自 card_subtitle 的第三段 */

@@ -3,7 +3,8 @@ import { getCache, setCache } from './fetch-utils';
 import { fetchHotList, tmdbTrendingToItem, type HotListId, type TmdbTrendingRaw } from './douban-weekly';
 import { tmdbGet } from './tmdb';
 import { dropUnreleased, fetchUnreleasedIndex } from './unreleased';
-import { isShelfId } from './shelf-defs';
+import { isShelfId, shelfDedupeKey } from './shelf-defs';
+import { fetchDoubanTagged } from './douban';
 
 /**
  * 首页货架的取数：每一行由固定、可解释的来源组成，来源之间只做「补缺」，不做「各自成排」。
@@ -90,6 +91,62 @@ async function withBackfill(primary: Promise<DoubanItem[]>, backfill: Promise<Do
   return interleave([[...main, ...more]]);
 }
 
+/** 题材行只放真人剧集电影：动画、综艺、纪录片各有自己的行 */
+const NOT_LIVE_ACTION = /动画|动漫|真人秀|脱口秀|纪录/;
+const liveAction = (items: DoubanItem[]) => items.filter((i) => !NOT_LIVE_ACTION.test(i.genres ?? ''));
+
+/** 一行里同一系列只留一个：位置取最先出现的那季，展示最新的那季（豆瓣会把《怪奇物语》第一到五季全列出来） */
+export function collapseSeries(items: DoubanItem[]): DoubanItem[] {
+  const slots = new Map<string, { at: number; item: DoubanItem }>();
+  const order: string[] = [];
+  items.forEach((item, at) => {
+    const key = shelfDedupeKey(item.title, item.isTv) || item.title;
+    const prev = slots.get(key);
+    if (!prev) {
+      slots.set(key, { at, item });
+      order.push(key);
+    } else if ((parseInt(item.year ?? '0', 10) || 0) > (parseInt(prev.item.year ?? '0', 10) || 0)) {
+      prev.item = item;
+    }
+  });
+  return order.map((k) => slots.get(k)!.item);
+}
+
+/**
+ * 题材行：豆瓣同题材的剧集 + 近几年电影交错（贴近华语观众），TMDB discover 接在后面补深度。
+ * 剧集在前（首页题材行以剧为主），电影只要 2020 年代的，避免全是《泰坦尼克号》这种老经典。
+ */
+async function genreRow(
+  doubanTv: string[] | null,
+  doubanMovie: string[] | null,
+  tmdb: { tv?: DiscoverSpec; movie?: DiscoverSpec },
+  now: number,
+): Promise<DoubanItem[]> {
+  const [tv, movie, backfill] = await settled([
+    doubanTv ? fetchDoubanTagged('tv', doubanTv) : Promise.resolve([]),
+    doubanMovie ? fetchDoubanTagged('movie', [...doubanMovie, '2020年代']) : Promise.resolve([]),
+    discoverMix(tmdb, now),
+  ]);
+  const main = interleave([liveAction(tv), liveAction(movie)]);
+  if (main.length === 0 && backfill.length === 0) throw new Error('货架数据为空');
+  // 近三年的在前，《西游记》（1986）这种经典接在后面
+  const all = collapseSeries(interleave([[...main, ...liveAction(backfill)]]));
+  const nowYear = new Date(now + CN_OFFSET).getUTCFullYear();
+  const recent = (i: DoubanItem) => (parseInt(i.year ?? '', 10) || nowYear) >= nowYear - 3;
+  return [...all.filter(recent), ...all.filter((i) => !recent(i))];
+}
+
+/** 「新番」行：最近 45 天没有新集的（分割放送间歇、几年前的老番）不放 */
+function stillAiring(items: DoubanItem[], now: number): DoubanItem[] {
+  return items.filter((i) => i.status === 'airing' || !i.lastAired || now - Date.parse(i.lastAired) < 45 * 86_400_000);
+}
+
+/** 一年以上没有新集的老作品挪到后面（热播行要的是现在的） */
+function staleLast(items: DoubanItem[], now: number): DoubanItem[] {
+  const stale = (i: DoubanItem) => Boolean(i.lastAired && now - Date.parse(i.lastAired) > 365 * 86_400_000);
+  return [...items.filter((i) => !stale(i)), ...items.filter(stale)];
+}
+
 const notCn = (items: DoubanItem[]) => items.filter((i) => !i.area || !CN_AREA.test(i.area));
 const onlyCn = (items: DoubanItem[]) => items.filter((i) => !i.area || CN_AREA.test(i.area));
 /** 剧集补充源里不要动画、综艺、纪录片，它们各有自己的行 */
@@ -111,7 +168,7 @@ const LOADERS: Record<string, (now: number) => Promise<DoubanItem[]>> = {
     withBackfill(hot('douban_tv_domestic'), discoverOne('tv', { extra: { with_origin_country: 'CN', 'vote_count.gte': '5', ...LIVE_ACTION_TV } }, now)),
   // 日漫行只放日本（及没标地区的）作品，国创归「国漫热播」
   'anime-airing': async (now) =>
-    notCn(
+    stillAiring(notCn(
       await withBackfill(
         hot('bili_bangumi'),
         // 「新番」= 最近一个月内有新集播出的，而不是近几年热门的老番
@@ -131,14 +188,14 @@ const LOADERS: Record<string, (now: number) => Promise<DoubanItem[]>> = {
           now,
         ),
       ),
-    ),
+    ), now),
   guoman: async (now) =>
-    onlyCn(
+    staleLast(onlyCn(
       await withBackfill(
         hot('bili_guochuang'),
         discoverOne('tv', { genres: '16', extra: { with_origin_country: 'CN', 'vote_count.gte': '3', 'vote_average.gte': '0' } }, now),
       ),
-    ),
+    ), now),
   'kr-jp-tv': (now) =>
     withBackfill(
       hot('douban_tv_korean'),
@@ -155,11 +212,15 @@ const LOADERS: Record<string, (now: number) => Promise<DoubanItem[]>> = {
         discoverOne('tv', { extra: { with_origin_country: 'GB', 'vote_count.gte': '50', ...LIVE_ACTION_TV } }, now),
       ]).then(interleave),
     ),
-  variety: (now) =>
-    withBackfill(
-      hot('douban_show_hot'),
-      discoverOne('tv', { genres: '10764|10767', extra: { with_origin_country: 'CN', 'vote_count.gte': '1', 'vote_average.gte': '0' } }, now),
+  variety: async (now) =>
+    staleLast(
+      await withBackfill(
+        hot('douban_show_hot'),
+        discoverOne('tv', { genres: '10764|10767', extra: { with_origin_country: 'CN', 'vote_count.gte': '1', 'vote_average.gte': '0' } }, now),
+      ),
+      now,
     ),
+  // 口碑：豆瓣周口碑榜 + TMDB 高分，评分没到 7.5 的不算「口碑」
   acclaimed: async (now) =>
     interleave(
       await settled([
@@ -167,20 +228,23 @@ const LOADERS: Record<string, (now: number) => Promise<DoubanItem[]>> = {
         hot('douban_tv_chinese'),
         discoverOne('movie', { extra: { 'vote_count.gte': '1500', 'vote_average.gte': '7.5' } }, now),
       ]),
-    ),
+    ).filter((i) => parseFloat(i.rating ?? '0') >= 7.5),
+  // 犯罪 / 悬疑里不要恐怖片（TMDB 的「悬疑」常带恐怖片）
   'g-crime': (now) =>
-    discoverMix(
-      { tv: { genres: '80|9648', extra: { without_genres: '16' } }, movie: { genres: '80|9648', extra: { without_genres: '16' } } },
-      now,
-    ),
-  // 题材行只放真人作品，动画各有自己的行
+    genreRow(['悬疑'], ['犯罪'], {
+      tv: { genres: '80|9648', extra: { without_genres: '16,27' } },
+      movie: { genres: '80|9648', extra: { without_genres: '16,27' } },
+    }, now),
   'g-scifi': (now) =>
-    discoverMix({ tv: { genres: '10765', extra: NO_ANIME }, movie: { genres: '878|14', extra: NO_ANIME } }, now),
-  'g-romance': (now) => discoverMix({ movie: { genres: '10749', extra: { without_genres: '16' } } }, now),
+    genreRow(['科幻'], ['科幻'], { tv: { genres: '10765', extra: NO_ANIME }, movie: { genres: '878|14', extra: NO_ANIME } }, now),
+  'g-romance': (now) => genreRow(['爱情'], ['爱情'], { movie: { genres: '10749', extra: { without_genres: '16' } } }, now),
   'g-comedy': (now) =>
-    discoverMix({ tv: { genres: '35', extra: { without_genres: '16,10764,10767' } }, movie: { genres: '35', extra: NO_ANIME } }, now),
+    genreRow(['喜剧'], ['喜剧'], {
+      tv: { genres: '35', extra: { without_genres: '16,10764,10767' } },
+      movie: { genres: '35', extra: NO_ANIME },
+    }, now),
   'g-action': (now) =>
-    discoverMix({ tv: { genres: '10759', extra: NO_ANIME }, movie: { genres: '28|12', extra: NO_ANIME } }, now),
+    genreRow(['动作'], ['动作'], { tv: { genres: '10759', extra: NO_ANIME }, movie: { genres: '28|12', extra: NO_ANIME } }, now),
   doc: async (now) =>
     interleave(
       await settled([hot('bili_doc'), discoverMix({ tv: { genres: '99' }, movie: { genres: '99' } }, now)]),

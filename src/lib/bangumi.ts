@@ -57,6 +57,7 @@ export function subjectToItem(subject: BangumiSubject): DoubanItem | undefined {
     cover,
     rating: score > 0 ? score.toFixed(1) : undefined,
     isTv: true,
+    ...(subject.name && subject.name !== title ? { originalTitle: subject.name } : {}),
     ...(popularity > 0 ? { popularity } : {}),
   };
 }
@@ -254,7 +255,9 @@ export async function fetchBangumiCatalog(opts: {
       isTv: true,
       year,
       area: bgmTags.includes('国产') ? '中国大陆' : '日本',
-      genres: topGenres || '动画',
+      // 都是动画：标上「动画」，合并时才不会被当成同名的真人剧
+      genres: topGenres ? `动画 ${topGenres}` : '动画',
+      originalTitle: row.name?.trim() || undefined,
       remarks,
       status,
       sourceLabel: 'Bangumi 番组计划',

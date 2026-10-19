@@ -3,6 +3,8 @@ import { guardRequest } from '@/lib/api-guard';
 import { fetchHotListWithMeta, isHotListId } from '@/lib/douban-weekly';
 
 export const runtime = 'nodejs';
+// 第一次算要补 B站单季详情（每个榜几十个请求，最多等 6 秒），留足时间
+export const maxDuration = 30;
 
 /** 影视热榜：多源融合排名（见 fuseMultiSourceRankings），附带算出时间与各来源取数情况 */
 export async function GET(req: Request) {

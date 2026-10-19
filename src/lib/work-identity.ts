@@ -1,4 +1,5 @@
 import type { DoubanItem } from './types';
+import { canonicalTitle } from './title-aliases';
 
 /**
  * 「是不是同一部」：各来源（豆瓣 / B站 / Bangumi / TMDB / 百度……）合并条目时共用的判断。
@@ -8,8 +9,9 @@ import type { DoubanItem } from './types';
  * 1. 同一个来源的编号不同 → 不同作品（同一个来源不会给同一部两个编号）；
  * 2. 剧集 / 电影不同 → 不同作品；
  * 3. 两边都有可靠年份、差两年以上 → 不同作品（差一年算同一部：跨年开播、各站登记不一）；
- * 4. 集数和开播年份对不上：今年才开播的剧不可能已经播到几百集。
- * acrossSeasons：排行榜按「系列」合并（第一季、第三季算一个坑位），不看编号和年份，只看 2、4。
+ * 4. 集数和开播年份对不上：今年才开播的剧不可能已经播到几百集；
+ * 5. 一边是动画、一边明确不是（《时光代理人》动画 vs 真人剧）→ 不同作品。
+ * acrossSeasons：排行榜按「系列」合并（第一季、第三季算一个坑位），不看编号和年份，只看 2、4、5。
  */
 
 /** 编号的命名空间。纯数字的编号豆瓣和 Bangumi 都有，分不清，不参与判断；百度的编号是名次，也不算 */
@@ -48,6 +50,14 @@ function episodesFitYear(withYear: DoubanItem, withEpisodes: DoubanItem, nowYear
   return eps <= (Math.max(0, nowYear - year) + 1) * MAX_EPISODES_PER_YEAR;
 }
 
+const ANIMATION = /动画|动漫|番剧|国创/;
+
+/** 动画 / 真人：题材没写就是不知道 */
+function animated(item: DoubanItem): boolean | undefined {
+  if (!item.genres?.trim()) return undefined;
+  return ANIMATION.test(item.genres);
+}
+
 export function sameWork(
   a: DoubanItem,
   b: DoubanItem,
@@ -56,6 +66,9 @@ export function sameWork(
   const nowYear = opts.nowYear ?? new Date().getFullYear();
   if (a.isTv !== undefined && b.isTv !== undefined && a.isTv !== b.isTv) return false;
   if (!episodesFitYear(a, b, nowYear) || !episodesFitYear(b, a, nowYear)) return false;
+  const aa = animated(a);
+  const ab = animated(b);
+  if (aa !== undefined && ab !== undefined && aa !== ab) return false;
   if (opts.acrossSeasons) return true;
   const ns = idNamespace(a.id);
   if (ns && ns === idNamespace(b.id) && idValue(a.id) !== idValue(b.id)) return false;
@@ -65,29 +78,56 @@ export function sameWork(
   return true;
 }
 
+/** 一个条目的比对键：中文片名 + 原名（TMDB / Bangumi 有）。各站中文译名不同（「相反的你和我」/「正相反的你与我」）时靠原名对上 */
+export function workKeys(primary: string, item: DoubanItem): string[] {
+  const keys = primary ? [primary] : [];
+  const orig = item.originalTitle ? canonicalTitle(item.originalTitle) : '';
+  if (orig && orig !== primary) keys.push(`orig:${orig}`);
+  return keys;
+}
+
+interface Work<T> {
+  members: DoubanItem[];
+  value: T;
+}
+
 /**
- * 按片名分桶、桶里再按 sameWork 分成不同作品。
- * 一部作品记下所有并进来的条目，新条目要和每一条都对得上才并进去（不会 A≈B、B≈C 就把 A、C 拼一起）。
+ * 按比对键分桶、桶里再按 sameWork 分成不同作品。
+ * 一部作品记下所有并进来的条目，新条目要和每一条都对得上才并进去（不会 A≈B、B≈C 就把 A、C 拼一起）；
+ * 并进来的条目带来的新键（另一种译名、原名）也记到这部作品上，后面用那个名字来的也能对上。
  */
 export class WorkGroups<T> {
-  private readonly buckets = new Map<string, { members: DoubanItem[]; value: T }[]>();
+  private readonly index = new Map<string, Work<T>[]>();
   /** 按第一次出现的顺序 */
   readonly order: T[] = [];
 
   constructor(private readonly opts: { acrossSeasons?: boolean; nowYear?: number } = {}) {}
 
-  /** 找到同一部就返回它（并记下这一条），没有返回 undefined */
-  find(key: string, item: DoubanItem): T | undefined {
-    const works = this.buckets.get(key);
-    const hit = works?.find((w) => w.members.every((m) => sameWork(m, item, this.opts)));
-    if (hit) hit.members.push(item);
-    return hit?.value;
+  private register(work: Work<T>, keys: string[]) {
+    for (const key of keys) {
+      const list = this.index.get(key) ?? [];
+      if (!list.includes(work)) list.push(work);
+      this.index.set(key, list);
+    }
   }
 
-  add(key: string, item: DoubanItem, value: T): void {
-    const works = this.buckets.get(key) ?? [];
-    works.push({ members: [item], value });
-    this.buckets.set(key, works);
+  /** 找到同一部就返回它（并记下这一条），没有返回 undefined */
+  find(keys: string | string[], item: DoubanItem): T | undefined {
+    const list = typeof keys === 'string' ? [keys] : keys;
+    for (const key of list) {
+      const hit = this.index.get(key)?.find((w) => w.members.every((m) => sameWork(m, item, this.opts)));
+      if (hit) {
+        hit.members.push(item);
+        this.register(hit, list);
+        return hit.value;
+      }
+    }
+    return undefined;
+  }
+
+  add(keys: string | string[], item: DoubanItem, value: T): void {
+    const work: Work<T> = { members: [item], value };
+    this.register(work, typeof keys === 'string' ? [keys] : keys);
     this.order.push(value);
   }
 }

@@ -256,7 +256,8 @@ export function filterAdultResults<
  * 用于跨标点差异匹配（源站存「摔跤吧!爸爸」而用户搜「摔跤吧！爸爸」）。
  */
 export function normalizeTitle(s: string): string {
-  return s.toLowerCase().replace(/[\s\p{P}\p{S}]+/gu, '');
+  // NFKC：全角数字字母（「坠落２」）和半角当成一样；\p{Cf}：片名里夹着的不可见方向符（「神探之痕迹‎」）
+  return s.normalize('NFKC').toLowerCase().replace(/[\s\p{P}\p{S}\p{Cf}]+/gu, '');
 }
 
 /**

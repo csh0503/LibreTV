@@ -1,7 +1,8 @@
 import type { DoubanItem } from './types';
 import { judgeStatus, looksUnreleased } from './title-status';
 import { fetchUpstream, getCache, setCache } from './fetch-utils';
-import { WorkGroups } from './work-identity';
+import { WorkGroups, workKeys } from './work-identity';
+import { enrichBiliItems } from './bili-season';
 import { canonicalTitle } from './title-aliases';
 import { fetchBangumiHotAiring } from './bangumi';
 import { dropUnreleased, fetchUnreleasedIndex } from './unreleased';
@@ -168,6 +169,8 @@ export interface TmdbTrendingRaw {
   id?: number | string;
   title?: string;
   name?: string;
+  original_title?: string;
+  original_name?: string;
   media_type?: 'movie' | 'tv' | string;
   poster_path?: string | null;
   backdrop_path?: string | null;
@@ -356,6 +359,7 @@ export function tmdbTrendingToItem(raw: TmdbTrendingRaw): DoubanItem | undefined
     area,
     genres,
     subtitle: raw.overview?.trim() || undefined,
+    originalTitle: (raw.original_title || raw.original_name || '').trim() || undefined,
     sourceLabel: 'TMDB 全球趋势',
   };
 }
@@ -571,6 +575,31 @@ export function diversifyRanking(items: DoubanItem[], window = 10, cap = 4): Dou
   return [...head, ...rest];
 }
 
+/**
+ * 时效系数：榜单要的是「现在」热的。B站近 3 天热播里一大半是几年前完结、还在被补的老番，
+ * 只按名次融合会让它们占满前排。
+ * - 连载中、最近一个月有新集、今年的新作：1
+ * - 最新一集在 4 个月 / 1 年内：0.85 / 0.65；更早：0.45
+ * - 只有年份：去年 0.8，更早 0.5；什么都不知道：0.8
+ */
+export function freshnessFactor(item: DoubanItem, now = Date.now()): number {
+  // 有最新一集日期就以它为准：「更新至第40话」可能是几年前停更的
+  if (item.lastAired) {
+    const days = (now - Date.parse(item.lastAired)) / 86_400_000;
+    if (days < 31) return 1;
+    if (days < 122) return 0.85;
+    if (days < 366) return 0.65;
+    return 0.45;
+  }
+  if (item.isTv && item.status === 'airing') return 1;
+  const year = item.yearSoft ? NaN : parseInt(item.year ?? '', 10);
+  if (!Number.isFinite(year)) return 0.8;
+  const nowYear = new Date(now + 8 * 3600_000).getUTCFullYear();
+  if (year >= nowYear) return 1;
+  if (year === nowYear - 1) return 0.8;
+  return 0.5;
+}
+
 /** 评分系数：7 分为中性，±2 分封顶，最多影响 ±12%；没评分不加不减 */
 function ratingFactor(rating?: string): number {
   const r = parseFloat(rating ?? '');
@@ -596,6 +625,9 @@ export function fuseMultiSourceRankings(
     diversify?: boolean;
     /** 3~24 小时前的名次（作品键 → 名次），用来算上升势头；没有就不算 */
     baseline?: Record<string, number>;
+    /** 乘时效系数（默认乘）：老番、旧片排到后面 */
+    freshness?: boolean;
+    now?: number;
   } = {}
 ): DoubanItem[] {
   const limit = opts.limit ?? 24;
@@ -631,9 +663,10 @@ export function fuseMultiSourceRankings(
       const yearNum = parseInt(item.year ?? '0', 10) || 0;
       const titleScore = airingBonus + seasonNum * 10 + (yearNum >= 2025 ? 5 : 0);
 
-      const existing = works.find(stem, item);
+      const keys = workKeys(stem, item);
+      const existing = works.find(keys, item);
       if (!existing) {
-        works.add(stem, item, {
+        works.add(keys, item, {
           key: stem,
           item: { ...item },
           platformScores: new Map([[platform, contribution]]),
@@ -654,6 +687,7 @@ export function fuseMultiSourceRankings(
         backdrop: prev.backdrop || item.backdrop,
         rating: prev.rating || item.rating,
         year: (preferNewTitle ? item.year : prev.year) || prev.year || item.year,
+        lastAired: [prev.lastAired, item.lastAired].filter(Boolean).sort().pop(),
         area: prev.area || item.area,
         genres: prev.genres || item.genres,
         isTv: prev.isTv ?? item.isTv,
@@ -668,6 +702,7 @@ export function fuseMultiSourceRankings(
             ? 'airing'
             : prev.status || item.status,
         subtitle: prev.subtitle || item.subtitle,
+        originalTitle: prev.originalTitle || item.originalTitle,
       };
     });
   }
@@ -676,7 +711,8 @@ export function fuseMultiSourceRankings(
     const key = entry.key;
     const base = [...entry.platformScores.values()].reduce((sum, v) => sum + v, 0);
     const airingTieBreaker = entry.item.status === 'airing' ? 1e-4 : 0;
-    const finalScore = base * ratingFactor(entry.item.rating) + airingTieBreaker;
+    const finalScore =
+      base * ratingFactor(entry.item.rating) * (opts.freshness === false ? 1 : freshnessFactor(entry.item, opts.now)) + airingTieBreaker;
     const platforms = [...entry.platformScores.keys()].map((p) => PLATFORM_LABEL[p]);
 
     const sourceLabel =
@@ -709,7 +745,7 @@ export function fuseMultiSourceRankings(
   }
 
   const sorted = ranked.map((r) => r.item);
-  const out = (opts.diversify ? diversifyRanking(sorted) : sorted).slice(0, limit);
+  const out = (opts.diversify ? diversifyRanking(sorted, 10, 3) : sorted).slice(0, limit);
   if (baseline && Object.keys(baseline).length > 0) {
     out.forEach((item, i) => {
       const before = baseline[rankKeyOf(item.title)];
@@ -820,10 +856,13 @@ async function fetchBiliRankRaw(opts: {
         new_ep: { index_show: r.index_show },
       }))
     : assertArray<BiliRankItemRaw>(rawList, 'B站热播榜');
-  const rawItems = rows
-    .slice(0, 50)
-    .map((row) => biliRankToItem(row, opts))
-    .filter((item): item is DoubanItem => item !== undefined);
+  // 补上首播 / 最新一集日期和完结状态（榜单接口没有），时效系数和「新番」判断靠它
+  const rawItems = await enrichBiliItems(
+    rows
+      .slice(0, 50)
+      .map((row) => biliRankToItem(row, opts))
+      .filter((item): item is DoubanItem => item !== undefined),
+  );
 
   const curated = curateRealtimeList(rawItems, {
     filterEvergreen: true,
@@ -982,6 +1021,8 @@ export async function fetchHotListWithMeta(id: HotListId): Promise<{ items: Doub
           { name: 'B站国创', weight: 1.0, run: () => fetchBiliRankRaw(BILI_SEASON_TYPE_MAP.bili_guochuang!) },
           { name: '百度热播', weight: 0.95, run: () => fetchBaiduTeleplayList() },
           { name: 'Bangumi', weight: 0.9, run: () => fetchBangumiHotAiring(16) },
+          // 当季新番：豆瓣这一票让 Bangumi / B站都在推的新番有跨平台共识，不至于被剧集电影挤出前十
+          { name: '豆瓣动画', weight: 0.9, run: () => fetchDoubanWithFallback('douban_anime_hot') },
           ...(hasTmdbKey ? [{ name: 'TMDB趋势', weight: 1.05, run: () => fetchTmdbTrending('all') }] : []),
         ],
         // 综合总榜也是首页大图的来源：前 10 名同一大类最多 4 部，避免一屏全是电影或全是番

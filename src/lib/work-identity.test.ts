@@ -63,3 +63,37 @@ describe('同名不同作品不合并', () => {
     expect(episodeCountOf('更新至20251016期')).toBeUndefined();
   });
 });
+
+describe('动画和真人版不合并', () => {
+  it('《时光代理人》TMDB 动画 vs B站真人剧', () => {
+    const anime = item({ id: 'tmdb_123542', title: '时光代理人', year: '2021', genres: '动画 科幻奇幻 悬疑' });
+    const live = item({ id: 'bili_47841', title: '时光代理人', genres: '剧情' });
+    expect(sameWork(anime, live)).toBe(false);
+    expect(sameWork(anime, live, { acrossSeasons: true })).toBe(false);
+    // 题材没写的不算矛盾
+    expect(sameWork(anime, item({ id: '1', title: '时光代理人' }))).toBe(true);
+  });
+});
+
+describe('各站中文译名不同：靠原名认同一部', () => {
+  it('Bangumi「相反的你和我」+ TMDB「正相反的你与我」+ 豆瓣「相反的你和我」→ 一张卡', () => {
+    const fused = fuseCatalogItems(
+      [
+        [item({ id: '37134598', title: '相反的你和我', year: '2026', genres: '喜剧 爱情 动画' })],
+        [item({ id: 'bgm_525565', title: '相反的你和我', year: '2026', genres: '动画 恋爱 校园', originalTitle: '正反対な君と僕' })],
+        [item({ id: 'tmdb_278043', title: '正相反的你与我', year: '2026', genres: '动画 喜剧', originalTitle: '正反対な君と僕' })],
+      ],
+      10,
+    );
+    expect(fused).toHaveLength(1);
+    expect(fused[0].title).toBe('相反的你和我');
+  });
+
+  it('Bangumi 条目标着「动画」：不会和豆瓣同名的动画拆开', () => {
+    const fused = fuseCatalogItems(
+      [[item({ id: '38194261', title: '尼古喵喵', year: '2026', genres: '动画' })], [item({ id: 'bgm_622206', title: '尼古喵喵', year: '2026', genres: '动画 搞笑' })]],
+      10,
+    );
+    expect(fused).toHaveLength(1);
+  });
+});
