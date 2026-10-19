@@ -78,11 +78,48 @@ export function sameWork(
   return true;
 }
 
-/** 一个条目的比对键：中文片名 + 原名（TMDB / Bangumi 有）。各站中文译名不同（「相反的你和我」/「正相反的你与我」）时靠原名对上 */
+const CN_DIGITS: Record<string, number> = { 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 };
+const ROMAN: Record<string, number> = { Ⅱ: 2, Ⅲ: 3, Ⅳ: 4, Ⅴ: 5, Ⅵ: 6, Ⅶ: 7, Ⅷ: 8, Ⅸ: 9, Ⅹ: 10 };
+
+function seasonNumber(token: string): number | undefined {
+  if (/^\d+$/.test(token)) return parseInt(token, 10);
+  if (ROMAN[token]) return ROMAN[token];
+  if (token === '十') return 10;
+  const m = token.match(/^([一二两三四五六七八九])?(十)?([一二三四五六七八九])?$/);
+  if (!m) return undefined;
+  if (!m[2]) return m[1] ? CN_DIGITS[m[1]] : undefined;
+  return (m[1] ? CN_DIGITS[m[1]] : 1) * 10 + (m[3] ? CN_DIGITS[m[3]] : 0);
+}
+
+/**
+ * 「系列名 + 第几季」：季数写法和副标题各站不一样时靠它对上——
+ * 「无职转生 第三季 ～到了异世界就拿出真本事～」和「无职转生Ⅲ 到了异世界就拿出真本事」都是「无职转生 · 第 3 季」。
+ * 只认明写的第二季及以后（第N季 / 第N期 / Season N / 罗马数字 Ⅱ~Ⅹ），系列名取季数前面那段；
+ * 第一季、没写季数的不出这个键（太容易撞名）。
+ */
+export function seasonKey(title: string): string | undefined {
+  const t = title.normalize('NFKC');
+  const m =
+    t.match(/^(.+?)\s*第\s*([0-9一二两三四五六七八九十]+)\s*[季期部]/) ??
+    t.match(/^(.+?)\s*(?:Season|S)\s*([0-9]+)\b/i) ??
+    title.match(/^(.+?)\s*([ⅡⅢⅣⅤⅥⅦⅧⅨⅩ])(?=\s|$|[：:～~\-—])/);
+  if (!m) return undefined;
+  const season = seasonNumber(m[2]);
+  const base = canonicalTitle(m[1]);
+  if (!season || season < 2 || base.length < 2) return undefined;
+  return `season:${base}#${season}`;
+}
+
+/**
+ * 一个条目的比对键：中文片名 + 原名（TMDB / Bangumi 有）+ 系列名和季数。
+ * 各站中文译名不同（「相反的你和我」/「正相反的你与我」）时靠原名，季数写法不同时靠系列名和季数。
+ */
 export function workKeys(primary: string, item: DoubanItem): string[] {
   const keys = primary ? [primary] : [];
   const orig = item.originalTitle ? canonicalTitle(item.originalTitle) : '';
   if (orig && orig !== primary) keys.push(`orig:${orig}`);
+  const season = seasonKey(item.title);
+  if (season) keys.push(season);
   return keys;
 }
 
@@ -130,4 +167,35 @@ export class WorkGroups<T> {
     this.register(work, typeof keys === 'string' ? [keys] : keys);
     this.order.push(value);
   }
+}
+
+/**
+ * 一串条目里同一部只留第一次出现的（后面的拿来补缺：封面、评分、年份、原名）。
+ * 片库翻页（各来源分页不同，同一部会落在不同页）和首页每一行的出口都过一遍。
+ */
+export function mergeSameWorks(items: DoubanItem[]): DoubanItem[] {
+  const works = new WorkGroups<{ item: DoubanItem }>();
+  for (const item of items) {
+    const keys = workKeys(canonicalTitle(item.title), item);
+    if (keys.length === 0) {
+      works.add([`id:${item.id}`], item, { item });
+      continue;
+    }
+    const slot = works.find(keys, item);
+    if (!slot) {
+      works.add(keys, item, { item });
+      continue;
+    }
+    const prev = slot.item;
+    slot.item = {
+      ...prev,
+      cover: prev.cover || item.cover,
+      backdrop: prev.backdrop || item.backdrop,
+      rating: prev.rating || item.rating,
+      year: prev.year && !prev.yearSoft ? prev.year : item.year || prev.year,
+      originalTitle: prev.originalTitle || item.originalTitle,
+      remarks: prev.remarks || item.remarks,
+    };
+  }
+  return works.order.map((slot) => slot.item);
 }

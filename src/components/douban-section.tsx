@@ -24,6 +24,7 @@ import { SortArrows } from './sort-arrows';
 import { DoubanCard } from './video-card';
 import { favoriteIdOf } from '@/lib/db';
 import { dedupeSeasons } from '@/lib/shelf-defs';
+import { mergeSameWorks } from '@/lib/work-identity';
 import { absorbHallTaste, rememberDoubanItem } from '@/lib/taste-store';
 import { AdultLibrary } from './adult-library';
 import { useLoadMore } from './use-load-more';
@@ -136,15 +137,8 @@ export function RecommendSection({
       ));
     }
     if (!request) return [];
-    const seen = new Set<string>();
-    const doubanItems: DoubanItem[] = [];
-    for (const page of doubanData?.pages ?? []) {
-      for (const item of page.items) {
-        if (seen.has(item.id)) continue;
-        seen.add(item.id);
-        doubanItems.push(item);
-      }
-    }
+    // 各来源分页不一样，同一部常落在不同页（还可能换了译名）：按作品合并，不只按编号
+    const doubanItems = mergeSameWorks((doubanData?.pages ?? []).flatMap((page) => page.items));
     const allCalendar = channel === 'anime' ? bangumiQuery.data?.days.flatMap((d) => d.items) ?? [] : [];
     const reconciledDouban =
       channel === 'anime' ? reconcileStatusWithCalendar(doubanItems, allCalendar, nowYear) : doubanItems;

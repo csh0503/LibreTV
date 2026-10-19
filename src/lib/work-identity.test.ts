@@ -97,3 +97,44 @@ describe('各站中文译名不同：靠原名认同一部', () => {
     expect(fused).toHaveLength(1);
   });
 });
+
+describe('季数写法 / 副标题不同：靠系列名和季数认同一部', () => {
+  it('「无职转生 第三季 ～…～」=「无职转生Ⅲ …」', async () => {
+    const { seasonKey } = await import('./work-identity');
+    expect(seasonKey('无职转生 第三季 ～到了异世界就拿出真本事～')).toBe(seasonKey('无职转生Ⅲ 到了异世界就拿出真本事'));
+    expect(seasonKey('葬送的芙莉莲 第二季')).toBe(seasonKey('葬送的芙莉莲 Season 2'));
+    expect(seasonKey('某剧 第十二季')).toBe('season:某剧#12');
+    // 第一季、没写季数、续作电影：不出季数键
+    expect(seasonKey('无职转生 第一季')).toBeUndefined();
+    expect(seasonKey('无职转生')).toBeUndefined();
+    expect(seasonKey('坠落2：死点')).toBeUndefined();
+    // 第二季和第三季不是同一个键
+    expect(seasonKey('咒术回战 第二季')).not.toBe(seasonKey('咒术回战 第三季'));
+  });
+
+  it('片库：两种写法合成一张卡', () => {
+    const fused = fuseCatalogItems(
+      [
+        [item({ id: '35460732', title: '无职转生Ⅲ 到了异世界就拿出真本事', year: '2026', genres: '动画' })],
+        [item({ id: 'bgm_501963', title: '无职转生 第三季 ～到了异世界就拿出真本事～', year: '2026', genres: '动画 异世界' })],
+      ],
+      10,
+    );
+    expect(fused).toHaveLength(1);
+  });
+});
+
+describe('跨页合并', () => {
+  it('第一页 TMDB「黄泉的使者」、第二页 Bangumi「黄泉使者」（原名相同）→ 留第一张', async () => {
+    const { mergeSameWorks } = await import('./work-identity');
+    const out = mergeSameWorks([
+      item({ id: 'tmdb_260463', title: '黄泉的使者', year: '2026', genres: '动画', originalTitle: '黄泉のツガイ' }),
+      item({ id: '1', title: '别的', year: '2026' }),
+      item({ id: 'bgm_568572', title: '黄泉使者', year: '2026', genres: '动画 战斗', originalTitle: '黄泉のツガイ', rating: '7.9' }),
+      item({ id: '37938249', title: '炒翻天', year: '2026', genres: '剧情 动画' }),
+      item({ id: 'bgm_615835', title: '炒翻天', year: '2026', genres: '动画 美食' }),
+    ]);
+    expect(out.map((i) => i.title)).toEqual(['黄泉的使者', '别的', '炒翻天']);
+    expect(out[0].rating).toBe('7.9');
+  });
+});

@@ -5,6 +5,7 @@ import { tmdbGet } from './tmdb';
 import { dropUnreleased, fetchUnreleasedIndex } from './unreleased';
 import { isShelfId, shelfDedupeKey } from './shelf-defs';
 import { fetchDoubanTagged } from './douban';
+import { mergeSameWorks } from './work-identity';
 
 /**
  * 首页货架的取数：每一行由固定、可解释的来源组成，来源之间只做「补缺」，不做「各自成排」。
@@ -265,7 +266,8 @@ export async function loadShelf(id: string, now = Date.now()): Promise<DoubanIte
   } catch {
     // 索引取不到时不影响货架
   }
-  items = items.slice(0, SHELF_LIMIT);
+  // 不同来源同一部换了译名 / 季数写法（「黄泉的使者」/「黄泉使者」靠原名）：一行里只留一张
+  items = mergeSameWorks(items).slice(0, SHELF_LIMIT);
   if (items.length === 0) throw new Error('货架数据为空');
   setCache(key, items, SHELF_TTL);
   return items;
