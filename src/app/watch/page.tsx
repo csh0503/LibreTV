@@ -854,7 +854,7 @@ function FailoverOverlayCard({
     <div className="pointer-events-auto inset-0 w-full h-full bg-black/70 backdrop-blur-[2px] flex items-center justify-center p-4 animate-fade-in">
       <div
         role="status"
-        className="w-full max-w-sm rounded-2xl border border-white/15 bg-[#0f172a]/95 text-white p-5 shadow-2xl space-y-3"
+        className="w-full max-w-sm rounded-2xl border border-white/15 bg-[#1f1e1c]/95 text-white p-5 shadow-2xl space-y-3"
       >
         {exhausted ? (
           <>
@@ -1009,7 +1009,7 @@ function EndEpisodeOverlayCard({
           role="dialog"
           aria-modal="true"
           aria-label="还在看吗？"
-          className="w-full max-w-md rounded-2xl border border-white/15 bg-[#0f172a]/95 text-white p-5 sm:p-6 shadow-2xl space-y-4"
+          className="w-full max-w-md rounded-2xl border border-white/15 bg-[#1f1e1c]/95 text-white p-5 sm:p-6 shadow-2xl space-y-4"
         >
           <div className="flex items-center gap-3.5">
             {cover && !imgFailed ? (
@@ -1023,7 +1023,7 @@ function EndEpisodeOverlayCard({
               />
             ) : null}
             <div className="min-w-0 space-y-1">
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-500/20 text-amber-300">
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-[#d4b88c]/20 text-[#d4b88c]">
                 已连续播放 {state.streak} 集
               </span>
               <h3 className="text-lg sm:text-xl font-bold text-white">还在看吗？</h3>
@@ -1068,7 +1068,7 @@ function EndEpisodeOverlayCard({
       <div
         role="dialog"
         aria-label={`下一集：第 ${nextEpNum} 集`}
-        className="w-full max-w-sm sm:max-w-md rounded-2xl border border-white/15 bg-[#0f172a]/95 text-white p-4 sm:p-5 shadow-2xl space-y-3.5"
+        className="w-full max-w-sm sm:max-w-md rounded-2xl border border-white/15 bg-[#1f1e1c]/95 text-white p-4 sm:p-5 shadow-2xl space-y-3.5"
       >
         <div className="flex items-start gap-3.5">
           {cover && !imgFailed ? (
@@ -1098,7 +1098,7 @@ function EndEpisodeOverlayCard({
 
           <div className="min-w-0 flex-1 space-y-1">
             <div className="flex items-center justify-between gap-2">
-              <span className="text-xs font-semibold text-sky-400">
+              <span className="text-xs font-semibold text-[#a0b4c2]">
                 {isCounting ? `${state.remaining} 秒后自动播放下一集` : '下一集就绪'}
               </span>
             </div>
@@ -1117,7 +1117,7 @@ function EndEpisodeOverlayCard({
         {isCounting && (
           <div className="h-1.5 w-full rounded-full bg-white/15 overflow-hidden">
             <div
-              className="h-full bg-sky-400 transition-all duration-700"
+              className="h-full bg-[#a0b4c2] transition-all duration-700"
               style={{ width: `${progressPct}%` }}
             />
           </div>

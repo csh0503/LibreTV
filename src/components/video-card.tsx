@@ -80,7 +80,7 @@ export function AggregatedCard({
             />
             <div className="absolute inset-0 bg-gradient-to-r from-black/30 to-transparent" />
             {multi && (
-              <span className="absolute top-1.5 left-1.5 tag bg-black/45 backdrop-blur-md text-white font-medium">
+              <span className="absolute top-1.5 left-1.5 tag bg-black/60 text-white font-medium">
                 {group.items.length} 源
               </span>
             )}
@@ -91,7 +91,7 @@ export function AggregatedCard({
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 4v16m10-16v16M3 6a1 1 0 011-1h1a1 1 0 011 1v12a1 1 0 01-1 1H4a1 1 0 01-1-1V6zm4 0a1 1 0 011-1h1a1 1 0 011 1v12a1 1 0 01-1 1h-1a1 1 0 01-1-1V6zm8 0a1 1 0 011-1h1a1 1 0 011 1v12a1 1 0 01-1 1h-1a1 1 0 01-1-1V6zm4 0a1 1 0 011-1h1a1 1 0 011 1v12a1 1 0 01-1 1h-1a1 1 0 01-1-1V6z" />
             </svg>
             {multi && (
-              <span className="absolute top-1.5 left-1.5 tag bg-black/45 backdrop-blur-md text-white font-medium">
+              <span className="absolute top-1.5 left-1.5 tag bg-black/60 text-white font-medium">
                 {group.items.length} 源
               </span>
             )}
@@ -106,7 +106,7 @@ export function AggregatedCard({
             <div className="flex flex-wrap gap-1 mb-1.5">
               {group.typeName && <span className="tag bg-content/[0.07] text-muted">{group.typeName}</span>}
               {group.year && <span className="tag bg-content/[0.07] text-muted">{group.year}</span>}
-              {adult && <span className="tag bg-pink-500/15 text-pink-600 dark:text-pink-400">(18+)</span>}
+              {adult && <span className="tag bg-danger/15 text-danger">(18+)</span>}
             </div>
             <p className="text-xs text-muted line-clamp-2 mb-2">{group.remarks || '暂无介绍'}</p>
           </div>
@@ -143,7 +143,7 @@ export function AggregatedCard({
                   'text-xs transition-all cursor-pointer',
                   'border-line bg-chip hover:border-accent hover:bg-accent/10',
                   i === 0 && Object.keys(qualityMap).length > 0 && 'border-accent/60',
-                  item.isAdult && 'border-pink-500/30'
+                  item.isAdult && 'border-danger/30'
                 )}
                 onClick={(e) => {
                   e.stopPropagation();
@@ -221,7 +221,7 @@ export function VideoCard({ item, onClick }: { item: SearchResultItem; onClick: 
             </h3>
             <div className="flex flex-wrap gap-1 mb-1.5">
               {item.typeName && <span className="tag bg-accent/15 text-accent">{item.typeName}</span>}
-              {item.year && <span className="tag bg-purple-500/15 text-purple-600 dark:text-purple-300">{item.year}</span>}
+              {item.year && <span className="tag bg-content/[0.07] text-muted">{item.year}</span>}
             </div>
             <p className="text-xs text-muted line-clamp-2 mb-2">{item.remarks || '暂无介绍'}</p>
           </div>
@@ -258,7 +258,7 @@ export function DoubanCard({
 
   return (
     <div
-      className="group/card cursor-pointer rounded-2xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+      className="group/card cursor-pointer rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
       role="button"
       tabIndex={0}
       onClick={onClick}
@@ -270,7 +270,7 @@ export function DoubanCard({
         }
       }}
     >
-      <div className="relative aspect-[2/3] bg-chip rounded-2xl overflow-hidden ring-1 ring-content/[0.07] shadow-[0_6px_20px_rgba(0,0,0,0.25)] transition-[transform,box-shadow] duration-300 ease-out group-hover/card:scale-[1.04] group-hover/card:shadow-[0_14px_36px_rgba(0,0,0,0.4)]">
+      <div className="relative aspect-[2/3] bg-chip rounded-xl overflow-hidden ring-1 ring-inset ring-content/[0.06] shadow-[0_2px_10px_rgba(0,0,0,0.14)] transition-[transform,box-shadow] duration-300 ease-out group-hover/card:-translate-y-1 group-hover/card:shadow-[0_14px_30px_rgba(0,0,0,0.28)]">
         {item.cover && !imgFailed ? (
           <SmartImage
             url={item.cover}
@@ -290,26 +290,27 @@ export function DoubanCard({
         {item.favorite && (
           <FavoriteButton
             entry={item.favorite}
-            className="absolute top-1.5 left-1.5 z-10 bg-black/35 backdrop-blur-md text-white hover:bg-black/55 opacity-0 group-hover/card:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity"
+            className="absolute top-1.5 left-1.5 z-10 bg-black/50 text-white hover:bg-black/55 opacity-0 group-hover/card:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity"
             onToggle={(saved) => {
               if (saved) onFavorite?.();
             }}
           />
         )}
         {item.rating && (
-          <span className="absolute top-1.5 right-1.5 tag bg-black/40 backdrop-blur-md text-white font-semibold text-[11px]">
-            <span className="text-rating">★</span> {item.rating}
+          <span className="absolute top-1.5 right-1.5 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md bg-black/60 text-white/95 font-medium text-[10.5px] tabular-nums">
+            <svg width="9" height="9" viewBox="0 0 24 24" className="text-rating" fill="currentColor" aria-hidden="true"><path d="M12 2.8l2.8 5.9 6.4.8-4.7 4.4 1.2 6.4L12 17.2l-5.7 3.1 1.2-6.4-4.7-4.4 6.4-.8z" /></svg>
+            {item.rating}
           </span>
         )}
         {item.badge && (
-          <span className="absolute bottom-1.5 left-1.5 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/45 backdrop-blur-md text-[10px] text-white font-medium">
-            <span className={cn('w-1.5 h-1.5 rounded-full', item.badge.tone === 'ok' ? 'bg-emerald-400' : 'bg-amber-400')} aria-hidden />
+          <span className="absolute bottom-1.5 left-1.5 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-black/60 text-[10px] text-white/90 font-medium tracking-wide">
+            <span className={cn('w-1.5 h-1.5 rounded-full', item.badge.tone === 'ok' ? 'bg-[#a0b89d]' : 'bg-[#d4b88c]')} aria-hidden />
             {item.badge.text}
           </span>
         )}
       </div>
       <div className="pt-2 px-0.5">
-        <div className="text-[13px] font-medium text-content truncate" title={item.title}>
+        <div className="text-[13px] font-medium text-content/90 truncate" title={item.title}>
           {item.title}
         </div>
         {item.meta && <div className="text-[11px] text-faint truncate mt-0.5">{item.meta}</div>}

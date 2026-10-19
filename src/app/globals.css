@@ -4,63 +4,64 @@
 
 /*
  * 语义化配色（RGB 三元组，供 Tailwind 以 <alpha-value> 注入透明度）。
- * 2026-10 改版：参照 Apple 的中性灰阶 + 系统蓝，暗色是近黑底、亮色是 #f5f5f7 底；
- * 面板走「玻璃」（半透明 + 背景模糊，见 .glass），按钮、标签一律圆角胶囊。
+ * 2026-10-19 改版：莫兰迪色系（低饱和、带一点灰的暖色），版式参考 Apple TV / Netflix。
+ * 暗色是暖炭灰底、燕麦白字；亮色是米灰底、深灰褐字。主色是雾霾蓝，状态色是鼠尾草绿 / 赭黄 / 豆沙红。
+ * 面板走「玻璃」（半透明 + 背景模糊，见 .glass），按钮、标签一律圆角胶囊，线条用发丝细线。
  */
 :root {
-  --c-page: 245 245 247;           /* #f5f5f7 */
-  --c-surface: 255 255 255;
-  --c-surface-raised: 255 255 255;
-  --c-card: 255 255 255;
-  --c-chip: 232 232 237;           /* #e8e8ed */
-  --c-hover: 222 222 227;
-  --c-line: 210 210 215;           /* #d2d2d7 */
-  --c-content: 29 29 31;           /* #1d1d1f */
-  --c-muted: 66 66 69;             /* #424245 */
-  --c-faint: 110 110 115;          /* #6e6e73（白底 5:1） */
-  --c-accent: 0 113 227;           /* #0071e3 */
-  --c-accent-hover: 0 102 204;
+  --c-page: 243 240 235;           /* #f3f0eb 米灰 */
+  --c-surface: 250 248 244;        /* #faf8f4 */
+  --c-surface-raised: 255 254 251;
+  --c-card: 250 248 244;
+  --c-chip: 231 226 218;           /* #e7e2da */
+  --c-hover: 221 215 206;
+  --c-line: 220 214 205;           /* #dcd6cd */
+  --c-content: 46 43 40;           /* #2e2b28 */
+  --c-muted: 88 83 77;             /* #58534d */
+  --c-faint: 116 110 102;          /* #746e66（米灰底 4.6:1） */
+  --c-accent: 98 120 136;          /* #627888 雾霾蓝 */
+  --c-accent-hover: 84 105 120;
   --c-on-accent: 255 255 255;
-  --c-danger: 215 0 21;            /* #d70015 */
-  --c-danger-hover: 185 0 18;
-  --c-success: 36 138 61;          /* #248a3d */
-  --c-warning: 178 80 0;           /* #b25000 */
-  --c-info: 0 113 227;
-  --c-rating: 230 140 0;
-  --c-danger-solid: 215 0 21;
-  --c-success-solid: 36 138 61;
-  --c-warning-solid: 178 80 0;
-  --c-info-solid: 0 102 204;
+  --c-danger: 160 88 82;           /* #a05852 豆沙红 */
+  --c-danger-hover: 138 72 67;
+  --c-success: 98 128 97;          /* #628061 鼠尾草绿 */
+  --c-warning: 150 113 62;         /* #96713e 赭黄 */
+  --c-info: 98 120 136;
+  --c-rating: 168 128 64;          /* #a88040 */
+  --c-danger-solid: 160 88 82;
+  --c-success-solid: 98 128 97;
+  --c-warning-solid: 150 113 62;
+  --c-info-solid: 84 105 120;
   /* 玻璃面板的底色（不透明度由 .glass 控制） */
-  --c-glass: 255 255 255;
+  --c-glass: 250 248 244;
   color-scheme: light;
 }
 
 .dark {
-  --c-page: 10 10 12;              /* #0a0a0c */
-  --c-surface: 28 28 30;           /* #1c1c1e */
-  --c-surface-raised: 32 32 35;
-  --c-card: 22 22 24;              /* #161618 */
-  --c-chip: 44 44 46;              /* #2c2c2e */
-  --c-hover: 58 58 60;             /* #3a3a3c */
-  --c-line: 52 52 56;
-  --c-content: 245 245 247;        /* #f5f5f7 */
-  --c-muted: 174 174 178;
-  --c-faint: 134 134 139;          /* #86868b */
-  --c-accent: 10 132 255;          /* #0a84ff */
-  --c-accent-hover: 64 156 255;
-  --c-on-accent: 255 255 255;
-  --c-danger: 255 69 58;           /* #ff453a */
-  --c-danger-hover: 255 105 97;
-  --c-success: 48 209 88;          /* #30d158 */
-  --c-warning: 255 159 10;         /* #ff9f0a */
-  --c-info: 100 210 255;
-  --c-rating: 255 204 0;           /* #ffcc00 */
-  --c-danger-solid: 215 0 21;
-  --c-success-solid: 36 138 61;
-  --c-warning-solid: 178 80 0;
-  --c-info-solid: 0 102 204;
-  --c-glass: 30 30 32;
+  --c-page: 21 20 19;              /* #151413 暖炭灰 */
+  --c-surface: 31 30 28;           /* #1f1e1c */
+  --c-surface-raised: 37 35 33;
+  --c-card: 27 26 24;              /* #1b1a18 */
+  --c-chip: 41 39 37;              /* #292725 */
+  --c-hover: 52 50 47;
+  --c-line: 46 44 41;
+  --c-content: 236 232 225;        /* #ece8e1 燕麦白 */
+  --c-muted: 184 178 169;          /* #b8b2a9 */
+  --c-faint: 143 137 129;          /* #8f8981 */
+  --c-accent: 160 180 194;         /* #a0b4c2 雾霾蓝 */
+  --c-accent-hover: 180 197 209;
+  --c-on-accent: 24 26 28;
+  --c-danger: 214 148 141;         /* #d6948d 豆沙红 */
+  --c-danger-hover: 226 170 164;
+  --c-success: 160 184 157;        /* #a0b89d 鼠尾草绿 */
+  --c-warning: 212 184 140;        /* #d4b88c 赭黄 */
+  --c-info: 160 180 194;
+  --c-rating: 222 196 146;         /* #dec492 */
+  --c-danger-solid: 150 84 78;
+  --c-success-solid: 92 120 90;
+  --c-warning-solid: 140 106 58;
+  --c-info-solid: 84 105 120;
+  --c-glass: 33 32 30;
   color-scheme: dark;
 }
 
@@ -69,13 +70,7 @@ body {
   @apply bg-page text-content antialiased;
 }
 
-/* 暗色：近黑底，顶上一抹很淡的蓝色光晕 */
-.dark body {
-  background:
-    radial-gradient(1100px 520px at 50% -160px, rgb(10 132 255 / 0.12), transparent 70%),
-    rgb(var(--c-page));
-  background-attachment: fixed;
-}
+/* 底色是纯色：以前暗色顶上有一层 background-attachment: fixed 的光晕，滚动时整页重绘，手机上会卡 */
 
 body {
   font-family: var(--font-inter), -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'HarmonyOS Sans SC',

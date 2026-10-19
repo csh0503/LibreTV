@@ -1,5 +1,4 @@
 import { parseM3u8Playlist, type ParsedPlaylist } from './m3u8-parse';
-import { StreamingTransmuxer } from './mp4-transmuxer';
 
 /**
  * 整集离线下载：
@@ -227,6 +226,8 @@ export async function runDownloadJob(opts: DownloadJobOptions): Promise<void> {
   if (format === 'MP4') {
     // 传入整集时长：mux.js 恒把 moov 时长写成 0xFFFFFFFF（timescale 90000
     // → 播放器显示 13:15:21），必须在写出 initSegment 前回填真实值
+    // mux.js 约 110KB：只有真要转 MP4 时才加载，不让每个页面打开都背着它
+    const { StreamingTransmuxer } = await import('./mp4-transmuxer');
     const transmuxer = new StreamingTransmuxer(target, { durationSeconds: parsed.totalDuration });
     for (let i = 1; i <= total; i++) {
       if (signal.aborted) return;

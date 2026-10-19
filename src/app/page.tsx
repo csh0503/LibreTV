@@ -1,6 +1,7 @@
 'use client';
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import dynamic from 'next/dynamic';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Header } from '@/components/header';
 import { RecommendSection } from '@/components/douban-section';
@@ -15,8 +16,6 @@ import {
   TopTenRow,
   UpcomingRow,
 } from '@/components/home-rows';
-import { DetailModal } from '@/components/detail-modal';
-import { TitleModal } from '@/components/title-modal';
 import { favoriteIdOf } from '@/lib/db';
 import { aggregateResults, DoubanCard, type AggregatedGroup } from '@/components/video-card';
 import { useAppStore, isInDisabledSubscription, isSourceDisabled } from '@/lib/store';
@@ -48,6 +47,17 @@ import { EmptyState, Spinner } from '@/components/states';
 import { NoSourceNotice } from '@/components/no-source';
 import { Icon } from '@/components/icon';
 import { SiteFooter } from '@/components/site-footer';
+
+// 作品详情 / 选集弹窗要点卡片才用到：不放进首页首屏的包里，浏览器闲下来时先预载，点的时候不用等
+const loadTitleModal = () => import('@/components/title-modal');
+const loadDetailModal = () => import('@/components/detail-modal');
+const TitleModal = dynamic(() => loadTitleModal().then((m) => m.TitleModal), { ssr: false });
+const DetailModal = dynamic(() => loadDetailModal().then((m) => m.DetailModal), { ssr: false });
+if (typeof window !== 'undefined') {
+  const preload = () => { void loadTitleModal(); void loadDetailModal(); };
+  const ric = (window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number }).requestIdleCallback;
+  window.setTimeout(() => (ric ? ric(preload, { timeout: 4000 }) : preload()), 3000);
+}
 
 /**
  * 首页：搜索（URL ?s= 驱动，可后退/分享）+ 豆瓣推荐。
@@ -224,26 +234,10 @@ function HomeContent() {
       <Header />
 
       <main className="relative flex-1 max-w-6xl w-full mx-auto px-4 py-6">
-        {/* 首屏氛围渐变 */}
-        {!urlQuery && (
-          <div
-            aria-hidden
-            className="pointer-events-none absolute inset-x-0 top-0 h-[420px] -z-10"
-            style={{
-              background:
-                'radial-gradient(60% 60% at 50% 0%, rgba(35,173,229,0.10) 0%, rgba(35,173,229,0.03) 45%, transparent 75%)',
-            }}
-          />
-        )}
-
         {/* 搜索区 */}
-        <section className={cn('flex flex-col items-center', urlQuery ? 'mb-6' : 'mt-8 mb-8')}>
-          {!urlQuery && (
-            <header className="text-center mb-6">
-              <h1 className="text-4xl sm:text-5xl font-bold brand-gradient">LibreTV</h1>
-            </header>
-          )}
-          {urlQuery && <h1 className="sr-only">LibreTV 视频搜索</h1>}
+        {/* 首页不再放大号品牌字（Apple TV / Netflix 都是内容先行）：顶栏有品牌，这里只留一条搜索 */}
+        <section className={cn('flex flex-col items-center', urlQuery ? 'mb-6' : 'mt-2 mb-7')}>
+          <h1 className="sr-only">{urlQuery ? 'LibreTV 视频搜索' : 'LibreTV'}</h1>
           {/* 定位容器比胶囊宽一圈：浮层按它的宽度对齐，接缝处不会与胶囊边框错位 1px */}
           <div ref={searchHistory.containerRef} className="relative w-full max-w-2xl">
             <form
@@ -260,7 +254,7 @@ function HomeContent() {
                   // 12px 圆角矩形（非胶囊）：收起态与展开态共用同一组上圆角，
                   // 展开时输入框这部分形状完全不发生变化，上下圆角也与下拉保持一致；
                   // 右侧与上下不留内边距，由搜索按钮拉伸填满、与搜索框边缘贴合
-                  'flex items-center min-h-[52px] pl-4 pr-1.5 glass shadow-[0_8px_30px_rgba(0,0,0,0.18)]',
+                  'flex items-center min-h-[48px] pl-4 pr-1.5 bg-content/[0.05] ring-1 ring-inset ring-content/[0.08]',
                   'transition-[background-color,border-color,border-radius,box-shadow] duration-200',
                   searchHistory.visible
                     ? // 展开时：只把底边改为内部分隔线，和下面的浮层拼成同一个面板
@@ -345,8 +339,8 @@ function HomeContent() {
               className={cn(
                 'flex items-center gap-1.5 px-3 py-1 rounded-full border transition-all text-xs font-medium',
                 yellowFilter
-                  ? 'border-line text-muted bg-surface/50 hover:bg-chip hover:text-content'
-                  : 'border-red-500/50 text-red-500 bg-red-500/10 shadow-[0_0_12px_rgba(239,68,68,0.35)]'
+                  ? 'border-transparent text-faint hover:text-content'
+                  : 'border-danger/40 text-danger bg-danger/10'
               )}
               title={yellowFilter ? '解锁成人源、成人片名和成人分类' : '重新隐藏成人内容'}
               aria-pressed={!yellowFilter}

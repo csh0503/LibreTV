@@ -39,6 +39,7 @@ import { Icon } from './icon';
 import { SmartImage } from './smart-image';
 import { useToast } from './toast';
 import { DoubanCard } from './video-card';
+import { useIdleReady } from './use-idle-ready';
 
 /**
  * 通用横向滚动货架（Netflix 风格）：
@@ -381,7 +382,7 @@ export function HeroBillboard({ onPick }: { onPick: (title: string, pick?: Title
       aria-label="今日主推影片"
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
-      className="group/hero relative mb-8 rounded-[28px] overflow-hidden ring-1 ring-white/[0.08] bg-[#0b0b0d] text-white shadow-[0_20px_60px_rgba(0,0,0,0.45)] select-none"
+      className="group/hero relative mb-10 rounded-[22px] overflow-hidden ring-1 ring-inset ring-white/[0.06] bg-[#151413] text-white shadow-[0_18px_50px_rgba(0,0,0,0.35)] select-none"
     >
       {/* 背景大图氛围层：有 16:9 横版海报时高清展示，仅竖版海报时作高斯模糊氛围背景 */}
       {bgUrl && (!imgFailed || hasWidescreenBackdrop) && (
@@ -392,8 +393,9 @@ export function HeroBillboard({ onPick }: { onPick: (title: string, pick?: Title
             customProxy={customImageProxy}
             alt=""
             className={cn(
-              'w-full h-full object-cover transition-all duration-700',
-              hasWidescreenBackdrop ? 'scale-105 blur-[1px] opacity-60' : 'scale-110 blur-2xl opacity-45',
+              'w-full h-full object-cover transition-opacity duration-700',
+              // 只有竖版海报时糊成氛围底。模糊半径越大越吃 GPU（手机上翻页会掉帧），xl 就够
+              hasWidescreenBackdrop ? 'opacity-70' : 'scale-110 blur-xl opacity-40',
             )}
             onExhausted={() => {
               if (hasWidescreenBackdrop) setBackdropFailed(true);
@@ -439,21 +441,19 @@ export function HeroBillboard({ onPick }: { onPick: (title: string, pick?: Title
 
       <div className="relative z-10 px-6 py-5 sm:px-12 sm:py-7 md:px-14 md:py-8 flex items-center justify-between gap-6">
         <div className="min-w-0 flex-1 max-w-2xl space-y-3">
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-white text-black font-semibold">
-              今日 TOP {activeIndex + 1}
-            </span>
+          {/* 元数据一行文字（Apple TV 式），不再是一排胶囊 */}
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-white/70">
+            <span className="text-[11px] font-semibold tracking-[0.14em] text-white/90">今日 TOP {activeIndex + 1}</span>
             {current.rating && (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/[0.12] text-white font-semibold backdrop-blur-md ring-1 ring-white/10">
-                ★ {current.rating}
-              </span>
+              <>
+                <span aria-hidden className="text-white/30">·</span>
+                <span className="text-[#dec492] font-medium tabular-nums">★ {current.rating}</span>
+              </>
             )}
             {metaTags.map((tag, idx) => (
-              <span
-                key={idx}
-                className="px-2 py-0.5 rounded-full bg-white/[0.08] text-white/80 backdrop-blur-md ring-1 ring-white/10"
-              >
-                {tag}
+              <span key={idx} className="contents">
+                <span aria-hidden className="text-white/30">·</span>
+                <span>{tag}</span>
               </span>
             ))}
           </div>
@@ -554,6 +554,7 @@ export function HeroBillboard({ onPick }: { onPick: (title: string, pick?: Title
  */
 export function ContinueWatchingRow() {
   const profileId = useProfile().id;
+  const idle = useIdleReady();
   const yellowFilter = useAppStore((s) => s.yellowFilter);
   const customAPIs = useAppStore((s) => s.customAPIs);
   const envSources = useAppStore((s) => s.envSources);
@@ -600,7 +601,8 @@ export function ContinueWatchingRow() {
     queries: checkTargets.map(({ item, source }) => ({
       queryKey: ['continue-watching-detail', item.sourceKey, item.vodId, source?.url],
       queryFn: ({ signal }: { signal: AbortSignal }) => api.detail(item.vodId, source!, signal),
-      enabled: Boolean(source && item.vodId && item.totalEpisodes > 0),
+      // 后台检查有没有新集：等首屏内容出来再查
+      enabled: Boolean(idle && source && item.vodId && item.totalEpisodes > 0),
       staleTime: 15 * 60_000,
       retry: 0,
     })),
@@ -724,7 +726,7 @@ function ContinueWatchingCard({
 
           {/* 追更提醒角标：「更新了」 */}
           {view.hasUpdate && view.updateBadge && (
-            <span className="absolute top-1.5 left-1.5 z-10 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500 text-white shadow-md">
+            <span className="absolute top-1.5 left-1.5 z-10 px-2 py-0.5 rounded-full text-[10px] font-bold bg-success-solid text-white shadow-md">
               {view.updateBadge}
             </span>
           )}
@@ -762,7 +764,7 @@ function ContinueWatchingCard({
           <div
             className={cn(
               'text-[10px] truncate mt-0.5',
-              view.hasUpdate ? 'text-emerald-500 font-medium' : 'text-faint',
+              view.hasUpdate ? 'text-success font-medium' : 'text-faint',
             )}
           >
             {view.subLabel}
@@ -797,6 +799,8 @@ export function MyListRow({
 }) {
   const router = useRouter();
   const profileId = useProfile().id;
+  const idle = useIdleReady();
+  const idleLate = useIdleReady(8000);
   const yellowFilter = useAppStore((s) => s.yellowFilter);
   const customAPIs = useAppStore((s) => s.customAPIs);
   const envSources = useAppStore((s) => s.envSources);
@@ -853,6 +857,7 @@ export function MyListRow({
       // 和「继续观看」共用缓存键形状，同一部不会请求两次
       queryKey: ['continue-watching-detail', row.sourceKey, row.vodId, source?.url],
       queryFn: ({ signal }: { signal: AbortSignal }) => api.detail(row.vodId!, source!, signal),
+      enabled: idle,
       staleTime: 15 * 60_000,
       retry: 0,
     })),
@@ -877,7 +882,8 @@ export function MyListRow({
         if (res.list.length === 0 && res.failures.length >= selectedSources.length) return null;
         return hasTitleMatch(aggregateResults(res.list, row.title), row.title);
       },
-      enabled: selectedSources.length > 0,
+      // 整站搜索最重：再晚一点
+      enabled: idleLate && selectedSources.length > 0,
       staleTime: 30 * 60_000,
       retry: 0,
     })),
@@ -1209,7 +1215,7 @@ function TopTenCard({
       <div className="relative z-10 w-[7.25rem] sm:w-32">
         {(item.rankNew || (item.rankDelta ?? 0) >= 2) && (
           <span
-            className="absolute top-9 right-1.5 z-20 px-1.5 py-0.5 rounded-full text-[10px] font-semibold text-white bg-black/45 backdrop-blur-md ring-1 ring-white/15 pointer-events-none"
+            className="absolute top-9 right-1.5 z-20 px-1.5 py-0.5 rounded-full text-[10px] font-semibold text-white bg-black/60 ring-1 ring-white/15 pointer-events-none"
             title={item.rankNew ? '最近一天新上榜' : `比半天到一天前上升 ${item.rankDelta} 名`}
           >
             {item.rankNew ? '新上榜' : `↑${item.rankDelta}`}

@@ -311,7 +311,7 @@ export function LivePlayer({ url, title, onPrevChannel, onNextChannel }: LivePla
       backdrop: true,
       playsInline: true,
       airplay: true,
-      theme: '#0a84ff',
+      theme: '#a0b4c2',
       controls,
       lang: navigator.language.toLowerCase().startsWith('zh') ? 'zh-cn' : 'en',
       moreVideoAttr: { playsInline: true },

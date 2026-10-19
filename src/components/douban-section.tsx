@@ -29,13 +29,29 @@ import { absorbHallTaste, rememberDoubanItem } from '@/lib/taste-store';
 import { AdultLibrary } from './adult-library';
 import { useLoadMore } from './use-load-more';
 
-const CHANNELS: { id: HallChannel; label: string; icon: string }[] = [
-  { id: 'anime', label: '动漫', icon: '🌸' },
-  { id: 'movie', label: '电影', icon: '🍿' },
-  { id: 'tv', label: '电视剧', icon: '📺' },
-  { id: 'show', label: '综艺', icon: '🎪' },
-  { id: 'doc', label: '纪录片', icon: '🌍' },
+/** 细线图标（1.6 描边，跟着文字颜色），不再用 emoji */
+const CHANNEL_ICON_PATHS: Record<Exclude<HallChannel, 'adult'>, string> = {
+  anime: 'M12 3.5c.7 4.3 3.2 6.8 7.5 7.5-4.3.7-6.8 3.2-7.5 7.5-.7-4.3-3.2-6.8-7.5-7.5 4.3-.7 6.8-3.2 7.5-7.5z',
+  movie: 'M4 6.5h16v11H4zM4 10h16M8.5 6.5 10 10M13.5 6.5 15 10',
+  tv: 'M3.5 6.5h17v10.5h-17zM9 20.5h6M12 17v3.5',
+  show: 'M12 3.5a2.5 2.5 0 0 1 2.5 2.5v5a2.5 2.5 0 0 1-5 0V6A2.5 2.5 0 0 1 12 3.5zM6.5 11a5.5 5.5 0 0 0 11 0M12 16.5v4M9 20.5h6',
+  doc: 'M12 20.5a8.5 8.5 0 1 0 0-17 8.5 8.5 0 0 0 0 17zM3.5 12h17M12 3.5c2.4 2.4 3.4 5.2 3.4 8.5s-1 6.1-3.4 8.5c-2.4-2.4-3.4-5.2-3.4-8.5s1-6.1 3.4-8.5z',
+};
+const CHANNELS: { id: Exclude<HallChannel, 'adult'>; label: string }[] = [
+  { id: 'anime', label: '动漫' },
+  { id: 'movie', label: '电影' },
+  { id: 'tv', label: '电视剧' },
+  { id: 'show', label: '综艺' },
+  { id: 'doc', label: '纪录片' },
 ];
+
+function ChannelIcon({ id }: { id: Exclude<HallChannel, 'adult'> }) {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d={CHANNEL_ICON_PATHS[id]} />
+    </svg>
+  );
+}
 
 const GENRES: Record<Exclude<HallChannel, 'adult'>, string[]> = {
   anime: ['全部', '热血', '奇幻', '恋爱', '日常', '搞笑', '科幻', '治愈', '机战', '悬疑', '冒险', '战斗', '校园', '催泪'],
@@ -245,21 +261,24 @@ export function RecommendSection({
 
   return (
     <section ref={ref} aria-label="影视与动漫大厅" className="space-y-3.5 pt-2 scroll-mt-20">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line pb-2.5">
-        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
-          <h2 className="text-base sm:text-lg font-bold text-content tracking-tight mr-1">分类片库</h2>
-          {CHANNELS.map((c) => (
-            <ChannelButton key={c.id} active={channel === c.id} onClick={() => pickChannel(c.id)}>
-              <span>{c.icon}</span>
-              <span>{c.label}</span>
-            </ChannelButton>
-          ))}
-          {!yellowFilter && (
-            <ChannelButton active={channel === 'adult'} onClick={() => pickChannel('adult')}>
-              <span>18+</span>
-              <span>成人</span>
-            </ChannelButton>
-          )}
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2.5">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2.5">
+          <h2 className="text-lg sm:text-xl font-semibold text-content tracking-tight">分类片库</h2>
+          {/* 分段控件（Apple TV 式）：一条浅底，选中的那段浮起来 */}
+          <div role="tablist" aria-label="频道" className="flex items-center gap-0.5 p-1 rounded-full bg-content/[0.06] ring-1 ring-inset ring-content/[0.06] overflow-x-auto scrollbar-none max-w-full">
+            {CHANNELS.map((c) => (
+              <ChannelButton key={c.id} active={channel === c.id} onClick={() => pickChannel(c.id)}>
+                <ChannelIcon id={c.id} />
+                <span>{c.label}</span>
+              </ChannelButton>
+            ))}
+            {!yellowFilter && (
+              <ChannelButton active={channel === 'adult'} onClick={() => pickChannel('adult')}>
+                <span className="text-[11px] font-semibold tabular-nums">18+</span>
+                <span>成人</span>
+              </ChannelButton>
+            )}
+          </div>
         </div>
         {channel !== 'adult' && (
           <div className="flex items-center gap-2 ml-auto">
@@ -267,7 +286,7 @@ export function RecommendSection({
               <button
                 type="button"
                 onClick={reset}
-                className="px-2.5 py-1 rounded-xl text-xs text-accent hover:bg-accent/10 transition-colors cursor-pointer"
+                className="px-3 py-1.5 rounded-full text-xs text-muted hover:text-content transition-colors cursor-pointer"
               >
                 重置筛选
               </button>
@@ -275,9 +294,15 @@ export function RecommendSection({
             <button
               type="button"
               onClick={() => setFiltersExpanded((v) => !v)}
-              className="px-2.5 py-1 rounded-xl text-xs bg-chip text-muted hover:text-content hover:bg-hover transition-colors cursor-pointer"
+              aria-expanded={filtersExpanded}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs text-muted ring-1 ring-inset ring-content/[0.1] hover:text-content hover:bg-content/[0.05] transition-colors cursor-pointer"
             >
-              {filtersExpanded ? '收起筛选' : '展开筛选'}
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" aria-hidden="true">
+                <path d="M4 7h10M18 7h2M4 17h4M12 17h8" />
+                <circle cx="16" cy="7" r="2" />
+                <circle cx="10" cy="17" r="2" />
+              </svg>
+              {filtersExpanded ? '收起筛选' : '筛选'}
             </button>
           </div>
         )}
@@ -288,7 +313,7 @@ export function RecommendSection({
       ) : (
         <>
           {filtersExpanded && (
-            <div className="bg-surface/60 border border-line rounded-2xl p-3 sm:p-4 space-y-2 text-xs">
+            <div className="rounded-2xl bg-content/[0.03] ring-1 ring-inset ring-content/[0.06] px-3 py-3 sm:px-4 sm:py-3.5 space-y-2.5 text-xs">
               {channel === 'anime' && (
                 <FilterRow label="放送">
                   <FilterChip active={weekday === 'all'} onClick={() => setWeekday('all')}>
@@ -420,9 +445,13 @@ function ChannelButton({ active, onClick, children }: { active: boolean; onClick
     <button
       type="button"
       onClick={onClick}
+      role="tab"
+      aria-selected={active}
       className={cn(
-        'flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs sm:text-sm font-semibold transition-all',
-        active ? 'bg-accent text-on-accent shadow-sm' : 'bg-chip text-muted hover:text-content hover:bg-hover'
+        'flex shrink-0 items-center gap-1.5 px-3.5 py-1.5 rounded-full text-[13px] font-medium transition-all duration-200',
+        active
+          ? 'bg-surface-raised text-content shadow-[0_1px_3px_rgba(0,0,0,0.12),0_0_0_0.5px_rgba(0,0,0,0.06)]'
+          : 'text-muted hover:text-content'
       )}
     >
       {children}
@@ -433,7 +462,7 @@ function ChannelButton({ active, onClick, children }: { active: boolean; onClick
 function FilterRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-start gap-2">
-      <span className="text-muted shrink-0 w-10 sm:w-12 font-medium pt-1">{label}</span>
+      <span className="text-faint shrink-0 w-10 sm:w-12 pt-1 tracking-wide">{label}</span>
       <div className="flex flex-1 min-w-0 overflow-x-auto scrollbar-none sm:flex-wrap gap-1 pb-0.5">{children}</div>
     </div>
   );
@@ -444,9 +473,11 @@ function FilterChip({ active, onClick, children }: { active: boolean; onClick: (
     <button
       type="button"
       className={cn(
-        'px-2.5 py-0.5 rounded-full text-xs transition-colors shrink-0',
-        active ? 'bg-accent text-on-accent font-medium shadow-sm' : 'bg-chip text-muted hover:text-content hover:bg-hover'
+        'px-2.5 py-1 rounded-full text-xs transition-colors shrink-0',
+        // 选中：实心的深色胶囊（Apple 式），不再用亮蓝
+        active ? 'bg-content text-page font-medium' : 'text-muted hover:text-content hover:bg-content/[0.06]'
       )}
+      aria-pressed={active}
       onClick={onClick}
     >
       {children}

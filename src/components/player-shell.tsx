@@ -618,7 +618,7 @@ export function PlayerShell({
       lock: true,
       // ArtPlayer 自带的左右滑拖进度关掉：滑动手势（进度 / 亮度 / 音量）由我们自己处理
       gesture: false,
-      theme: '#0a84ff',
+      theme: '#a0b4c2',
       lang: navigator.language.toLowerCase().startsWith('zh') ? 'zh-cn' : 'en',
       moreVideoAttr: { crossOrigin: 'anonymous', playsInline: true },
       controls: [

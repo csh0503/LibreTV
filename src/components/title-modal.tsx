@@ -351,7 +351,7 @@ function TitleModalBody({
               {meta && <span className="text-muted">{meta}</span>}
               {statusBadge && (
                 <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-content/[0.08] text-[11px] font-medium text-content">
-                  <span className={cn('w-1.5 h-1.5 rounded-full', pick.status === 'airing' ? 'bg-amber-400' : 'bg-emerald-400')} aria-hidden />
+                  <span className={cn('w-1.5 h-1.5 rounded-full', pick.status === 'airing' ? 'bg-warning' : 'bg-success')} aria-hidden />
                   {statusBadge}
                 </span>
               )}

@@ -26,11 +26,11 @@ export function SortArrows({
         <div
           key={item.id}
           className={cn(
-            'inline-flex items-stretch overflow-hidden rounded-lg border',
-            sortKey === item.id ? 'border-accent' : 'border-line'
+            'inline-flex items-stretch overflow-hidden rounded-full ring-1 ring-inset',
+            sortKey === item.id ? 'ring-content/40' : 'ring-content/[0.1]'
           )}
         >
-          <span className={cn('px-2 py-0.5 text-xs self-center', sortKey === item.id ? 'text-content' : 'text-muted')}>
+          <span className={cn('pl-2.5 pr-1.5 py-1 text-xs self-center', sortKey === item.id ? 'text-content font-medium' : 'text-muted')}>
             {item.label}
           </span>
           <SortArrow
@@ -70,8 +70,8 @@ function SortArrow({
       aria-pressed={active}
       onClick={onClick}
       className={cn(
-        'w-6 text-xs leading-none border-l border-line',
-        active ? 'bg-accent text-on-accent' : 'bg-chip text-muted hover:text-content hover:bg-hover'
+        'w-6 text-xs leading-none last:pr-0.5',
+        active ? 'bg-content text-page' : 'text-faint hover:text-content hover:bg-content/[0.06]'
       )}
     >
       {glyph}

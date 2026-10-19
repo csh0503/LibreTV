@@ -114,7 +114,7 @@ export function NoSourceNotice({
         )}
       </div>
       <div className="flex-1 min-w-0 space-y-2 text-center sm:text-left">
-        <span className="inline-block px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-500/15 text-warning">
+        <span className="inline-block px-2 py-0.5 rounded-full text-[11px] font-medium bg-warning/15 text-warning">
           {headline}
         </span>
         <h3 className="text-lg font-bold text-content break-words">{pick.title}</h3>

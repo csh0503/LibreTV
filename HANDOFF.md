@@ -115,6 +115,11 @@
   - **长按放大镜**：CSS 拦不住，网页全屏时 touchstart 直接 `preventDefault`，轻点自己补一个 click（ArtPlayer 靠它显示 / 收起控制栏；React onClick 也收得到）。不全屏时不拦（否则在画面上滑不动页面），只靠 `user-select / touch-callout: none`（现在加到播放器所有子元素上）。
   - **状态栏**：iPhone Safari 不开放元素全屏，网页没办法收起状态栏（只有系统播放器能，设置里「全屏方式 → 系统播放器」）。网页全屏时把 `theme-color` 改成黑色、`html` 加 `player-web-fullscreen`（页面背景变黑，iOS 26 的 Safari 按背景色染状态栏），让状态栏和黑边融在一起。
 
+- **2026-10-19 视觉改版（莫兰迪色系，参考 Apple TV / Netflix）+ 首页提速**：
+  - 配色只改 `globals.css` 的 token：暗色暖炭灰底 `#151413` / 燕麦白字，亮色米灰底 `#f3f0eb`；主色雾霾蓝（暗 `#a0b4c2`、亮 `#627888`），状态色鼠尾草绿 / 赭黄 / 豆沙红。去掉了首页的蓝色光晕和暗色 body 的 `background-attachment: fixed` 光晕（滚动时整页重绘）。播放器主题色、theme-color 跟着换。
+  - 片库：频道改成分段控件（选中那段浮起来），emoji 换成 1.6 描边的细线图标；筛选选中态是深色实心胶囊（不再是亮蓝），排序箭头同款。卡片圆角 xl、阴影减轻，悬停上浮代替放大；评分 / 连载角标改成小方角标签。大图元数据改成一行文字（「今日 TOP 4 · ★7.5 · 2026 · 日本」）。首页不再放大号「LibreTV」品牌字，顶栏用文字品牌。剩下的硬编码色（emerald / amber / sky / #0f172a）都换成 token 或莫兰迪色。
+  - 提速：① `mux.js`（约 110KB）原来被下载管理器带进根布局，现在只在转 MP4 时 `import()`；② 顶栏四个抽屉、首页的作品详情 / 选集弹窗改 `next/dynamic`，抽屉第一次打开才加载，弹窗闲时预载。首页首屏 JS 304KB → 250KB，其他页约 −50KB。③ 「继续观看」查新集、「我的片单」查更新（每部一个详情请求，外加最多 4 次整站搜索）原来一打开就并发，改成首屏后闲时再查（`use-idle-ready.ts`，搜索再晚到 8 秒）。④ 卡片角标去掉 `backdrop-blur`（上百张卡片同时做背景模糊，滚动掉帧）；大图氛围层模糊半径从 2xl 降到 xl；图片 `decoding="async"`。
+
 ## 架构要点
 
 - 货架目录在 `src/lib/shelf-defs.ts`（客户端 / 服务端共用），取数在 `src/lib/shelves.ts`：热榜类复用 `fetchHotList`（`douban-weekly.ts` 的多源 RRF 融合），题材类用 TMDB discover（`src/lib/tmdb.ts` 的 `tmdbGet`）。

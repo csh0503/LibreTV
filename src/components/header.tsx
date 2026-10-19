@@ -1,18 +1,22 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { ThemeToggle } from './theme';
-import { SourceManagerDrawer } from './source-manager';
-import { HistoryPanel } from './history-panel';
-import { FavoritePanel } from './favorite-panel';
-import { ProfileDrawer } from './profile-drawer';
+import dynamic from 'next/dynamic';
 import { useProfile } from '@/lib/use-profile';
 import { requestShowDownloadManager } from './download-manager';
 import { Icon } from './icon';
 import { SearchHistoryDropdown, useSearchHistory } from './search-history';
 import { cn } from '@/lib/utils';
+
+// 四个抽屉（设置 / 历史 / 片单 / 设定档）连同它们用到的源管理、订阅解析等代码不小，
+// 每个页面打开都要先下载、解析一遍：改成第一次打开时才加载，之后一直挂着（关的动画照常）
+const SourceManagerDrawer = dynamic(() => import('./source-manager').then((m) => m.SourceManagerDrawer), { ssr: false });
+const HistoryPanel = dynamic(() => import('./history-panel').then((m) => m.HistoryPanel), { ssr: false });
+const FavoritePanel = dynamic(() => import('./favorite-panel').then((m) => m.FavoritePanel), { ssr: false });
+const ProfileDrawer = dynamic(() => import('./profile-drawer').then((m) => m.ProfileDrawer), { ssr: false });
 
 /** 顶部导航：Logo、搜索框（首页外）、历史、设置 */
 export function Header({ showSearch = false }: { showSearch?: boolean }) {
@@ -22,6 +26,15 @@ export function Header({ showSearch = false }: { showSearch?: boolean }) {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [favoriteOpen, setFavoriteOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  // 打开过就一直挂着
+  const [mounted, setMounted] = useState({ settings: false, history: false, favorite: false, profile: false });
+  useEffect(() => {
+    setMounted((m) =>
+      (settingsOpen && !m.settings) || (historyOpen && !m.history) || (favoriteOpen && !m.favorite) || (profileOpen && !m.profile)
+        ? { settings: m.settings || settingsOpen, history: m.history || historyOpen, favorite: m.favorite || favoriteOpen, profile: m.profile || profileOpen }
+        : m,
+    );
+  }, [settingsOpen, historyOpen, favoriteOpen, profileOpen]);
   const profile = useProfile();
   const [query, setQuery] = useState('');
   // 与首页搜索框共用同一套「最近搜索」下拉逻辑
@@ -46,8 +59,10 @@ export function Header({ showSearch = false }: { showSearch?: boolean }) {
       <header className="sticky top-0 z-40 glass !border-x-0 !border-t-0">
         <div className="max-w-6xl mx-auto px-4 h-14 flex items-center gap-3">
           <Link href="/" aria-label="LibreTV 首页" className="flex items-center shrink-0">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/icons/icon-512.png" alt="LibreTV" className="w-7 h-7 rounded-xl" />
+            {/* 文字品牌（Apple TV 式），不再用彩色图标 */}
+            <span className="text-[17px] font-semibold tracking-[-0.02em] text-content">
+              Libre<span className="text-faint font-medium">TV</span>
+            </span>
           </Link>
 
           {showSearch && (
@@ -135,10 +150,10 @@ export function Header({ showSearch = false }: { showSearch?: boolean }) {
         </div>
       </header>
 
-      <SourceManagerDrawer open={settingsOpen} onClose={() => setSettingsOpen(false)} />
-      <HistoryPanel open={historyOpen} onClose={() => setHistoryOpen(false)} />
-      <FavoritePanel open={favoriteOpen} onClose={() => setFavoriteOpen(false)} />
-      <ProfileDrawer open={profileOpen} onClose={() => setProfileOpen(false)} />
+      {mounted.settings && <SourceManagerDrawer open={settingsOpen} onClose={() => setSettingsOpen(false)} />}
+      {mounted.history && <HistoryPanel open={historyOpen} onClose={() => setHistoryOpen(false)} />}
+      {mounted.favorite && <FavoritePanel open={favoriteOpen} onClose={() => setFavoriteOpen(false)} />}
+      {mounted.profile && <ProfileDrawer open={profileOpen} onClose={() => setProfileOpen(false)} />}
     </>
   );
 }
