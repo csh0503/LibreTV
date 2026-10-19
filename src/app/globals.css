@@ -225,14 +225,29 @@ body {
  * 播放器表面的手势（双击快退快进 / 暂停、长按 2 倍速、滑动调进度亮度音量）自己处理：
  * 关掉 iOS 的双击缩放、长按放大镜 / 选字 / 弹出菜单。网页全屏时播放器会被搬到 <body> 下，所以写在播放器本身上。
  */
+.art-video-player,
+.art-video-player * {
+  -webkit-user-select: none !important;
+  user-select: none !important;
+  -webkit-touch-callout: none !important;
+  -webkit-user-drag: none;
+}
 .art-video-player {
   touch-action: manipulation;
+}
+/* 网页全屏：页面背景也是黑的，iOS Safari 的状态栏跟着变黑，和画面融在一起；整页都不能选字（长按不出放大镜） */
+html.player-web-fullscreen,
+html.player-web-fullscreen body {
+  background: #000 !important;
   -webkit-user-select: none;
   user-select: none;
   -webkit-touch-callout: none;
 }
-.art-video-player video {
-  -webkit-touch-callout: none;
+.seek-preview-box video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
 }
 
 /* 触屏用我们自己中间的播放 / 暂停键（player-shell），ArtPlayer 暂停时那个大播放图标就不要了，免得两个叠在一起 */

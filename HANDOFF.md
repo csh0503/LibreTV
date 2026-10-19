@@ -105,6 +105,16 @@
   - **季数写法不同**（`seasonKey`）：比对键再加「系列名 + 第几季」（第N季 / 第N期 / Season N / Ⅱ~Ⅹ，只认第二季及以后），「无职转生 第三季 ～…～」=「无职转生Ⅲ …」。
   - **跨页 / 一行内合并**（`mergeSameWorks`）：片库每页是各来源各取一页融合的，同一部常落在不同页还换了译名；「浏览全部」拼页时和首页每一行出口都按作品合并（原来只按编号 / 片名）。真实数据动漫 2026 两页 96 → 85，去掉的全是真重复。还没合并的：「七龙珠超」/「龙珠超」这种别名（豆瓣条目没有原名）。
 
+- **2026-10-19 「为你推荐」改用豆瓣「看过的人也喜欢」（item-based CF）**：
+  - 问题：原来按口味题材向豆瓣要「同题材」两页（第二页是 sort 'rate' 历史高分），结果是一排同题材老经典，「因为你看过《某某》」也只是同题材，和那部本身无关。
+  - 现在：`lib/douban-similar.ts`（`pickDoubanMatch` 用 rexxar `/search/movie` 认豆瓣条目，缓存 7 天；`fetchSimilar` 取 `/{tv|movie}/{id}/recommendations`，缓存 12 小时）+ `/api/similar`。`for-you.tsx` 取信号最强的 3 部（看得深 / 看完 / 收藏、越近越重，`signalWeight > 0.5` 按 `confidenceOf` 排，「因为你看过」那部排第一）各拿相似推荐：「因为你看过」直接用第一部的（不足 4 部退回按题材召回）；「为你推荐」用 `mergeSimilar` 投票合并（第 r 名贡献 权重/(r+3)，几部同时推荐的在前），不和下一排重复，不够 18 部用题材召回补。题材召回的主口味改成近期热门 + 高分各一页（原来两页都按热门翻页）。
+  - 用户确认：看过《咒术回战》第 2 季推第 3 季是对的——没看过的续作照推，只排除看过的那几季；同一系列一排只留一部（`perSeries`）。
+- **2026-10-19 播放器（iOS 网页全屏）**：
+  - **拖动预览小窗**（`lib/seek-preview.ts`）：在画面上左右滑、拖下面的进度条（电脑上鼠标移到进度条上）时，另开一个静音 `<video>`（hls.js 同一套 loader，最低码率、缓冲 2 秒）seek 到目标位置，直接把这个 video 摆成小窗（不画 canvas，跨域分片会弄脏 canvas）。拖得快时只保留最后一次请求。iOS 原生 HLS 时先静音 play/pause 一下才出画面。
+  - **去掉上下滑调音量**；全屏（网页全屏 / 元素全屏）时往下滑 ≥70px 松手退出全屏（和 iOS 系统播放器一样），不全屏时上下滑交给页面滚动。
+  - **长按放大镜**：CSS 拦不住，网页全屏时 touchstart 直接 `preventDefault`，轻点自己补一个 click（ArtPlayer 靠它显示 / 收起控制栏；React onClick 也收得到）。不全屏时不拦（否则在画面上滑不动页面），只靠 `user-select / touch-callout: none`（现在加到播放器所有子元素上）。
+  - **状态栏**：iPhone Safari 不开放元素全屏，网页没办法收起状态栏（只有系统播放器能，设置里「全屏方式 → 系统播放器」）。网页全屏时把 `theme-color` 改成黑色、`html` 加 `player-web-fullscreen`（页面背景变黑，iOS 26 的 Safari 按背景色染状态栏），让状态栏和黑边融在一起。
+
 ## 架构要点
 
 - 货架目录在 `src/lib/shelf-defs.ts`（客户端 / 服务端共用），取数在 `src/lib/shelves.ts`：热榜类复用 `fetchHotList`（`douban-weekly.ts` 的多源 RRF 融合），题材类用 TMDB discover（`src/lib/tmdb.ts` 的 `tmdbGet`）。

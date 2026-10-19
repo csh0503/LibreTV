@@ -280,6 +280,15 @@ export const api = {
     }
   },
 
+  /** 「看过这部的人也喜欢」（豆瓣相似推荐） */
+  similar: (query: { title: string; year?: string; kind?: 'tv' | 'movie'; doubanId?: string }, signal?: AbortSignal) => {
+    const sp = new URLSearchParams({ title: query.title });
+    if (query.year) sp.set('year', query.year);
+    if (query.kind) sp.set('kind', query.kind);
+    if (query.doubanId) sp.set('id', query.doubanId);
+    return request<{ items: import('./types').DoubanItem[] }>(`/api/similar?${sp.toString()}`, { signal });
+  },
+
   /** 追剧日历：这些剧 21 天内哪天出新一集 */
   schedule: (titles: { title: string; year?: string }[], signal?: AbortSignal) =>
     request<{ entries: import('./airing-schedule').ScheduleEntry[] }>('/api/schedule', {

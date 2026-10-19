@@ -1,7 +1,7 @@
 import type { DoubanItem } from './types';
 import { isAdultContent } from './cms-parser';
 import { canonicalTitle } from './title-aliases';
-import { HALL_PAGE_SIZE, type HallChannel, type HallSelection } from './recommend';
+import { type HallChannel, type HallSelection } from './recommend';
 
 /**
  * 每个设定档自己的推荐。不把家里其他人的记录混进来，也不跑 Python 模型。
@@ -218,8 +218,12 @@ export function planKey(selection: HallSelection): string {
   return [selection.channel, selection.genre, selection.area, selection.year, selection.sort, selection.score, selection.status].join('|');
 }
 
-function selectionOf(channel: TasteChannel, genre: string, area: string): HallSelection {
-  return { channel, genre, area, year: '全部', sort: 'rate', score: 'all', status: 'all' };
+/**
+ * 召回用的片库条件：按「近期热门」排（以前按「评分最高」，召回来的全是《隐秘的角落》这种历年经典，
+ * 多半看过或太旧）；高分的另外再要一页，见 tasteJobs。
+ */
+function selectionOf(channel: TasteChannel, genre: string, area: string, sort: HallSelection['sort'] = 'hot'): HallSelection {
+  return { channel, genre, area, year: '全部', sort, score: 'all', status: 'all' };
 }
 
 function inferChannel(genres: string[]): TasteChannel | undefined {
@@ -312,10 +316,12 @@ export function tasteJobs(plans: HallSelection[], anchor: HallSelection | null):
   const find = (selection: HallSelection, pageStart: number) =>
     jobs.find((job) => job.pageStart === pageStart && planKey(job.selection) === planKey(selection));
   plans.forEach((selection, index) => {
-    for (const pageStart of index === 0 ? [0, HALL_PAGE_SIZE] : [0]) {
-      const existing = find(selection, pageStart);
+    // 主口味：近期热门一页 + 高分一页（新作和口碑都有）；其他口味只要近期热门一页
+    const variants = index === 0 ? [selection, { ...selection, sort: 'rate' as const }] : [selection];
+    for (const variant of variants) {
+      const existing = find(variant, 0);
       if (existing) existing.forUser = true;
-      else jobs.push({ selection, pageStart, forUser: true, forAnchor: false });
+      else jobs.push({ selection: variant, pageStart: 0, forUser: true, forAnchor: false });
     }
   });
   if (anchor) {
@@ -726,4 +732,44 @@ export function tasteColumns(row?: {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+/**
+ * 几部你喜欢的作品的「看过的人也喜欢」合成一份：每份第 r 名（0 起）贡献 权重 / (r + 3)，
+ * 被几部同时推荐、名次靠前的排前面（协同过滤的投票）。
+ * blocked：看过、收藏过、不再推荐的。没看过的续作照推（看了第 2 季推第 3 季很合理），但同一系列只留 perSeries 部。
+ */
+export function mergeSimilar(
+  lists: { weight: number; items: DoubanItem[] }[],
+  opts: { blocked: Set<string>; seriesKeyOf: (item: DoubanItem) => string; perSeries?: number; hideAdult: boolean; limit: number },
+): DoubanItem[] {
+  const score = new Map<string, { item: DoubanItem; score: number }>();
+  for (const { weight, items } of lists) {
+    if (!(weight > 0)) continue;
+    items.forEach((item, rank) => {
+      const key = canonicalTitle(item.title);
+      // 看过的那几季不再推荐；没看过的续作（看了第 2 季推第 3 季）照常推荐
+      if (!key || opts.blocked.has(key)) return;
+      if (opts.hideAdult && (isAdultContent(item.title) || isAdultContent(item.genres))) return;
+      const prev = score.get(key);
+      const add = weight / (rank + 3);
+      if (prev) prev.score += add;
+      else score.set(key, { item, score: add });
+    });
+  }
+  // 同一系列最多留 perSeries 部，免得一排都是同一部的各季
+  const perSeries = opts.perSeries ?? 1;
+  const seen = new Map<string, number>();
+  const out: DoubanItem[] = [];
+  for (const { item } of [...score.values()].sort(
+    (a, b) => b.score - a.score || ratingNum(b.item.rating) - ratingNum(a.item.rating),
+  )) {
+    const series = opts.seriesKeyOf(item);
+    const count = seen.get(series) ?? 0;
+    if (count >= perSeries) continue;
+    seen.set(series, count + 1);
+    out.push(item);
+    if (out.length >= opts.limit) break;
+  }
+  return out;
 }

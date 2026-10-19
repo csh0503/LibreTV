@@ -16,6 +16,7 @@ import { cn, formatTime } from '@/lib/utils';
 import type { SkipSegment } from '@/lib/skip-segment';
 import { PLAYBACK_RATES, SEEK_STEPS, loadPlayerPrefs, savePlayerPrefs } from '@/lib/player-prefs';
 import { recordPlaybackFail, recordPlaybackStart, recordStall } from '@/lib/playback-stats';
+import { SeekPreview } from '@/lib/seek-preview';
 
 /**
  * 播放器外壳：ArtPlayer + hls.js（旧版 player.js 的 React 化）。
@@ -36,6 +37,25 @@ const UP_NEXT_FALLBACK_SECONDS = 15;
 const UP_NEXT_COUNTDOWN = 10;
 /** 手指从画面左边滑到右边 = 快进这么多秒 */
 const SWIPE_SEEK_SPAN = 120;
+
+/**
+ * 网页全屏时把顶部状态栏染成黑色。iPhone 的 Safari 不开放元素全屏，网页没办法收起状态栏（只有系统播放器能），
+ * 只能让它和画面的黑边融在一起：theme-color 管旧版 Safari，iOS 26 起 Safari 看页面背景色。
+ */
+let savedThemeColor: string | null = null;
+function setStatusBarBlack(on: boolean) {
+  const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+  const root = document.documentElement;
+  if (on) {
+    if (meta && savedThemeColor === null) savedThemeColor = meta.content;
+    if (meta) meta.content = '#000000';
+    root.classList.add('player-web-fullscreen');
+  } else {
+    if (meta && savedThemeColor !== null) meta.content = savedThemeColor;
+    savedThemeColor = null;
+    root.classList.remove('player-web-fullscreen');
+  }
+}
 
 // 手机上双击画面交给我们处理（左右快退快进），不用 ArtPlayer 自带的「双击暂停」
 Artplayer.MOBILE_DBCLICK_PLAY = false;
@@ -167,6 +187,23 @@ export function PlayerShell({
   const upNextDismissedRef = useRef(false);
   // 滑动手势进行中的提示（拖进度 / 音量）
   const [gestureHint, setGestureHint] = useState<string | null>(null);
+  // 拖进度时的预览小窗：ratio 有值 = 拖下面的进度条（小窗跟着手指），null = 在画面上左右滑（小窗在中间）
+  const [seekPreview, setSeekPreview] = useState<{ time: number; ratio: number | null } | null>(null);
+  const previewRef = useRef<{ url: string; preview: SeekPreview } | null>(null);
+  const showSeekPreview = (time: number, ratio: number | null) => {
+    const url = currentMediaUrlRef.current;
+    if (!url) return;
+    if (previewRef.current?.url !== url) {
+      previewRef.current?.preview.destroy();
+      previewRef.current = { url, preview: new SeekPreview(Hls.isSupported() ? Hls : null, url, buildHlsConfig()) };
+    }
+    previewRef.current.preview.seek(time);
+    setSeekPreview({ time, ratio });
+  };
+  const mountPreview = (node: HTMLDivElement | null) => {
+    const video = previewRef.current?.preview.video;
+    if (node && video && video.parentElement !== node) node.appendChild(video);
+  };
   // 双击快退 / 快进的提示：方向 + 这一串连点累计的秒数
   const [tapSeekInfo, setTapSeekInfo] = useState<{ dir: -1 | 1; seconds: number; id: number } | null>(null);
   const tapSeekTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -717,6 +754,7 @@ export function PlayerShell({
     // 网页全屏：锁住页面滚动
     art.on('fullscreenWeb', (on: boolean) => {
       document.documentElement.style.overflow = on ? 'hidden' : '';
+      setStatusBarBlack(on);
       const el = controlEl(art, 'fullscreen-page');
       if (el) el.innerHTML = fullscreenIcon(on);
     });
@@ -970,23 +1008,12 @@ export function PlayerShell({
       return ratio < 1 / 3 ? -1 : ratio > 2 / 3 ? 1 : 0;
     };
 
-    // —— 滑动手势：左右滑拖进度（整个画面宽约 2 分钟，松手才跳），上下滑调音量（能调的设备才有）——
-    // 没有调亮度：网页调不了手机屏幕亮度，以前用滤镜把画面调亮，实际是改了视频曝光，不是用户要的
-    let swipe: { axis: 'x'; from: number; target: number } | { axis: 'y'; from: number } | null = null;
-    // iPhone 的 Safari 不让网页改音量（设了 video.volume 读回来还是 1）：先试一下，改不了就不做上下滑
-    const volumeAdjustable = (() => {
-      const v = art.video;
-      const before = v.volume;
-      try {
-        v.volume = before > 0.5 ? 0.3 : 0.7;
-        const ok = Math.abs(v.volume - (before > 0.5 ? 0.3 : 0.7)) < 0.01;
-        v.volume = before;
-        return ok;
-      } catch {
-        return false;
-      }
-    })();
+    // —— 滑动手势：左右滑拖进度（整个画面宽约 2 分钟，松手才跳，拖的时候有预览小窗）；全屏时往下滑退出全屏（和 iOS 系统播放器一样）——
+    // 没有上下滑调音量 / 亮度：iPhone 的网页改不了系统音量和屏幕亮度（改亮度以前是用滤镜调视频曝光，不是用户要的）
+    const EXIT_SWIPE = 70;
+    let swipe: { axis: 'x'; from: number; target: number } | { axis: 'y'; dy: number } | null = null;
     let swipeTracking = false;
+    const inFullscreen = () => art.fullscreenWeb || art.fullscreen;
     /** 手指相对按下时移动了多少（按画面方向：网页全屏竖着拿时画面顺时针转了 90 度） */
     const videoDelta = (t: Touch) => {
       const rect = art.template.$player.getBoundingClientRect();
@@ -996,22 +1023,35 @@ export function PlayerShell({
         ? { dx: dy, dy: -dx, width: rect.height, height: rect.width }
         : { dx, dy, width: rect.width, height: rect.height };
     };
+    // iOS 长按画面会出放大镜（CSS 的 user-select / touch-callout 拦不住）：网页全屏时直接吃掉 touchstart 的默认行为，
+    // 轻点再自己补一个 click（ArtPlayer 靠它显示 / 收起控制栏）。不全屏时不拦，否则在画面上滑不动页面
+    let suppressed = false;
     const onTouchStart = (e: TouchEvent) => {
       // 已有触控在处理时忽略新手指：否则第二指会把 originalRate 捕获成加速后的值，松手后倍速卡住
       if (e.touches.length > 1) { endHold(); swipeTracking = false; return; }
       swipe = null;
       swipeTracking = false;
+      suppressed = false;
       if (onChrome(e.target)) return;
       const t = e.touches[0];
       touchStart = { x: t.clientX, y: t.clientY, at: Date.now() };
+      if (art.fullscreenWeb && e.cancelable) {
+        e.preventDefault();
+        suppressed = true;
+      }
       swipeTracking = !art.isLock;
       startHold();
     };
     const finishSwipe = () => {
       if (!swipe) return false;
       if (swipe.axis === 'x' && Math.abs(swipe.target - swipe.from) >= 1) seekTo(swipe.target);
+      if (swipe.axis === 'y' && swipe.dy >= EXIT_SWIPE) {
+        if (art.fullscreenWeb) art.fullscreenWeb = false;
+        else if (art.fullscreen) art.fullscreen = false;
+      }
       swipe = null;
       setGestureHint(null);
+      setSeekPreview(null);
       return true;
     };
     const onTouchEnd = (e: TouchEvent) => {
@@ -1024,9 +1064,16 @@ export function PlayerShell({
         e.preventDefault();
         return;
       }
-      if (e.type !== 'touchend' || onChrome(e.target) || art.isLock) return;
+      if (e.type !== 'touchend' || onChrome(e.target)) return;
       const t = e.changedTouches[0];
       if (!t || Date.now() - touchStart.at > 300 || Math.hypot(t.clientX - touchStart.x, t.clientY - touchStart.y) > 20) return;
+      if (suppressed) {
+        e.preventDefault();
+        e.target?.dispatchEvent(
+          new MouseEvent('click', { bubbles: true, cancelable: true, view: window, clientX: t.clientX, clientY: t.clientY }),
+        );
+      }
+      if (art.isLock) return;
       const now = Date.now();
       const zone = tapZone(t.clientX);
       // 中间不做双击（用户：双击暂停反直觉）：点一下出控制栏，用中间的播放 / 暂停键
@@ -1054,15 +1101,18 @@ export function PlayerShell({
         endHold();
       }
       if (!swipeTracking) return;
-      const { dx, dy, width, height } = videoDelta(t);
+      const { dx, dy, width } = videoDelta(t);
       if (!swipe) {
         if (Math.hypot(dx, dy) < 14) return;
         if (Math.abs(dx) > Math.abs(dy)) {
           if (!(art.duration > 0)) { swipeTracking = false; return; }
           swipe = { axis: 'x', from: art.currentTime, target: art.currentTime };
+        } else if (dy > 0 && inFullscreen()) {
+          swipe = { axis: 'y', dy: 0 };
         } else {
-          if (!volumeAdjustable) { swipeTracking = false; return; }
-          swipe = { axis: 'y', from: art.video.volume };
+          // 不全屏时上下滑交给页面滚动
+          swipeTracking = false;
+          return;
         }
       }
       e.preventDefault();
@@ -1071,12 +1121,45 @@ export function PlayerShell({
         swipe.target = Math.max(0, Math.min(d - 1, swipe.from + (dx / width) * SWIPE_SEEK_SPAN));
         const delta = Math.round(swipe.target - swipe.from);
         setGestureHint(`${delta >= 0 ? '快进' : '快退'} ${Math.abs(delta)} 秒 · ${formatTime(swipe.target)} / ${formatTime(d)}`);
+        showSeekPreview(swipe.target, null);
       } else {
-        const v = Math.max(0, Math.min(1, swipe.from - dy / height));
-        art.video.volume = v;
-        setGestureHint(`音量 ${Math.round(v * 100)}%`);
+        swipe.dy = dy;
+        setGestureHint(dy >= EXIT_SWIPE ? '松手退出全屏' : '下滑退出全屏');
       }
     };
+    // —— 拖下面的进度条（电脑上鼠标移到进度条上）：上方出小窗预览那个位置的画面 ——
+    const bar: HTMLElement | undefined = art.template.$progress;
+    const barRatio = (clientX: number, clientY: number) => {
+      if (!bar) return null;
+      const rect = bar.getBoundingClientRect();
+      const r = art.isRotate ? (clientY - rect.top) / rect.height : (clientX - rect.left) / rect.width;
+      return Number.isFinite(r) ? Math.max(0, Math.min(1, r)) : null;
+    };
+    const previewAtBar = (clientX: number, clientY: number) => {
+      const r = barRatio(clientX, clientY);
+      if (r === null || !(art.duration > 0)) return;
+      showSeekPreview(r * art.duration, r);
+    };
+    let barTouching = false;
+    const onBarTouch = (e: TouchEvent) => {
+      const t = e.touches[0];
+      if (!t) return;
+      barTouching = true;
+      previewAtBar(t.clientX, t.clientY);
+    };
+    const onBarTouchEnd = () => {
+      if (!barTouching) return;
+      barTouching = false;
+      setSeekPreview(null);
+    };
+    const onBarMouse = (e: MouseEvent) => { if (!barTouching) previewAtBar(e.clientX, e.clientY); };
+    const onBarLeave = () => { if (!barTouching) setSeekPreview(null); };
+    bar?.addEventListener('touchstart', onBarTouch, { passive: true });
+    bar?.addEventListener('touchmove', onBarTouch, { passive: true });
+    document.addEventListener('touchend', onBarTouchEnd);
+    document.addEventListener('touchcancel', onBarTouchEnd);
+    bar?.addEventListener('mousemove', onBarMouse);
+    bar?.addEventListener('mouseleave', onBarLeave);
     const onMouseDown = (e: MouseEvent) => {
       if (e.button !== 0 || onChrome(e.target)) return;
       startHold();
@@ -1095,7 +1178,7 @@ export function PlayerShell({
     // 长按倍速因而会连带呼出系统原生菜单/气泡。播放器表面没有可用的原生菜单，统一抑制
     const onContextMenu = (e: Event) => e.preventDefault();
     el?.addEventListener('touchstart', onTouchStart, { passive: false });
-    el?.addEventListener('touchend', onTouchEnd);
+    el?.addEventListener('touchend', onTouchEnd, { passive: false });
     el?.addEventListener('touchcancel', onTouchEnd);
     el?.addEventListener('touchmove', onTouchMove, { passive: false });
     el?.addEventListener('contextmenu', onContextMenu);
@@ -1119,6 +1202,7 @@ export function PlayerShell({
       document.removeEventListener('keydown', shortcuts);
       swipe = null;
       document.documentElement.style.overflow = '';
+      setStatusBarBlack(false);
       document.removeEventListener('visibilitychange', saveOnHide);
       if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
       if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current);
@@ -1130,6 +1214,14 @@ export function PlayerShell({
       el?.removeEventListener('touchcancel', onTouchEnd);
       el?.removeEventListener('touchmove', onTouchMove);
       el?.removeEventListener('contextmenu', onContextMenu);
+      bar?.removeEventListener('touchstart', onBarTouch);
+      bar?.removeEventListener('touchmove', onBarTouch);
+      document.removeEventListener('touchend', onBarTouchEnd);
+      document.removeEventListener('touchcancel', onBarTouchEnd);
+      bar?.removeEventListener('mousemove', onBarMouse);
+      bar?.removeEventListener('mouseleave', onBarLeave);
+      previewRef.current?.preview.destroy();
+      previewRef.current = null;
       el?.removeEventListener('mousedown', onMouseDown);
       window.removeEventListener('mouseup', onMouseUp);
       el?.removeEventListener('click', onClickCapture, true);
@@ -1210,7 +1302,34 @@ export function PlayerShell({
                 )}
               </button>
             )}
-            {gestureHint && (
+            {seekPreview && (
+              <div
+                className={cn(
+                  'absolute -translate-x-1/2 flex flex-col items-center gap-1.5 pointer-events-none',
+                  seekPreview.ratio === null ? 'left-1/2 top-1/2 -translate-y-1/2' : 'bottom-16',
+                )}
+                style={seekPreview.ratio === null ? undefined : { left: `clamp(5.5rem, ${seekPreview.ratio * 100}%, calc(100% - 5.5rem))` }}
+              >
+                <div
+                  ref={mountPreview}
+                  className={cn(
+                    'seek-preview-box aspect-video rounded-lg overflow-hidden bg-black border border-white/25 shadow-lg',
+                    // 在画面上滑：小窗和提示一起放中间，画面小（没全屏）时别顶出去
+                    seekPreview.ratio === null ? 'w-[min(12rem,36vw)]' : 'w-40 sm:w-48',
+                  )}
+                />
+                {seekPreview.ratio !== null ? (
+                  <span className="text-white text-xs font-medium tabular-nums bg-black/60 rounded px-1.5 py-0.5">
+                    {formatTime(seekPreview.time)}
+                  </span>
+                ) : gestureHint && (
+                  <span className="bg-black/60 backdrop-blur-xl text-white text-sm font-medium px-3 py-1 rounded-xl whitespace-nowrap">
+                    {gestureHint}
+                  </span>
+                )}
+              </div>
+            )}
+            {gestureHint && !seekPreview && (
               <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-black/60 backdrop-blur-xl text-white text-sm font-medium px-4 py-2 rounded-2xl pointer-events-none whitespace-nowrap">
                 {gestureHint}
               </div>

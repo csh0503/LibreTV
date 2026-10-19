@@ -9,7 +9,8 @@ import { db, favoriteIdOf } from '@/lib/db';
 import { buildSingleAnchorFallback } from '@/lib/home-features';
 import { buildDoubanRequest, HALL_PAGE_SIZE, reconcileStatusWithCalendar } from '@/lib/recommend';
 import { useAppStore } from '@/lib/store';
-import { assembleTaste, rankTaste, type TasteChannel } from '@/lib/taste';
+import { assembleTaste, confidenceOf, mergeSimilar, rankTaste, signalWeight, type TasteChannel } from '@/lib/taste';
+import { shelfDedupeKey } from '@/lib/shelf-defs';
 import { rememberDoubanItem } from '@/lib/taste-store';
 import { canonicalTitle } from '@/lib/title-aliases';
 import type { DoubanItem, TitlePick } from '@/lib/types';
@@ -123,6 +124,48 @@ export function ForYouRows({ onPick }: { onPick: (title: string, pick?: TitlePic
     }),
   });
 
+  // —— 「看过这部的人也喜欢」：你最喜欢的几部（看得深、看完、收藏，越近越重）各取豆瓣相似推荐 ——
+  // 「因为你看过《某某》」直接用它的相似推荐；「为你推荐」把几部的相似推荐合起来（被几部同时推荐、名次靠前的优先），
+  // 不够再用按题材召回的补。比按题材要「同题材高分」准得多。
+  const anchors = useMemo(() => {
+    const events = assembled?.events ?? [];
+    const lookup = new Map<string, { doubanId?: string; isTv?: boolean; year?: string }>();
+    for (const row of history ?? []) {
+      const key = canonicalTitle(row.title);
+      if (key && !lookup.has(key)) lookup.set(key, { doubanId: row.tasteDoubanId, isTv: row.totalEpisodes > 1 ? true : undefined, year: row.tasteYear });
+    }
+    for (const row of favorites ?? []) {
+      const key = canonicalTitle(row.title);
+      const prev = lookup.get(key);
+      if (key) lookup.set(key, { doubanId: prev?.doubanId || row.tasteDoubanId, isTv: prev?.isTv, year: prev?.year || row.year || row.tasteYear });
+    }
+    const now = Date.now();
+    const ranked = events
+      .filter((e) => signalWeight(e) > 0.5 && !isNotInterested(notInterested, e.title))
+      .map((e) => ({ title: e.title, weight: confidenceOf(e, now), year: e.year }))
+      .sort((a, b) => b.weight - a.weight);
+    // 「因为你看过」的那部排第一个（它的相似推荐单独成一行）
+    const main = assembled?.anchorTitle ?? singleFallback?.anchorTitle;
+    if (main) {
+      const at = ranked.findIndex((r) => canonicalTitle(r.title) === canonicalTitle(main));
+      if (at > 0) ranked.unshift(...ranked.splice(at, 1));
+      else if (at < 0) ranked.unshift({ title: main, weight: 1, year: undefined });
+    }
+    return ranked.slice(0, 3).map((r) => {
+      const meta = lookup.get(canonicalTitle(r.title));
+      return { ...r, doubanId: meta?.doubanId, kind: meta?.isTv ? ('tv' as const) : undefined, year: r.year || meta?.year };
+    });
+  }, [assembled, singleFallback, history, favorites, notInterested]);
+  const similarQueries = useQueries({
+    queries: anchors.map((a) => ({
+      queryKey: ['similar', a.title, a.year, a.kind, a.doubanId],
+      queryFn: ({ signal }: { signal: AbortSignal }) => api.similar({ title: a.title, year: a.year, kind: a.kind, doubanId: a.doubanId }, signal),
+      enabled: Boolean(doubanEnabled && profileId),
+      staleTime: 6 * 3600_000,
+      retry: 0,
+    })),
+  });
+
   const bangumiQuery = useQuery({
     queryKey: ['bangumi-calendar'],
     queryFn: ({ signal }) => api.bangumiCalendar(signal),
@@ -140,7 +183,9 @@ export function ForYouRows({ onPick }: { onPick: (title: string, pick?: TitlePic
     return null;
   }
 
-  const waiting = queries.length > 0 && queries.some((query) => query.isPending);
+  const waiting =
+    (queries.length > 0 && queries.some((query) => query.isPending)) ||
+    similarQueries.some((query) => query.isPending && query.fetchStatus !== 'idle');
   if (waiting) {
     return (
       <section aria-label="为你推荐加载中" className="space-y-2.5">
@@ -174,6 +219,15 @@ export function ForYouRows({ onPick }: { onPick: (title: string, pick?: TitlePic
     }
   });
 
+
+  const seriesKeyOf = (item: DoubanItem) => shelfDedupeKey(item.title, item.isTv);
+  const similarLists = anchors.map((a, i) => ({ weight: a.weight, items: similarQueries[i]?.data?.items ?? [] }));
+  /** 「因为你看过」：主锚点的相似推荐够 4 部就用它，不然退回按题材召回的 */
+  const becauseFrom = (blocked: Set<string>, fallback: DoubanItem[]) => {
+    const own = mergeSimilar(similarLists.slice(0, 1), { blocked, seriesKeyOf, hideAdult: yellowFilter, limit: 12 });
+    return own.length >= 4 ? own : fallback;
+  };
+
   if (assembled) {
     const ranked = rankTaste({
       events: assembled.events,
@@ -185,26 +239,47 @@ export function ForYouRows({ onPick }: { onPick: (title: string, pick?: TitlePic
       hideAdult: yellowFilter,
       channelOf: (item) => channels.get(item.id),
     });
-    if (ranked.forYou.length === 0 && ranked.because.length === 0) {
+    const blockedSet = new Set(
+      [...assembled.blocked, ...notInterested].map((t) => canonicalTitle(t)).filter(Boolean),
+    );
+    const because = assembled.anchorTitle ? becauseFrom(blockedSet, ranked.because) : [];
+    // 「为你推荐」：几部的相似推荐投票合并，不和下一排重复；不够 18 部用按题材召回的补
+    const taken = new Set(because.map((item) => canonicalTitle(item.title)));
+    const voted = mergeSimilar(similarLists, {
+      blocked: new Set([...blockedSet, ...taken]),
+      seriesKeyOf,
+      hideAdult: yellowFilter,
+      limit: 18,
+    });
+    const forYou = [...voted];
+    const have = new Set([...taken, ...voted.map((item) => canonicalTitle(item.title))]);
+    for (const item of ranked.forYou) {
+      if (forYou.length >= 18) break;
+      const key = canonicalTitle(item.title);
+      if (!key || have.has(key)) continue;
+      have.add(key);
+      forYou.push(item);
+    }
+    if (forYou.length === 0 && because.length === 0) {
       return null;
     }
 
     return (
       <>
-        {ranked.forYou.length > 0 && (
+        {forYou.length > 0 && (
           <TasteRow
             title="为你推荐"
-            items={ranked.forYou}
+            items={forYou}
             onOpen={(item) => open(item, channels.get(item.id))}
             onFavorite={(item) => {
               void rememberDoubanItem(item, channels.get(item.id));
             }}
           />
         )}
-        {ranked.because.length > 0 && assembled.anchorTitle && (
+        {because.length > 0 && assembled.anchorTitle && (
           <TasteRow
             title={`因为你${assembled.anchorReason}《${assembled.anchorTitle}》`}
-            items={ranked.because}
+            items={because}
             onOpen={(item) => open(item, channels.get(item.id))}
             onFavorite={(item) => {
               void rememberDoubanItem(item, channels.get(item.id));
@@ -226,13 +301,14 @@ export function ForYouRows({ onPick }: { onPick: (title: string, pick?: TitlePic
         return Boolean(key && !blockedSet.has(key));
       })
       .slice(0, 12);
+    const items = becauseFrom(blockedSet, singleItems);
 
-    if (singleItems.length === 0) return null;
+    if (items.length === 0) return null;
 
     return (
       <TasteRow
         title={`因为你${singleFallback.anchorReason}《${singleFallback.anchorTitle}》`}
-        items={singleItems}
+        items={items}
         onOpen={(item) => open(item, channels.get(item.id))}
         onFavorite={(item) => {
           void rememberDoubanItem(item, channels.get(item.id));

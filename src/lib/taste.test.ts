@@ -5,6 +5,7 @@ import {
   assembleTaste,
   describeWatch,
   idfTable,
+  mergeSimilar,
   mmrPick,
   rankTaste,
   readTasteSnapshot,
@@ -86,8 +87,10 @@ describe('召回', () => {
     expect(taste).not.toBeNull();
     const request = buildDoubanRequest(taste!.jobs[0].selection);
     expect(request?.tags).toEqual(['动画', '热血', '日本']);
-    expect(request?.sort).toBe('S');
-    expect(taste!.jobs.map((job) => job.pageStart)).toEqual([0, 20]);
+    // 主口味：近期热门一页 + 高分一页
+    expect(request?.sort).toBe('U');
+    expect(taste!.jobs.map((job) => buildDoubanRequest(job.selection)?.sort)).toEqual(['U', 'S']);
+    expect(taste!.jobs.map((job) => job.pageStart)).toEqual([0, 0]);
     expect(taste!.jobs[0].forAnchor).toBe(true);
   });
 
@@ -244,5 +247,29 @@ describe('题材档案合并', () => {
     expect(readTasteSnapshot({ title: '甲' })).toBeNull();
     expect(readTasteSnapshot(null)).toBeNull();
     expect(readTasteSnapshot({ title: '甲', updatedAt: 3, genres: '热血', channel: 'anime' })?.genres).toBe('热血');
+  });
+});
+
+describe('看过的人也喜欢', () => {
+  const seriesKeyOf = (item: DoubanItem) => item.title.replace(/第.季$/, '').trim();
+
+  it('被几部同时推荐的排前面，看过的不推', () => {
+    const merged = mergeSimilar(
+      [
+        { weight: 1, items: [card('甲', ''), card('乙', ''), card('看过', '')] },
+        { weight: 1, items: [card('丙', ''), card('乙', '')] },
+      ],
+      { blocked: new Set(['看过']), seriesKeyOf, hideAdult: true, limit: 10 },
+    );
+    expect(merged.map((item) => item.title)[0]).toBe('乙');
+    expect(merged.map((item) => item.title)).not.toContain('看过');
+  });
+
+  it('看了第二季，没看过的第三季照推，但同系列只留一部', () => {
+    const merged = mergeSimilar(
+      [{ weight: 1, items: [card('咒术回战 第三季', ''), card('咒术回战 第一季', ''), card('鬼灭之刃', '')] }],
+      { blocked: new Set(['咒术回战第二季']), seriesKeyOf, hideAdult: true, limit: 10 },
+    );
+    expect(merged.map((item) => item.title)).toEqual(['咒术回战 第三季', '鬼灭之刃']);
   });
 });
