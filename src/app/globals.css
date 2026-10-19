@@ -235,6 +235,13 @@ body {
   -webkit-touch-callout: none;
 }
 
+/* 触屏用我们自己中间的播放 / 暂停键（player-shell），ArtPlayer 暂停时那个大播放图标就不要了，免得两个叠在一起 */
+@media (hover: none) and (pointer: coarse) {
+  .art-video-player .art-state {
+    display: none !important;
+  }
+}
+
 /* 播放器控制栏：手机上放不下就收起音量（用实体键）、截图、画中画、网页全屏，留出快退 / 快进 / 倍速 / 设置 / 全屏 */
 @media (max-width: 520px) {
   .art-video-player .art-control-volume,

@@ -37,7 +37,7 @@ const UP_NEXT_COUNTDOWN = 10;
 /** 手指从画面左边滑到右边 = 快进这么多秒 */
 const SWIPE_SEEK_SPAN = 120;
 
-// 手机上双击画面交给我们处理（左右快退快进、中间播放暂停），不用 ArtPlayer 自带的「双击暂停」
+// 手机上双击画面交给我们处理（左右快退快进），不用 ArtPlayer 自带的「双击暂停」
 Artplayer.MOBILE_DBCLICK_PLAY = false;
 
 /** 开了自动跳过时，进入片头 / 片尾后先倒数几秒再跳 */
@@ -158,13 +158,15 @@ export function PlayerShell({
   const [autoLeft, setAutoLeft] = useState<number | null>(null);
   // 长按加速中
   const [holdFast, setHoldFast] = useState(false);
+  // 触屏：点一下画面出控制栏，中间放一个大的播放 / 暂停键（暂停时一直在）
+  const isTouch = typeof window !== 'undefined' && window.matchMedia?.('(hover: none) and (pointer: coarse)').matches;
+  const [controlsShown, setControlsShown] = useState(false);
+  const [paused, setPaused] = useState(true);
   // 「下一集」预览卡：left = 还有几秒自动播（没开自动连播是 null）
   const [upNext, setUpNext] = useState<{ left: number | null } | null>(null);
   const upNextDismissedRef = useRef(false);
-  // 滑动手势进行中的提示（拖进度 / 亮度 / 音量）
+  // 滑动手势进行中的提示（拖进度 / 音量）
   const [gestureHint, setGestureHint] = useState<string | null>(null);
-  // 画面亮度（手势调的，换集保持）
-  const brightnessRef = useRef(1);
   // 双击快退 / 快进的提示：方向 + 这一串连点累计的秒数
   const [tapSeekInfo, setTapSeekInfo] = useState<{ dir: -1 | 1; seconds: number; id: number } | null>(null);
   const tapSeekTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -731,7 +733,11 @@ export function PlayerShell({
       } catch { /* 忽略 */ }
     });
 
+    art.on('control', (show: boolean) => setControlsShown(show));
+    art.on('video:play', () => setPaused(false));
+    art.on('video:pause', () => setPaused(true));
     art.on('video:playing', () => {
+      setPaused(false);
       playbackStartedRef.current = true;
       clearWatchdogs();
       setShowPoster(false);
@@ -954,7 +960,7 @@ export function PlayerShell({
       return true;
     };
 
-    // 双击：两次轻点间隔 < 300ms。左边三分之一快退、右边三分之一快进（连点累加），中间播放 / 暂停
+    // 双击：两次轻点间隔 < 300ms。左边三分之一快退、右边三分之一快进（连点累加）；中间不做双击
     let lastTap = { at: 0, zone: 0 };
     let touchStart = { x: 0, y: 0, at: 0 };
     const tapZone = (clientX: number) => {
@@ -964,11 +970,22 @@ export function PlayerShell({
       return ratio < 1 / 3 ? -1 : ratio > 2 / 3 ? 1 : 0;
     };
 
-    // —— 滑动手势：左右滑拖进度（整个画面宽约 2 分钟，松手才跳），左半边上下滑调亮度、右半边调音量 ——
-    let swipe:
-      | { axis: 'x'; from: number; target: number }
-      | { axis: 'y'; side: 'left' | 'right'; from: number }
-      | null = null;
+    // —— 滑动手势：左右滑拖进度（整个画面宽约 2 分钟，松手才跳），上下滑调音量（能调的设备才有）——
+    // 没有调亮度：网页调不了手机屏幕亮度，以前用滤镜把画面调亮，实际是改了视频曝光，不是用户要的
+    let swipe: { axis: 'x'; from: number; target: number } | { axis: 'y'; from: number } | null = null;
+    // iPhone 的 Safari 不让网页改音量（设了 video.volume 读回来还是 1）：先试一下，改不了就不做上下滑
+    const volumeAdjustable = (() => {
+      const v = art.video;
+      const before = v.volume;
+      try {
+        v.volume = before > 0.5 ? 0.3 : 0.7;
+        const ok = Math.abs(v.volume - (before > 0.5 ? 0.3 : 0.7)) < 0.01;
+        v.volume = before;
+        return ok;
+      } catch {
+        return false;
+      }
+    })();
     let swipeTracking = false;
     /** 手指相对按下时移动了多少（按画面方向：网页全屏竖着拿时画面顺时针转了 90 度） */
     const videoDelta = (t: Touch) => {
@@ -1012,11 +1029,15 @@ export function PlayerShell({
       if (!t || Date.now() - touchStart.at > 300 || Math.hypot(t.clientX - touchStart.x, t.clientY - touchStart.y) > 20) return;
       const now = Date.now();
       const zone = tapZone(t.clientX);
+      // 中间不做双击（用户：双击暂停反直觉）：点一下出控制栏，用中间的播放 / 暂停键
+      if (zone === 0) {
+        lastTap = { at: 0, zone };
+        return;
+      }
       if (now - lastTap.at < 300 && zone === lastTap.zone) {
-        if (zone === 0) art.toggle();
-        else tapSeek(zone as -1 | 1);
+        tapSeek(zone as -1 | 1);
         // 连点：第三下、第四下接着累加
-        lastTap = { at: zone === 0 ? 0 : now, zone };
+        lastTap = { at: now, zone };
       } else {
         lastTap = { at: now, zone };
       }
@@ -1036,14 +1057,12 @@ export function PlayerShell({
       const { dx, dy, width, height } = videoDelta(t);
       if (!swipe) {
         if (Math.hypot(dx, dy) < 14) return;
-        const rect = art.template.$player.getBoundingClientRect();
-        const startRatio = art.isRotate ? (touchStart.y - rect.top) / rect.height : (touchStart.x - rect.left) / rect.width;
         if (Math.abs(dx) > Math.abs(dy)) {
           if (!(art.duration > 0)) { swipeTracking = false; return; }
           swipe = { axis: 'x', from: art.currentTime, target: art.currentTime };
         } else {
-          const side = startRatio < 0.5 ? 'left' : 'right';
-          swipe = { axis: 'y', side, from: side === 'left' ? brightnessRef.current : art.video.volume };
+          if (!volumeAdjustable) { swipeTracking = false; return; }
+          swipe = { axis: 'y', from: art.video.volume };
         }
       }
       e.preventDefault();
@@ -1052,16 +1071,10 @@ export function PlayerShell({
         swipe.target = Math.max(0, Math.min(d - 1, swipe.from + (dx / width) * SWIPE_SEEK_SPAN));
         const delta = Math.round(swipe.target - swipe.from);
         setGestureHint(`${delta >= 0 ? '快进' : '快退'} ${Math.abs(delta)} 秒 · ${formatTime(swipe.target)} / ${formatTime(d)}`);
-      } else if (swipe.side === 'left') {
-        const v = Math.max(0.3, Math.min(1.5, swipe.from - (dy / height) * 1.2));
-        brightnessRef.current = v;
-        art.video.style.filter = Math.abs(v - 1) < 0.02 ? '' : `brightness(${v.toFixed(2)})`;
-        setGestureHint(`亮度 ${Math.round(v * 100)}%`);
       } else {
         const v = Math.max(0, Math.min(1, swipe.from - dy / height));
         art.video.volume = v;
-        // iPhone 不让网页改音量（video.volume 只读，设了也还是 1）
-        setGestureHint(Math.abs(art.video.volume - v) > 0.01 ? '这台设备请用侧边的音量键' : `音量 ${Math.round(v * 100)}%`);
+        setGestureHint(`音量 ${Math.round(v * 100)}%`);
       }
     };
     const onMouseDown = (e: MouseEvent) => {
@@ -1182,6 +1195,20 @@ export function PlayerShell({
               <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-black/50 backdrop-blur-xl border border-white/10 text-white text-sm px-4 py-1.5 rounded-full pointer-events-none animate-fade-in whitespace-nowrap">
                 {hint}
               </div>
+            )}
+            {isTouch && !error && !overlay && !holdFast && !gestureHint && !tapSeekInfo && (controlsShown || paused) && (
+              <button
+                type="button"
+                aria-label={paused ? '播放' : '暂停'}
+                onClick={() => artRef.current?.toggle()}
+                className="pointer-events-auto absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-16 h-16 rounded-full bg-black/45 backdrop-blur-md text-white flex items-center justify-center animate-fade-in"
+              >
+                {paused ? (
+                  <svg width="30" height="30" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor" /></svg>
+                ) : (
+                  <svg width="28" height="28" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z" fill="currentColor" /></svg>
+                )}
+              </button>
             )}
             {gestureHint && (
               <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-black/60 backdrop-blur-xl text-white text-sm font-medium px-4 py-2 rounded-2xl pointer-events-none whitespace-nowrap">
