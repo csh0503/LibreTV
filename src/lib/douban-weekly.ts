@@ -432,6 +432,11 @@ const EVERGREEN_SERIES_STEMS = new Set(
   ].map((name) => canonicalTitle(name))
 );
 
+/** 常年连载的老作品（航海王、柯南……）：同名的新作（乐高特别篇、剧场版）容易和它混在一起 */
+export function isEvergreenTitle(title: string): boolean {
+  return EVERGREEN_SERIES_STEMS.has(extractSeriesStem(title));
+}
+
 /**
  * Netflix 风格「实时风向」精选与系列折叠算法：
  * 1. 剔除配音重复版（如「名侦探柯南（中配）」「明日方舟 中配版」）；

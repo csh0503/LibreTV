@@ -25,6 +25,22 @@ import { useLoadMore } from '@/components/use-load-more';
 import { useAliasFallback, useSourceSearch } from '@/components/use-source-search';
 import type { SearchResultItem, TitlePick } from '@/lib/types';
 import { hasTitleMatch, kindOfTypeName } from '@/lib/title-aliases';
+import {
+  applySearchFilters,
+  countBy,
+  DEFAULT_SEARCH_FILTERS,
+  groupKind,
+  groupRegion,
+  groupStatus,
+  KIND_LABELS,
+  REGION_LABELS,
+  SORT_LABELS,
+  STATUS_LABELS,
+  YEAR_LABELS,
+  type SearchFilters,
+  type SearchSort,
+  type SearchYear,
+} from '@/lib/search-filters';
 import { SearchHistoryDropdown, useSearchHistory } from '@/components/search-history';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/components/toast';
@@ -125,8 +141,10 @@ function HomeContent() {
   };
 
   /** 首页各行的卡片点开：先打开作品详情弹窗（弹窗里查片源）；元数据也记下来，去搜索结果页时「暂无片源」卡要用 */
-  const pickTitle = (title: string, pick?: TitlePick) => {
-    const full = { ...pick, title };
+  const pickTitle = (title: string, pick?: TitlePick & { yearSoft?: boolean }) => {
+    // 按筛选条件填上去的年份（B站片库按年份筛）不是这部的真实年份：拿它去认作品会认错（「航海王」+ 2026 → 乐高特别篇）
+    const { yearSoft, ...rest } = pick ?? {};
+    const full: TitlePick = { ...rest, title, ...(yearSoft ? { year: undefined } : {}) };
     pickedTitles.set(title.trim().slice(0, 100), full);
     setPresetItems(undefined);
     setTitlePick(full);
@@ -179,14 +197,26 @@ function HomeContent() {
   // 别名也都没有，才给「暂无片源」
   const pickMissing = Boolean(picked) && titleMissing && fallback.nothingFound;
 
-  // 分批渲染：新一次搜索（groups 变化）时重置回首批
+  // 筛选和排序：排序记住（默认年份从新到旧），其他条件换一次搜索就清掉
+  const [filters, setFilters] = useState<SearchFilters>(() => ({ ...DEFAULT_SEARCH_FILTERS, sort: loadSearchSort() }));
+  useEffect(() => setFilters((f) => ({ ...DEFAULT_SEARCH_FILTERS, sort: f.sort })), [urlQuery]);
+  const updateFilters = useCallback((patch: Partial<SearchFilters>) => {
+    setFilters((f) => {
+      const next = { ...f, ...patch };
+      if (patch.sort) saveSearchSort(patch.sort);
+      return next;
+    });
+  }, []);
+  const filteredGroups = useMemo(() => applySearchFilters(groups, filters), [groups, filters]);
+
+  // 分批渲染：新一次搜索 / 换筛选时重置回首批
   const [visibleCount, setVisibleCount] = useState(RESULT_PAGE_SIZE);
-  const visibleGroups = useMemo(() => groups.slice(0, visibleCount), [groups, visibleCount]);
-  useEffect(() => setVisibleCount(RESULT_PAGE_SIZE), [groups]);
+  const visibleGroups = useMemo(() => filteredGroups.slice(0, visibleCount), [filteredGroups, visibleCount]);
+  useEffect(() => setVisibleCount(RESULT_PAGE_SIZE), [filteredGroups]);
   const showMoreResults = useCallback(() => {
     setVisibleCount((count) => count + RESULT_PAGE_SIZE);
   }, []);
-  const hasMoreResults = groups.length > visibleCount;
+  const hasMoreResults = filteredGroups.length > visibleCount;
   const resultSentinel = useLoadMore(hasMoreResults, visibleCount, showMoreResults);
 
   return (
@@ -413,7 +443,17 @@ function HomeContent() {
                     onRetry={() => void searchQuery.refetch()}
                   />
                 )}
-                <SearchPosterGrid groups={visibleGroups} onOpen={openGroup} />
+                <SearchFilterBar groups={groups} filters={filters} onChange={updateFilters} shown={filteredGroups.length} />
+                {filteredGroups.length === 0 ? (
+                  <p className="py-12 text-center text-sm text-faint">
+                    没有符合筛选条件的结果。
+                    <button type="button" className="text-accent hover:underline" onClick={() => updateFilters({ ...DEFAULT_SEARCH_FILTERS, sort: filters.sort })}>
+                      清除筛选
+                    </button>
+                  </p>
+                ) : (
+                  <SearchPosterGrid groups={visibleGroups} onOpen={openGroup} />
+                )}
                 {hasMoreResults && <div ref={resultSentinel} className="h-8" />}
               </>
             ) : isSearching ? (
@@ -538,6 +578,122 @@ function NoSourceGuide({ hasSources = false }: { hasSources?: boolean }) {
 }
 
 /** 搜索结果：和首页一样的海报卡片，一部一张，点开是同一个详情弹窗 */
+const SEARCH_SORT_KEY = 'libretv:search-sort';
+
+function loadSearchSort(): SearchSort {
+  try {
+    const v = localStorage.getItem(SEARCH_SORT_KEY);
+    if (v && v in SORT_LABELS) return v as SearchSort;
+  } catch {
+    // 读不到用默认
+  }
+  return DEFAULT_SEARCH_FILTERS.sort;
+}
+
+function saveSearchSort(sort: SearchSort) {
+  try {
+    localStorage.setItem(SEARCH_SORT_KEY, sort);
+  } catch {
+    // 存不了就这次有效
+  }
+}
+
+/**
+ * 搜索结果的筛选条：排序、类型、地区、年份、状态。
+ * 每个选项后面是这次结果里有几部；一部都没有的选项不显示（「全部」和已选中的除外）。
+ */
+function SearchFilterBar({
+  groups,
+  filters,
+  onChange,
+  shown,
+}: {
+  groups: AggregatedGroup[];
+  filters: SearchFilters;
+  onChange: (patch: Partial<SearchFilters>) => void;
+  shown: number;
+}) {
+  const nowYear = new Date().getFullYear();
+  const yearOf = (g: AggregatedGroup): SearchYear | undefined => {
+    const y = parseInt(g.year ?? '', 10);
+    if (!y) return undefined;
+    if (y >= nowYear) return 'this';
+    if (y >= 2020) return '2020s';
+    if (y >= 2010) return '2010s';
+    return 'older';
+  };
+  const kindCounts = countBy(groups, groupKind);
+  const regionCounts = countBy(groups, groupRegion);
+  const statusCounts = countBy(groups, groupStatus);
+  const yearCounts = countBy(groups, yearOf);
+  const recentCount = groups.filter((g) => (parseInt(g.year ?? '', 10) || 0) >= nowYear - 2).length;
+  const active = filters.kind !== 'all' || filters.region !== 'all' || filters.year !== 'all' || filters.status !== 'all';
+
+  const row = <K extends string>(
+    label: string,
+    options: Record<K, string>,
+    value: K,
+    counts: Map<K, number> | ((k: K) => number) | null,
+    set: (k: K) => void,
+  ) => {
+    const keys = (Object.keys(options) as K[]).filter((k) => {
+      // 排序（counts 为 null）的选项都显示
+      if (counts === null || k === 'all' || k === value) return true;
+      return (typeof counts === 'function' ? counts(k) : counts.get(k) ?? 0) > 0;
+    });
+    // 只剩「全部」和一个选项：没得筛，不显示这一行
+    if (counts !== null && keys.length <= 2 && value === ('all' as K)) return null;
+    return (
+      <div className="flex items-center gap-2 min-w-0">
+        <span className="shrink-0 text-xs text-faint w-8">{label}</span>
+        <div className="flex gap-1.5 overflow-x-auto scrollbar-none -my-1 py-1">
+          {keys.map((k) => {
+            const n = k === 'all' || counts === null ? undefined : typeof counts === 'function' ? counts(k) : counts.get(k);
+            return (
+              <button
+                key={k}
+                type="button"
+                onClick={() => set(k)}
+                className={cn(
+                  'shrink-0 px-2.5 py-1 rounded-full text-xs transition-colors whitespace-nowrap',
+                  value === k ? 'bg-content text-page font-medium' : 'bg-chip text-muted hover:text-content',
+                )}
+              >
+                {options[k]}
+                {n ? <span className={cn('ml-1', value === k ? 'opacity-60' : 'text-faint')}>{n}</span> : null}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="mb-4 rounded-2xl bg-surface-raised/60 border border-line p-3 space-y-2">
+      {row('排序', SORT_LABELS, filters.sort, null, (sort) => onChange({ sort }))}
+      {row('类型', KIND_LABELS, filters.kind, kindCounts, (kind) => onChange({ kind }))}
+      {row('地区', REGION_LABELS, filters.region, regionCounts, (region) => onChange({ region }))}
+      {row(
+        '年份',
+        YEAR_LABELS,
+        filters.year,
+        (k: SearchYear) => (k === 'recent' ? recentCount : yearCounts.get(k) ?? 0),
+        (year) => onChange({ year }),
+      )}
+      {row('状态', STATUS_LABELS, filters.status, statusCounts, (status) => onChange({ status }))}
+      {active && (
+        <p className="text-xs text-faint">
+          筛选后 {shown} 部 ·{' '}
+          <button type="button" className="text-accent hover:underline" onClick={() => onChange({ kind: 'all', region: 'all', year: 'all', status: 'all' })}>
+            清除筛选
+          </button>
+        </p>
+      )}
+    </div>
+  );
+}
+
 function SearchPosterGrid({ groups, onOpen }: { groups: AggregatedGroup[]; onOpen: (group: AggregatedGroup) => void }) {
   return (
     <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 gap-3">

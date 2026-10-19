@@ -57,6 +57,8 @@ export function subjectToItem(subject: BangumiSubject): DoubanItem | undefined {
     cover,
     rating: score > 0 ? score.toFixed(1) : undefined,
     isTv: true,
+    // 首播年份：放送表里有《航海王》这种 1999 年开播还在每周更新的，不能当成今年的新番
+    ...(subject.air_date && /^\d{4}/.test(subject.air_date) ? { year: subject.air_date.slice(0, 4) } : {}),
     ...(subject.name && subject.name !== title ? { originalTitle: subject.name } : {}),
     ...(popularity > 0 ? { popularity } : {}),
   };

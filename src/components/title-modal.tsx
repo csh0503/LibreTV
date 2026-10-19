@@ -8,7 +8,7 @@ import { addSearchHistory, db, favoriteIdOf, toggleFavorite } from '@/lib/db';
 import { loadListUpdates, markListUnavailable, saveListUpdates } from '@/lib/watchlist-updates';
 import { describeContinueWatching } from '@/lib/home-features';
 import { resolveSource, useAppStore } from '@/lib/store';
-import { aggregateResults, canonicalTitle, matchingGroups, rankGroupsForPick, type AggregatedGroup } from '@/lib/title-aliases';
+import { aggregateResults, canonicalTitle, matchingGroups, rankGroupsForPick, specificTitle, type AggregatedGroup } from '@/lib/title-aliases';
 import type { SearchResultItem, TitlePick } from '@/lib/types';
 import { useProfile } from '@/lib/use-profile';
 import { buildWatchUrl, cn, formatTime } from '@/lib/utils';
@@ -52,12 +52,17 @@ export function TitleModal({
   /** 去搜索结果页看全部（含名称相近的） */
   onShowResults: (title: string) => void;
 }) {
+  // 卡片就是 TMDB 的条目、而它的中文名和别的作品撞了（乐高特别篇也叫「航海王」）：用它更具体的名字
+  const identity = useTitleIdentity(pick ?? { title: '' }, Boolean(pick?.id?.startsWith('tmdb_')));
+  const names = identity.data?.identity?.names;
   if (!pick) return null;
+  const specific = names ? specificTitle(pick.title, names) : undefined;
+  const effective = specific ? { ...pick, title: specific } : pick;
   // 换一部作品时整体重建，搜索、图片失败等状态不串
   return (
     <TitleModalBody
-      key={pick.title}
-      pick={pick}
+      key={effective.title}
+      pick={effective}
       presetItems={presetItems}
       onClose={onClose}
       onOpenSource={onOpenSource}

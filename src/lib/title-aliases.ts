@@ -469,3 +469,16 @@ export function aggregateResults(list: SearchResultItem[], query?: string): Aggr
     .map((x) => x.g);
 }
 
+
+/**
+ * 同名作品里更具体的那个名字：TMDB 给 2026 年的乐高特别篇的中文名也是「航海王」，
+ * 它的其他中文名里有「乐高航海王」——包含原名、只多几个字的，就用它（卡片、详情、找片源都更准）。
+ */
+export function specificTitle(title: string, names: string[]): string | undefined {
+  const base = canonicalTitle(title);
+  if (!base) return undefined;
+  return names.find((n) => {
+    const key = canonicalTitle(n);
+    return key !== base && key.includes(base) && key.length <= base.length + 6 && /[\u4e00-\u9fa5]/.test(n);
+  });
+}

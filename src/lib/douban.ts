@@ -5,6 +5,7 @@ import { rexxarToItem, type DoubanRequest } from './recommend';
 import { fetchBangumiCalendar, fetchBangumiCatalog } from './bangumi';
 import { canonicalTitle } from './title-aliases';
 import { WorkGroups, workKeys } from './work-identity';
+import { disambiguateTitles } from './title-disambiguate';
 import { getTmdbApiKey, timeProbe, TMDB_CODE_TO_AREA, TMDB_ID_TO_GENRE, type UpstreamProbe } from './douban-weekly';
 import { dropUnreleased, fetchUnreleasedIndex } from './unreleased';
 
@@ -454,6 +455,10 @@ export async function fetchDoubanRecommend(query: DoubanFetchQuery): Promise<{ i
     throw new Error('片库推荐获取失败');
   }
 
+  // 和老作品撞名的 TMDB 新作先换成更具体的名字（乐高特别篇「航海王」→「乐高航海王」），免得和老番合并 / 认错
+  if (tmdbRes.status === 'fulfilled' && tmdbRes.value.length > 0) {
+    candidateLists[candidateLists.indexOf(tmdbRes.value)] = await disambiguateTitles(tmdbRes.value);
+  }
   // 豆瓣 / B站不过滤未播出的年番和定档作品，用开播日期索引统一剔除，它们只在「即将播出」里出现
   const fused = fuseCatalogItems(candidateLists, query.pageSize * 2);
   const items = unreleasedRes.status === 'fulfilled' ? dropUnreleased(fused, unreleasedRes.value) : fused;

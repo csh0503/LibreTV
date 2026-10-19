@@ -138,3 +138,13 @@ describe('跨页合并', () => {
     expect(out[0].rating).toBe('7.9');
   });
 });
+
+describe('撞名的新作换成更具体的名字', () => {
+  it('乐高特别篇：「航海王」→「乐高航海王」；经典版的别名「海贼王」不算', async () => {
+    const { specificTitle } = await import('./title-aliases');
+    expect(specificTitle('航海王', ['乐高航海王', 'LEGO 航海王', '乐高海贼王'])).toBe('乐高航海王');
+    expect(specificTitle('航海王', ['海贼王'])).toBeUndefined();
+    // 长得多的不算（多半是另一部的副标题版）
+    expect(specificTitle('航海王', ['航海王剧场版：红发歌姬特别加长纪念版'])).toBeUndefined();
+  });
+});
