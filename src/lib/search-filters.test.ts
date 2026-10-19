@@ -65,3 +65,14 @@ describe('搜索筛选', () => {
     expect(groupStatus(list[3])).toBe('ended');
   });
 });
+
+describe('作品身份认错的判断', () => {
+  it('片源播到 1115 集、认到的只有 2 集 → 认错；1180 集的对得上', async () => {
+    const { identityContradicts } = await import('../components/use-source-search');
+    expect(identityContradicts(1115, { episodes: 2 })).toBe(true);
+    expect(identityContradicts(1115, { episodes: 1180 })).toBe(false);
+    // 没有集数信息的不判断；正在更新、片源多几集的正常
+    expect(identityContradicts(0, { episodes: 2 })).toBe(false);
+    expect(identityContradicts(14, { episodes: 12 })).toBe(false);
+  });
+});

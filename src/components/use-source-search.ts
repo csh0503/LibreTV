@@ -7,6 +7,7 @@ import { api } from '@/lib/client-api';
 import { isInDisabledSubscription, isSourceDisabled, resolveSource, useAppStore } from '@/lib/store';
 import { forgetAlias, recallAlias, rememberAlias } from '@/lib/alias-memory';
 import { aggregateResults, matchingGroups } from '@/lib/title-aliases';
+import { episodeCount } from '@/lib/source-rank';
 import type { SourceSearchOutcome, TitlePick } from '@/lib/types';
 import { formatDisableTtl, validateSourceUrl } from '@/lib/utils';
 import { useToast } from './toast';
@@ -128,13 +129,33 @@ const MAX_ALIAS_TRIES = 3;
 export function useTitleIdentity(pick: TitlePick, enabled: boolean) {
   const kind = pick.isTv === true ? 'tv' : pick.isTv === false ? 'movie' : undefined;
   const tmdb = pick.id?.startsWith('tmdb_') ? pick.id.slice(5) : undefined;
-  return useQuery({
+  const first = useQuery({
     queryKey: ['identity', pick.title, pick.year, kind, tmdb],
     queryFn: ({ signal }) => api.identity({ title: pick.title, year: pick.year, kind, tmdb }, signal),
     enabled,
     staleTime: 24 * 3600_000,
     retry: 0,
   });
+  // 片源站年份标错（360 把 1999 年的《航海王》标成 2025）时，按年份会认成同名的别的作品（2026 年 2 集的乐高特别篇）：
+  // 集数对不上就不带年份再认一次，还对不上就当作认不出
+  const eps = episodeCount(pick.remarks);
+  const wrong = (info?: { episodes?: number }) => identityContradicts(eps, info);
+  const retryNeeded = !tmdb && Boolean(pick.year) && wrong(first.data?.identity?.info);
+  const retry = useQuery({
+    queryKey: ['identity', pick.title, undefined, kind, undefined],
+    queryFn: ({ signal }) => api.identity({ title: pick.title, kind }, signal),
+    enabled: enabled && retryNeeded,
+    staleTime: 24 * 3600_000,
+    retry: 0,
+  });
+  if (!retryNeeded) return first;
+  if (retry.data && wrong(retry.data.identity?.info)) return { ...retry, data: { identity: null } } as typeof retry;
+  return retry;
+}
+
+/** 片源已经播到的集数远多于认到的作品的总集数（多三倍以上）：认错了 */
+export function identityContradicts(sourceEpisodes: number, info?: { episodes?: number }): boolean {
+  return Boolean(sourceEpisodes && info?.episodes && sourceEpisodes > info.episodes * 3 + 10);
 }
 
 export function useAliasFallback(pick: TitlePick, primaryMissing: boolean) {

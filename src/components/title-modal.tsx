@@ -53,8 +53,10 @@ export function TitleModal({
   onShowResults: (title: string) => void;
 }) {
   // 卡片就是 TMDB 的条目、而它的中文名和别的作品撞了（乐高特别篇也叫「航海王」）：用它更具体的名字
-  const identity = useTitleIdentity(pick ?? { title: '' }, Boolean(pick?.id?.startsWith('tmdb_')));
-  const names = identity.data?.identity?.names;
+  const fromTmdb = Boolean(pick?.id?.startsWith('tmdb_'));
+  const identity = useTitleIdentity(pick ?? { title: '' }, fromTmdb);
+  // 只对 TMDB 自己的卡片换名字（别处打开时同一份查询缓存里也可能有数据，不能拿来用）
+  const names = fromTmdb ? identity.data?.identity?.names : undefined;
   if (!pick) return null;
   const specific = names ? specificTitle(pick.title, names) : undefined;
   const effective = specific ? { ...pick, title: specific } : pick;
