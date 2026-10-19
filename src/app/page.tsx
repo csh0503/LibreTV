@@ -207,7 +207,7 @@ function HomeContent() {
       return next;
     });
   }, []);
-  const filteredGroups = useMemo(() => applySearchFilters(groups, filters), [groups, filters]);
+  const filteredGroups = useMemo(() => applySearchFilters(groups, filters, undefined, urlQuery), [groups, filters, urlQuery]);
 
   // 分批渲染：新一次搜索 / 换筛选时重置回首批
   const [visibleCount, setVisibleCount] = useState(RESULT_PAGE_SIZE);

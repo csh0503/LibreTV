@@ -25,8 +25,27 @@ describe('搜索筛选', () => {
     expect(regionOf('动作片', '美国')).toBe('west');
   });
 
-  it('默认按年份从新到旧，没年份的放最后', () => {
-    const out = applySearchFilters([g('a', '1999', '日韩动漫'), g('b', undefined, '动作片'), g('c', '2026', '欧美剧'), g('d', '2019', '动作片')], DEFAULT_SEARCH_FILTERS, 2026);
+  it('默认先看相关度（片名就是搜索词 > 以它开头 > 包含它），同一档里年份新的在前', () => {
+    const list = [
+      g('航海王剧场版Z', '2012', '动画片'),
+      g('航海王', '1999', '日韩动漫'),
+      g('乐高航海王', '2026', '日韩动漫'),
+      g('航海王', '2008', '动漫'),
+      g('航海王(真人版)第二季', '2026', '欧美剧'),
+      g('海贼王女', '2021', '日韩动漫'),
+    ];
+    expect(applySearchFilters(list, DEFAULT_SEARCH_FILTERS, 2026, '航海王').map((x) => `${x.name}${x.year}`)).toEqual([
+      '航海王2008',
+      '航海王1999',
+      '航海王(真人版)第二季2026',
+      '航海王剧场版Z2012',
+      '乐高航海王2026',
+      '海贼王女2021',
+    ]);
+  });
+
+  it('按年份从新到旧，没年份的放最后', () => {
+    const out = applySearchFilters([g('a', '1999', '日韩动漫'), g('b', undefined, '动作片'), g('c', '2026', '欧美剧'), g('d', '2019', '动作片')], { ...DEFAULT_SEARCH_FILTERS, sort: 'year-desc' }, 2026);
     expect(out.map((x) => x.name)).toEqual(['c', 'd', 'a', 'b']);
   });
 
@@ -37,8 +56,8 @@ describe('搜索筛选', () => {
       g('航海王剧场版Z', '2012', '动画片', 'HD', 19),
       g('乐高航海王', '2026', '日韩动漫', '全2集', 14),
     ];
-    expect(applySearchFilters(list, { ...DEFAULT_SEARCH_FILTERS, kind: 'anime' }, 2026).map((x) => x.name)).toEqual(['乐高航海王', '航海王剧场版Z', '航海王']);
-    expect(applySearchFilters(list, { ...DEFAULT_SEARCH_FILTERS, year: 'this' }, 2026).map((x) => x.name)).toEqual(['航海王 真人版', '乐高航海王']);
+    expect(applySearchFilters(list, { ...DEFAULT_SEARCH_FILTERS, kind: 'anime', sort: 'year-desc' }, 2026).map((x) => x.name)).toEqual(['乐高航海王', '航海王剧场版Z', '航海王']);
+    expect(applySearchFilters(list, { ...DEFAULT_SEARCH_FILTERS, year: 'this', sort: 'year-desc' }, 2026).map((x) => x.name)).toEqual(['航海王 真人版', '乐高航海王']);
     expect(applySearchFilters(list, { ...DEFAULT_SEARCH_FILTERS, status: 'airing' }, 2026).map((x) => x.name)).toEqual(['航海王']);
     expect(applySearchFilters(list, { ...DEFAULT_SEARCH_FILTERS, sort: 'sources' }, 2026)[0].name).toBe('航海王 真人版');
     expect(groupKind(list[2])).toBe('anime');

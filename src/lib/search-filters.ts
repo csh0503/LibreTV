@@ -1,4 +1,5 @@
 import type { AggregatedGroup } from './title-aliases';
+import { normalizeTitle } from './cms-parser';
 
 /**
  * 搜索结果页的筛选和排序（纯函数，页面和测试共用）。
@@ -20,7 +21,7 @@ export interface SearchFilters {
   sort: SearchSort;
 }
 
-export const DEFAULT_SEARCH_FILTERS: SearchFilters = { kind: 'all', region: 'all', year: 'all', status: 'all', sort: 'year-desc' };
+export const DEFAULT_SEARCH_FILTERS: SearchFilters = { kind: 'all', region: 'all', year: 'all', status: 'all', sort: 'relevance' };
 
 export const KIND_LABELS: Record<SearchKind, string> = {
   all: '全部',
@@ -44,7 +45,7 @@ export const STATUS_LABELS: Record<SearchStatus, string> = { all: '全部', airi
 export const SORT_LABELS: Record<SearchSort, string> = {
   'year-desc': '年份 · 新→旧',
   'year-asc': '年份 · 旧→新',
-  relevance: '相关度',
+  relevance: '相关度 · 新→旧',
   sources: '片源最多',
 };
 
@@ -120,8 +121,30 @@ function yearMatches(year: number | undefined, filter: SearchYear, nowYear: numb
   }
 }
 
-/** 按筛选条件过滤、排序；relevance = 保留 aggregateResults 给的顺序（精确同名在前、源多在前） */
-export function applySearchFilters(groups: AggregatedGroup[], f: SearchFilters, nowYear = new Date().getFullYear()): AggregatedGroup[] {
+/**
+ * 和搜索词有多像：0 片名就是搜索词，1 以它开头（「航海王：红发歌姬」），2 包含它，3 其他（别名搜到的等）。
+ * 没给搜索词时都算 0。
+ */
+export function relevanceTier(name: string, query?: string): number {
+  const q = query ? normalizeTitle(query) : '';
+  if (!q) return 0;
+  const n = normalizeTitle(name);
+  if (n === q) return 0;
+  if (n.startsWith(q)) return 1;
+  if (n.includes(q)) return 2;
+  return 3;
+}
+
+/**
+ * 按筛选条件过滤、排序。
+ * relevance（默认）= 先按和搜索词有多像分档，同一档里年份新的在前；年份排序不看相关度；片源最多看源数。
+ */
+export function applySearchFilters(
+  groups: AggregatedGroup[],
+  f: SearchFilters,
+  nowYear = new Date().getFullYear(),
+  query?: string,
+): AggregatedGroup[] {
   const filtered = groups.filter(
     (g) =>
       (f.kind === 'all' || groupKind(g) === f.kind) &&
@@ -129,13 +152,20 @@ export function applySearchFilters(groups: AggregatedGroup[], f: SearchFilters, 
       (f.status === 'all' || groupStatus(g) === f.status) &&
       yearMatches(parseInt(g.year ?? '', 10) || undefined, f.year, nowYear),
   );
-  if (f.sort === 'relevance') return filtered;
-  const indexed = filtered.map((g, i) => ({ g, i, y: parseInt(g.year ?? '', 10) || 0, n: new Set(g.items.map((x) => x.sourceKey)).size }));
+  const indexed = filtered.map((g, i) => ({
+    g,
+    i,
+    y: parseInt(g.year ?? '', 10) || 0,
+    n: new Set(g.items.map((x) => x.sourceKey)).size,
+    // 解说、预告这类 aggregateResults 已经排到后面的保持在后面：用它原来的位置做最后的决胜
+    tier: f.sort === 'relevance' ? relevanceTier(g.name, query) : 0,
+  }));
   indexed.sort((a, b) => {
     if (f.sort === 'sources') return b.n - a.n || a.i - b.i;
+    if (a.tier !== b.tier) return a.tier - b.tier;
     // 没有年份的放最后
     if (!a.y !== !b.y) return a.y ? -1 : 1;
-    const d = f.sort === 'year-desc' ? b.y - a.y : a.y - b.y;
+    const d = f.sort === 'year-asc' ? a.y - b.y : b.y - a.y;
     return d || a.i - b.i;
   });
   return indexed.map((x) => x.g);
