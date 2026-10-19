@@ -69,12 +69,9 @@ export function describeContinueWatching(
 
   // 单集内是否视为已看完（>= 92%）
   const episodeFinished = dur > 0 && pos >= dur * 0.92;
-  // 历史记录时是否已经追平当时的最后一集并看完
-  const caughtUpThen =
-    savedTotal > 0 && item.episodeIndex >= savedTotal - 1 && episodeFinished;
-
-  // 若此前已追平最后一集且现在更新了新集，点击直接进下一集（新出的那一集）
-  const jumpToNext = hasUpdate && caughtUpThen && item.episodeIndex + 1 < effectiveTotal;
+  // 这一集已经看完、后面还有：点击直接进下一集（Netflix 也是这样）；
+  // 此前已追平最后一集、现在更新了新集的，进的就是新出的那一集
+  const jumpToNext = episodeFinished && item.episodeIndex + 1 < effectiveTotal;
   const targetEpisodeIndex = jumpToNext ? item.episodeIndex + 1 : Math.max(0, item.episodeIndex || 0);
   const targetPosition =
     jumpToNext || episodeFinished || pos <= 5 ? 0 : Math.floor(pos);
@@ -90,7 +87,9 @@ export function describeContinueWatching(
   const timePart = pos > 5 && !episodeFinished ? formatSec(pos) : episodeFinished ? '已看完本集' : '';
 
   let posterLabel = '';
-  if (effectiveTotal > 1) {
+  if (jumpToNext) {
+    posterLabel = `第 ${targetEpisodeIndex + 1} 集`;
+  } else if (effectiveTotal > 1) {
     posterLabel = timePart ? `第 ${epNum} 集 · ${timePart}` : `第 ${epNum} 集`;
   } else {
     posterLabel = timePart || '继续播放';
@@ -101,6 +100,8 @@ export function describeContinueWatching(
     subLabel = jumpToNext
       ? `更至 ${effectiveTotal} 集 · 接着看第 ${targetEpisodeIndex + 1} 集`
       : `更至 ${effectiveTotal} 集 · 看到第 ${epNum} 集`;
+  } else if (jumpToNext) {
+    subLabel = `接着看第 ${targetEpisodeIndex + 1}/${effectiveTotal} 集`;
   } else if (effectiveTotal > 1) {
     subLabel = `看到第 ${epNum}/${effectiveTotal} 集`;
   } else if (dur > 0 && pos > 5 && !episodeFinished) {

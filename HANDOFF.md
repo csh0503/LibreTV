@@ -36,6 +36,15 @@
   - **播放器设置（ArtPlayer 齿轮，`lib/player-prefs.ts`，localStorage，所有剧共用）**：自动跳过片头片尾（默认关，开了是倒数 5 秒 + 不跳）、识别片头片尾（声音比对开关，省流量时默认关；读旧的 `libretv:audio-skip:enabled`）、快进快退步长 5/10/15/30 秒（默认 10）。
   - **控制栏**：播放键后面「⟲N / ⟳N」快退快进按钮（N 随设置变）；右边倍速按钮（0.5–3x，记住，换集后 `loadedmetadata` 时重新套用并设 `defaultPlaybackRate`）。键盘 ← → 用同一步长，`<` `>` 调速。手机宽度（≤520px）隐藏音量 / 截图 / 画中画 / 网页全屏、按钮最小宽度 38px，否则全屏键被挤出去。
   - **实时翻译**：没做。片源基本都是硬字幕（压在画面里），没有字幕轨可翻；浏览器里跑语音识别 + 翻译（Whisper / WebGPU）很重、慢、不准。建议用户用 Chrome「实时字幕 + 翻译」、Windows 11 实时辅助字幕、Android「实时字幕」。
+- **2026-10-19 续播 + 全屏里的跳过按钮（用户要求）**：
+  - **续播修好了**：以前在 hls.js 的 `MANIFEST_PARSED` 里 seek，那时 `video.duration` 多半还是 0，「位置有效」判断失败就从头播；而且播放器起播时 `setupHls` 会被调好几次，只有第一次拿到进度。现在每集只查一次进度（`restoreRef` 存同一个 Promise，所有重建共用），用 hls.js 的 `startPosition` 直接从那里开始加载；开播后显示「已从 12:34 继续播放 · 从头播放」。播到一半改走代理 / 出错重建时从当前位置接着放（以前回到 0）；切换去广告从当前位置接着放。
+  - **进度不再被 0 盖掉**：还没开播（位置是 0）或换集时 props 先变、`<video>` 还是上一集时，不存进度（`canReport`）。地址栏里的 `position` 只用一次就删掉（否则切去广告 / 刷新会跳回旧位置）。最后 15 秒内的进度当看完。
+  - **换源也接着看**：这个源没有这一集的进度时，用观看记录里同一部（`canonicalTitle`）同一集在别的源上的位置（往回退 5 秒）。详情弹窗里点别的源、手动换源、自动换源都适用。
+  - **「继续观看」看完的那集直接进下一集**（`describeContinueWatching`：≥92% 且后面还有集）。
+  - **全屏里也有「跳过片头」**：浮层宿主原来挂在 ArtPlayer 容器上，但全屏的是里面的 `.art-video-player`，一全屏就看不到；现在挂到 `art.template.$player` 里，提示条、出错遮罩也搬进去了。
+  - **iPhone**：没有元素全屏（`document.fullscreenEnabled` 为假），ArtPlayer 的全屏会交给 iOS 系统播放器，网页做的按钮都放不进去。这种设备上全屏键换成网页全屏（`fullscreen-page` 控件），开 `autoOrientation`（竖着拿时把画面转成横向），转手机后重新铺一次。iPad / 电脑 / 安卓照旧用真全屏。真机效果还没看到。
+  - 没有 MSE 的旧 iOS 退回系统自带 HLS 播放（去广告不生效）。
+  - 手机上选集按钮的 `scrollIntoView` 会把整页滚到播放器下面，改成只滚列表自己。
 - **播放卡住自动换源**：`player-shell.tsx` 在三种情况把「这个源不行」交给父级（`onRequestSwitchSource(reason, position)`，每集一次）：hls 重试耗尽、开播后卡住 25 秒、换地址 35 秒还没开播（画面已加载只是被浏览器挡了自动播放的不算）。`use-auto-failover.ts` 用同一部（`failoverQueryTitle` 去掉片名后的年份）重新搜（多半命中缓存），`lib/failover.ts` 的 `pickFailoverCandidates` 在同一组里按片源排名挑，确认有这一集后跳过去接着播（位置回退 3 秒），试过的记在 URL `tried`，一集最多 5 个源；都不行显示「换了 N 个源都播不了」+ 手动换源 / 重试。
 - **详情弹窗默认用上次看的源**：看过的作品，选集区默认是上次那个源（`lastWatched`），不是推荐源。
 

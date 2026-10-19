@@ -26,6 +26,28 @@ describe('继续观看与追更提醒 (describeContinueWatching / hasNewEpisodes
     expect(view.hasUpdate).toBe(false);
   });
 
+  it('这一集已经看完、后面还有：点击直接进下一集；最后一集看完则从头重播', () => {
+    const finished = describeContinueWatching({
+      episodeIndex: 2,
+      totalEpisodes: 12,
+      playbackPosition: 1150,
+      duration: 1200,
+    });
+    expect(finished.targetEpisodeIndex).toBe(3);
+    expect(finished.targetPosition).toBe(0);
+    expect(finished.posterLabel).toBe('第 4 集');
+    expect(finished.subLabel).toBe('接着看第 4/12 集');
+
+    const last = describeContinueWatching({
+      episodeIndex: 11,
+      totalEpisodes: 12,
+      playbackPosition: 1150,
+      duration: 1200,
+    });
+    expect(last.targetEpisodeIndex).toBe(11);
+    expect(last.targetPosition).toBe(0);
+  });
+
   it('连载剧集数变多时标记「更新了」，且此前已看完最新集时点击直接跳到新出的一集', () => {
     expect(hasNewEpisodes(12, 14)).toBe(true);
     expect(hasNewEpisodes(12, 12)).toBe(false);

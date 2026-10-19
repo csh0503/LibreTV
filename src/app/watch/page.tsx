@@ -49,6 +49,7 @@ import {
 } from '@/lib/home-features';
 import { getActiveProfileId, whenProfileReady } from '@/lib/profile-session';
 import { rememberVideoInfo } from '@/lib/taste-store';
+import { canonicalTitle } from '@/lib/title-aliases';
 import { cn, formatTime } from '@/lib/utils';
 
 /**
@@ -207,23 +208,43 @@ function WatchContent() {
   useEffect(() => setAdMarks(loadAdMarks(adEpisodeKey)), [adEpisodeKey]);
   const [adPanelOpen, setAdPanelOpen] = useState(false);
 
-  // 进度恢复优先级：URL position 参数 > IndexedDB progress 表 > 已同步的观看历史
+  // 进度恢复优先级：URL position 参数 > IndexedDB progress 表 > 已同步的观看历史 > 同一部别的源看到的位置
   const getRestorePosition = useCallback(async () => {
     await whenProfileReady();
+    // 快看完了（最后 15 秒内）就当这集看完了，从头播
+    const valid = (pos: number, dur: number) => (pos > 0 && (!dur || pos < dur - 15) ? pos : 0);
     const urlPos = parseInt(searchParams.get('position') || '0', 10) || 0;
-    if (urlPos > 0) return urlPos;
+    if (urlPos > 0) {
+      // 只用一次：留在地址栏里的话，之后重新加载（切换去广告、刷新）会跳回这个旧位置
+      const sp = new URLSearchParams(window.location.search);
+      sp.delete('position');
+      window.history.replaceState(window.history.state, '', `?${sp.toString()}`);
+      return urlPos;
+    }
     if (!vodId) return 0;
     const entry = await db.progress.get(progressKeyOf(sourceKey, vodId, currentIndex));
-    if (entry?.position && entry.position > 0) return entry.position;
+    if (entry && valid(entry.position, entry.duration)) return entry.position;
     const pid = getActiveProfileId();
-    if (pid) {
-      const hist = await db.history.get(`${pid}::${sourceKey}_${vodId}`);
-      if (hist && hist.episodeIndex === currentIndex && hist.playbackPosition > 0) {
-        return hist.playbackPosition;
-      }
+    if (!pid) return 0;
+    const hist = await db.history.get(`${pid}::${sourceKey}_${vodId}`);
+    if (hist && hist.episodeIndex === currentIndex && valid(hist.playbackPosition, hist.duration)) {
+      return hist.playbackPosition;
     }
-    return 0;
-  }, [searchParams, sourceKey, vodId, currentIndex]);
+    // 换了个源看同一集（详情弹窗里点了别的源 / 自动换源）：用那个源上看到的位置。
+    // 不同源的片头长短可能差几秒，往回退 5 秒
+    const key = canonicalTitle(videoTitle);
+    if (!key) return 0;
+    const other = (await db.history.where('profileId').equals(pid).toArray())
+      .filter(
+        (h) =>
+          h.id !== hist?.id &&
+          h.episodeIndex === currentIndex &&
+          canonicalTitle(h.title) === key &&
+          valid(h.playbackPosition, h.duration),
+      )
+      .sort((a, b) => b.timestamp - a.timestamp)[0];
+    return other ? Math.max(0, other.playbackPosition - 5) : 0;
+  }, [searchParams, sourceKey, vodId, currentIndex, videoTitle]);
 
   // 写入观看历史（进入页面即记录，进度后续增量更新）
   useEffect(() => {
@@ -856,7 +877,14 @@ function EpisodeButton({ label, hint, active, onClick }: { label: string; hint?:
   const ref = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
-    if (active) ref.current?.scrollIntoView({ block: 'nearest' });
+    // 只滚列表自己：scrollIntoView 会连整页一起滚，手机上列表在播放器下面，一进来页面就被拖到播放器下方
+    const el = ref.current;
+    const list = el?.parentElement;
+    if (!active || !el || !list) return;
+    const top = el.getBoundingClientRect().top - list.getBoundingClientRect().top + list.scrollTop;
+    if (top < list.scrollTop || top + el.offsetHeight > list.scrollTop + list.clientHeight) {
+      list.scrollTop = top - (list.clientHeight - el.offsetHeight) / 2;
+    }
   }, [active]);
 
   return (
