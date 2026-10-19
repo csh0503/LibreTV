@@ -4,6 +4,7 @@ import { fetchUpstream, getCache, setCache } from './fetch-utils';
 import { rexxarToItem, type DoubanRequest } from './recommend';
 import { fetchBangumiCalendar, fetchBangumiCatalog } from './bangumi';
 import { canonicalTitle } from './title-aliases';
+import { WorkGroups } from './work-identity';
 import { getTmdbApiKey, timeProbe, TMDB_CODE_TO_AREA, TMDB_ID_TO_GENRE, type UpstreamProbe } from './douban-weekly';
 import { dropUnreleased, fetchUnreleasedIndex } from './unreleased';
 
@@ -154,7 +155,9 @@ async function fetchBiliSeasonIndex(query: DoubanFetchQuery): Promise<DoubanItem
       cover,
       rating,
       isTv,
+      // B站片库按年份筛时条目本身不带年份：填的是筛选的年份，合并时不当真
       year: yearTag,
+      yearSoft: yearTag ? true : undefined,
       area: seasonType === 1 ? '日本' : seasonType === 4 ? '中国大陆' : undefined,
       genres: isAnime ? '动画' : isDoc ? '纪录片' : undefined,
       remarks: row.index_show?.trim() || undefined,
@@ -310,8 +313,8 @@ async function fetchTmdbDiscoverCatalog(query: DoubanFetchQuery): Promise<Douban
  * - 同名条目自动互补：优先采信 B站/Bangumi 的准确完结/连载状态（解决豆瓣滞后标为「更新至N集」的问题），并合并横版剧照、评分、年代地区。
  */
 export function fuseCatalogItems(lists: DoubanItem[][], limit: number): DoubanItem[] {
-  const byKey = new Map<string, DoubanItem>();
-  const orderKeys: string[] = [];
+  // 同名不一定是同一部（见 work-identity）：片名一样还要编号、年份、集数对得上才合并
+  const works = new WorkGroups<{ item: DoubanItem }>();
   const maxLen = Math.max(0, ...lists.map((l) => l.length));
 
   for (let i = 0; i < maxLen; i++) {
@@ -321,11 +324,11 @@ export function fuseCatalogItems(lists: DoubanItem[][], limit: number): DoubanIt
       const key = canonicalTitle(item.title);
       if (!key) continue;
 
-      const existing = byKey.get(key);
-      if (!existing) {
-        byKey.set(key, { ...item });
-        orderKeys.push(key);
+      const slot = works.find(key, item);
+      if (!slot) {
+        works.add(key, item, { item: { ...item } });
       } else {
+        const existing = slot.item;
         // 有依据的状态（完结标记、更新说明、首播日期）优先于只按年份猜的；
         // 都有依据时 ended 优先——B站 / Bangumi 的完结会覆盖豆瓣滞后的「更新至N集」
         const firm = [existing, item].filter((x) => x.status && !x.statusGuessed);
@@ -341,23 +344,28 @@ export function fuseCatalogItems(lists: DoubanItem[][], limit: number): DoubanIt
               ? existing.remarks
               : existing.remarks || item.remarks;
 
-        byKey.set(key, {
+        slot.item = {
           ...existing,
+          // 有一边是来源自己给的年份就用那个
+          ...(existing.year && !existing.yearSoft
+            ? {}
+            : item.year && !item.yearSoft
+              ? { year: item.year, yearSoft: undefined }
+              : { year: existing.year || item.year }),
           cover: existing.cover || item.cover,
           backdrop: existing.backdrop || item.backdrop,
           rating: existing.rating || item.rating,
-          year: existing.year || item.year,
           area: existing.area || item.area,
           genres: existing.genres || item.genres,
           status: authoritativeEnded,
           statusGuessed: guessed || undefined,
           remarks: authoritativeRemarks,
-        });
+        };
       }
     }
   }
 
-  return orderKeys.slice(0, limit).map((k) => byKey.get(k)!);
+  return works.order.slice(0, limit).map((slot) => slot.item);
 }
 
 export async function fetchDoubanRecommend(query: DoubanFetchQuery): Promise<{ items: DoubanItem[]; total?: number }> {

@@ -101,6 +101,8 @@ export interface DoubanItem {
   isTv?: boolean;
   /** 上映年，豆瓣 card_subtitle 或 year 字段 */
   year?: string;
+  /** year 不是来源给的、是按筛选条件填的（B站片库按年份筛）：合并时不当作可靠年份 */
+  yearSoft?: boolean;
   /** 地区，可能是「美国 加拿大」这种多地区 */
   area?: string;
   /** 题材，空格分隔，来自 card_subtitle 的第三段 */

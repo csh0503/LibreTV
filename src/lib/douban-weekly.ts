@@ -1,6 +1,7 @@
 import type { DoubanItem } from './types';
 import { judgeStatus, looksUnreleased } from './title-status';
 import { fetchUpstream, getCache, setCache } from './fetch-utils';
+import { WorkGroups } from './work-identity';
 import { canonicalTitle } from './title-aliases';
 import { fetchBangumiHotAiring } from './bangumi';
 import { dropUnreleased, fetchUnreleasedIndex } from './unreleased';
@@ -608,7 +609,8 @@ export function fuseMultiSourceRankings(
     firstSeenRank: number;
   }
 
-  const map = new Map<string, CandidateEntry>();
+  // 同一系列（不分季）才合并；同名的不同作品（集数和开播年份对不上、电影 vs 剧集）各算各的
+  const works = new WorkGroups<CandidateEntry & { key: string }>({ acrossSeasons: true });
 
   for (const src of sources) {
     const weight = src.weight ?? 1;
@@ -629,9 +631,10 @@ export function fuseMultiSourceRankings(
       const yearNum = parseInt(item.year ?? '0', 10) || 0;
       const titleScore = airingBonus + seasonNum * 10 + (yearNum >= 2025 ? 5 : 0);
 
-      const existing = map.get(stem);
+      const existing = works.find(stem, item);
       if (!existing) {
-        map.set(stem, {
+        works.add(stem, item, {
+          key: stem,
           item: { ...item },
           platformScores: new Map([[platform, contribution]]),
           bestTitleScore: titleScore,
@@ -669,7 +672,8 @@ export function fuseMultiSourceRankings(
     });
   }
 
-  const ranked = [...map.entries()].map(([key, entry]) => {
+  const ranked = works.order.map((entry) => {
+    const key = entry.key;
     const base = [...entry.platformScores.values()].reduce((sum, v) => sum + v, 0);
     const airingTieBreaker = entry.item.status === 'airing' ? 1e-4 : 0;
     const finalScore = base * ratingFactor(entry.item.rating) + airingTieBreaker;
