@@ -65,6 +65,15 @@ export function Header({ showSearch = false }: { showSearch?: boolean }) {
             </span>
           </Link>
 
+          {/* 主导航（Apple TV 式）：首页 / 片库 / 排行（不要直播，入口都拿掉了）；手机上改成底部分页栏 */}
+          <nav aria-label="主导航" className="hidden sm:flex items-center gap-0.5 ml-2">
+            {PRIMARY_NAV.map((item) => (
+              <HeaderLink key={item.href} href={item.href} active={isActive(pathname, item.href)}>
+                {item.label}
+              </HeaderLink>
+            ))}
+          </nav>
+
           {showSearch && (
             <form
               className="flex-1 max-w-xl hidden sm:block"
@@ -117,9 +126,6 @@ export function Header({ showSearch = false }: { showSearch?: boolean }) {
           <div className="flex-1 sm:hidden" />
 
           <nav className="flex items-center gap-0.5 sm:gap-1 ml-auto">
-            <HeaderLink href="/live" active={pathname === '/live'}>
-              直播
-            </HeaderLink>
             <span className="hidden sm:contents">
               <HeaderLink href="/about" active={pathname === '/about'}>
                 关于
@@ -149,6 +155,8 @@ export function Header({ showSearch = false }: { showSearch?: boolean }) {
           </nav>
         </div>
       </header>
+
+      <MobileTabBar pathname={pathname} />
 
       {mounted.settings && <SourceManagerDrawer open={settingsOpen} onClose={() => setSettingsOpen(false)} />}
       {mounted.history && <HistoryPanel open={historyOpen} onClose={() => setHistoryOpen(false)} />}
@@ -182,5 +190,48 @@ function IconButton({ label, onClick, children }: { label: string; onClick: () =
     >
       {children}
     </button>
+  );
+}
+
+const PRIMARY_NAV: { href: string; label: string; icon: string }[] = [
+  { href: '/', label: '首页', icon: 'M4 10.5 12 4l8 6.5V20h-5.5v-5.5h-5V20H4z' },
+  { href: '/browse', label: '片库', icon: 'M4.5 4.5h6v6h-6zM13.5 4.5h6v6h-6zM4.5 13.5h6v6h-6zM13.5 13.5h6v6h-6z' },
+  { href: '/rank', label: '排行', icon: 'M5 20V11M12 20V5M19 20v-6' },
+];
+
+function isActive(pathname: string, href: string): boolean {
+  return href === '/' ? pathname === '/' : pathname === href || pathname.startsWith(`${href}/`);
+}
+
+/** 手机底部分页栏（Apple TV / Netflix App 式）。播放页不显示 */
+function MobileTabBar({ pathname }: { pathname: string }) {
+  if (pathname.startsWith('/watch')) return null;
+  return (
+    <nav
+      aria-label="主导航"
+      className="mobile-tabbar sm:hidden fixed inset-x-0 bottom-0 z-40 bg-page/[0.985] backdrop-blur-xl border-t border-content/[0.08] pb-[env(safe-area-inset-bottom)]"
+    >
+      <div className="grid grid-cols-3">
+        {PRIMARY_NAV.map((item) => {
+          const active = isActive(pathname, item.href);
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              aria-current={active ? 'page' : undefined}
+              className={cn(
+                'flex flex-col items-center justify-center gap-0.5 h-[52px] text-[10.5px] font-medium transition-colors',
+                active ? 'text-content' : 'text-faint',
+              )}
+            >
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? 1.9 : 1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d={item.icon} />
+              </svg>
+              {item.label}
+            </Link>
+          );
+        })}
+      </div>
+    </nav>
   );
 }

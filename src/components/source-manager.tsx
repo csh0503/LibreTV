@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Drawer } from './drawer';
 import { ConfirmDialog } from './confirm-dialog';
 import { Icon, type IconName } from './icon';
-import { LiveSourceManager } from './live-source-manager';
 import {
   HealthBadge,
   SearchInput,
@@ -51,7 +50,6 @@ const PRIMARY_TABS: { id: PrimaryTab; label: string; icon: IconName }[] = [
 const SECONDARY_TABS: Record<PrimaryTab, { id: SecondaryTab; label: string }[]> = {
   sources: [
     { id: 'vod', label: '点播源' },
-    { id: 'live', label: '直播源' },
     { id: 'subs', label: '数据源订阅' },
   ],
   prefs: [
@@ -107,7 +105,8 @@ export function SourceManagerDrawer({ open, onClose }: { open: boolean; onClose:
     }
   }, [primary, secondary]);
 
-  const current = secondary[primary];
+  // 记住的分页已经不在了（直播源拿掉了）就回到这一组的第一个
+  const current = SECONDARY_TABS[primary].some((t) => t.id === secondary[primary]) ? secondary[primary] : SECONDARY_TABS[primary][0].id;
 
   return (
     <Drawer
@@ -132,7 +131,6 @@ export function SourceManagerDrawer({ open, onClose }: { open: boolean; onClose:
       }
     >
       {current === 'vod' && <VodSourcesPanel />}
-      {current === 'live' && <LiveSourceManager />}
       {current === 'playback' && <PlaybackPanel />}
       {current === 'image' && <ImagePanel />}
       {current === 'home' && <HomePanel />}

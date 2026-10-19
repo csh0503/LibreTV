@@ -2,9 +2,9 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
+import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Header } from '@/components/header';
-import { RecommendSection } from '@/components/douban-section';
 import { ForYouRows } from '@/components/for-you';
 import { ShelfRows } from '@/components/shelf-rows';
 import type { ShelfChannel } from '@/lib/shelf-defs';
@@ -47,6 +47,7 @@ import { EmptyState, Spinner } from '@/components/states';
 import { NoSourceNotice } from '@/components/no-source';
 import { Icon } from '@/components/icon';
 import { SiteFooter } from '@/components/site-footer';
+import { pickedTitles, rememberPick } from '@/components/title-flow';
 
 // 作品详情 / 选集弹窗要点卡片才用到：不放进首页首屏的包里，浏览器闲下来时先预载，点的时候不用等
 const loadTitleModal = () => import('@/components/title-modal');
@@ -66,11 +67,6 @@ if (typeof window !== 'undefined') {
 /** 搜索结果分批渲染的批大小：一次挂载上千张卡片会明显掉帧 */
 const RESULT_PAGE_SIZE = 60;
 
-/**
- * 首页卡片点开时记下的元数据（封面、年份），按片名存。
- * 放在模块里而不是组件 state：从播放页后退回到搜索结果时组件会重建，记录仍在。
- */
-const pickedTitles = new Map<string, TitlePick>();
 
 export default function HomePage() {
   return (
@@ -99,11 +95,6 @@ function HomeContent() {
   const [titlePick, setTitlePick] = useState<TitlePick | null>(null);
   /** 从搜索结果打开时，弹窗直接用这张卡的片源 */
   const [presetItems, setPresetItems] = useState<SearchResultItem[] | undefined>(undefined);
-  /** 「浏览全部」筛选墙默认收起，首页以 Netflix 式的行为主 */
-  const [browseAll, setBrowseAll] = useState(false);
-  /** 从货架末尾点「浏览全部」时落在哪个频道；每点一次 nonce +1，用来重建筛选区并滚过去 */
-  const [browseTarget, setBrowseTarget] = useState<{ channel: ShelfChannel; nonce: number }>({ channel: 'anime', nonce: 0 });
-  const browseRef = useRef<HTMLElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // URL 驱动搜索：?s= 变化时回填输入框
@@ -152,10 +143,7 @@ function HomeContent() {
 
   /** 首页各行的卡片点开：先打开作品详情弹窗（弹窗里查片源）；元数据也记下来，去搜索结果页时「暂无片源」卡要用 */
   const pickTitle = (title: string, pick?: TitlePick & { yearSoft?: boolean }) => {
-    // 按筛选条件填上去的年份（B站片库按年份筛）不是这部的真实年份：拿它去认作品会认错（「航海王」+ 2026 → 乐高特别篇）
-    const { yearSoft, ...rest } = pick ?? {};
-    const full: TitlePick = { ...rest, title, ...(yearSoft ? { year: undefined } : {}) };
-    pickedTitles.set(title.trim().slice(0, 100), full);
+    const full = rememberPick(title, pick);
     setPresetItems(undefined);
     setTitlePick(full);
   };
@@ -183,13 +171,8 @@ function HomeContent() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const openBrowse = (channel: ShelfChannel) => {
-    setBrowseAll(true);
-    setBrowseTarget((t) => ({ channel, nonce: t.nonce + 1 }));
-  };
-  useEffect(() => {
-    if (browseTarget.nonce > 0) browseRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }, [browseTarget]);
+  // 片库是独立页面（/browse）：货架末尾的「浏览全部」直接跳过去，不用再滑到首页最底下
+  const openBrowse = (channel: ShelfChannel) => router.push(`/browse?channel=${channel}`);
 
   const pickHistory = (text: string) => {
     setInput(text);
@@ -493,25 +476,14 @@ function HomeContent() {
               onPick={pickTitle}
             />
             <ShelfRows onPick={pickTitle} onBrowse={openBrowse} />
-            <div className="pt-2">
-              <button
-                type="button"
-                onClick={() => setBrowseAll((v) => !v)}
-                aria-expanded={browseAll}
-                className="w-full sm:w-auto px-4 py-2 rounded-xl border border-line bg-surface/80 text-sm text-muted hover:text-content hover:bg-hover transition-colors cursor-pointer"
-              >
-                {browseAll ? '收起「浏览全部」' : '浏览全部 · 按题材 / 地区 / 年份筛选'}
-              </button>
+            <div className="pt-2 flex flex-wrap gap-2">
+              <Link href="/browse" className="btn-ghost">
+                打开片库 · 按题材 / 地区 / 年份筛选
+              </Link>
+              <Link href="/rank" className="btn-ghost">
+                看排行榜
+              </Link>
             </div>
-            {browseAll && (
-              <RecommendSection
-                key={browseTarget.nonce}
-                ref={browseRef}
-                initialChannel={browseTarget.channel}
-                onPick={pickTitle}
-                onOpen={(item) => setDetailItem(item)}
-              />
-            )}
           </div>
         )}
       </main>

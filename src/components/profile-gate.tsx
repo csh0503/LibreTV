@@ -39,8 +39,15 @@ export function ProfileGate() {
   const [pending, setPending] = useState<GateProfile | null>(null);
   const reload = () => {
     void (async () => {
-      const listed = await syncCloudProfilesToDevice();
+      let listed = await syncCloudProfilesToDevice();
       let local = await listProfiles();
+      // 本机一个都没有、云端又一时没连上（服务器冷启动 / 网络慢）：多等几次再说，
+      // 不然第一次打开只看到一个空的「谁在看？」和「+」
+      for (let attempt = 0; listed === null && local.length === 0 && attempt < 3; attempt++) {
+        await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+        listed = await syncCloudProfilesToDevice();
+        local = await listProfiles();
+      }
       // 云端没连上时不要把本机档清掉，也不要当成「云端是空的」再新建一个默认
       const cloud = listed ?? [];
       if (listed && local.length === 0 && cloud.length === 0) {

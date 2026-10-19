@@ -278,3 +278,10 @@ html.player-web-fullscreen body {
 .art-video-player .art-bottom {
   background-image: linear-gradient(to top, rgb(0 0 0 / 0.65), transparent) !important;
 }
+
+/* 手机底部分页栏占的位置：页面最底下的内容别被它挡住 */
+@media (max-width: 639px) {
+  body:has(.mobile-tabbar) {
+    padding-bottom: calc(52px + env(safe-area-inset-bottom));
+  }
+}

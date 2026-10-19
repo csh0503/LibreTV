@@ -255,6 +255,10 @@ export function RecommendSection({
 
   const pickChannel = (id: HallChannel) => {
     setChannel(id);
+    // 片库页：频道写进网址，刷新 / 分享 / 从详情返回都还在这个频道（不触发路由，免得整页重建）
+    if (location.pathname === '/browse' && id !== 'adult') {
+      history.replaceState(history.state, '', `/browse?channel=${id}`);
+    }
     setGenre('全部');
     setWeekday('all');
   };
