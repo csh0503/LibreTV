@@ -2,6 +2,7 @@ import Dexie, { type EntityTable } from 'dexie';
 import type { SourceConfig } from './types';
 import { normalizeTitle } from './cms-parser';
 import { canonicalTitle } from './title-aliases';
+import { sameWorkHistory, trimHistory } from './history-work';
 import { tasteColumns, unionGenres, type TasteChannel } from './taste';
 // 仅类型引入：store.ts 运行时会引用本模块，反向只取类型不会形成运行时循环
 import type { LiveProbeEntry } from './store';
@@ -257,11 +258,15 @@ export async function upsertHistory(entry: Omit<HistoryEntry, 'id' | 'profileId'
     timestamp: Date.now(),
   };
   await db.history.put(merged);
-  const mine = await db.history.where('profileId').equals(pid).sortBy('timestamp');
-  if (mine.length > MAX_HISTORY) {
-    await db.history.bulkDelete(mine.slice(0, mine.length - MAX_HISTORY).map((row) => row.id));
-  }
+  await trimStoredHistory(pid);
   markProfileDirty();
+}
+
+/** 超过 100 条时先丢掉同一部的旧源，再丢掉更老的剧。各源的播放进度表不动。 */
+async function trimStoredHistory(pid: string): Promise<void> {
+  const mine = await db.history.where('profileId').equals(pid).toArray();
+  const { drop } = trimHistory(mine, MAX_HISTORY);
+  if (drop.length > 0) await db.history.bulkDelete(drop.map((row) => row.id));
 }
 
 export async function updateHistoryProgress(
@@ -287,6 +292,35 @@ export async function updateHistoryProgress(
 export async function removeHistory(sourceKey: string, vodId: string): Promise<void> {
   const pid = await profileId();
   await db.history.delete(`${pid}::${sourceKey}_${vodId}`);
+  markProfileDirty();
+}
+
+/**
+ * 从列表里拿掉一部作品的全部源（换过源的一起消失）。
+ * 各源自己的播放进度还留着，换回去可以接着看。
+ */
+export async function removeHistoryWork(title: string): Promise<HistoryEntry[]> {
+  const pid = await profileId();
+  const mine = await db.history.where('profileId').equals(pid).toArray();
+  const drop = sameWorkHistory(mine, title);
+  if (drop.length === 0) return [];
+  await db.history.bulkDelete(drop.map((row) => row.id));
+  markProfileDirty();
+  return drop;
+}
+
+/** 撤销删除：按原来的时间和源写回，再按同一条上限规则裁一次。 */
+export async function restoreHistoryEntries(entries: HistoryEntry[]): Promise<void> {
+  if (entries.length === 0) return;
+  const pid = await profileId();
+  await db.history.bulkPut(
+    entries.map((entry) => ({
+      ...entry,
+      profileId: pid,
+      id: `${pid}::${entry.sourceKey}_${entry.vodId}`,
+    })),
+  );
+  await trimStoredHistory(pid);
   markProfileDirty();
 }
 

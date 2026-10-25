@@ -1,5 +1,5 @@
 import type { DoubanItem } from './types';
-import { getCache, setCache } from './fetch-utils';
+import { getCache, setCache, singleflight } from './fetch-utils';
 import { fetchHotList, tmdbTrendingToItem, type HotListId, type TmdbTrendingRaw } from './douban-weekly';
 import { tmdbGet } from './tmdb';
 import { dropUnreleased, fetchUnreleasedIndex } from './unreleased';
@@ -256,6 +256,16 @@ const LOADERS: Record<string, (now: number) => Promise<DoubanItem[]>> = {
 export async function loadShelf(id: string, now = Date.now()): Promise<DoubanItem[]> {
   const loader = LOADERS[id];
   if (!loader || !isShelfId(id)) throw new Error(`未知货架: ${id.slice(0, 30)}`);
+  const key = `shelf:${id}`;
+  const cached = getCache<DoubanItem[]>(key);
+  if (cached) return cached;
+  // 同一行已经在算（批量接口和旧的单行接口撞上）时，等这一次
+  return singleflight(key, () => loadShelfUncached(id, now));
+}
+
+async function loadShelfUncached(id: string, now: number): Promise<DoubanItem[]> {
+  const loader = LOADERS[id];
+  if (!loader) throw new Error(`未知货架: ${id.slice(0, 30)}`);
   const key = `shelf:${id}`;
   const cached = getCache<DoubanItem[]>(key);
   if (cached) return cached;

@@ -5,7 +5,7 @@ import { useQueries, useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/client-api';
 import { isAdultContent } from '@/lib/cms-parser';
 import { favoriteIdOf } from '@/lib/db';
-import { SHELF_DEFS, shelfItemKey, type ShelfChannel } from '@/lib/shelf-defs';
+import { SHELF_BATCH, SHELF_DEFS, shelfItemKey, type ShelfChannel } from '@/lib/shelf-defs';
 import { useAppStore } from '@/lib/store';
 import { isNotInterested, useNotInterested } from '@/lib/not-interested';
 import { useProfile } from '@/lib/use-profile';
@@ -15,8 +15,8 @@ import { ShelfRow } from './home-rows';
 import { DoubanCard } from './video-card';
 import { statusBadgeOf } from '@/lib/catalog-meta';
 
-/** 一次放出几行；滚动到底部再放下一批，避免首屏同时打十几个上游 */
-const BATCH = 3;
+/** 一次放出几行，也是一次请求要的行数；滚动到底部再放下一批 */
+const BATCH = SHELF_BATCH;
 /** 一行至少要有几部才值得显示 */
 const MIN_ITEMS = 4;
 /** 去重后一行最多展示；展示出来的都算这一行占用，后面的行不再重复 */
@@ -57,11 +57,15 @@ export function ShelfRows({
     retry: 1,
   });
 
+  const batchCount = Math.ceil(Math.min(revealed, SHELF_DEFS.length) / BATCH);
+  const batches = Array.from({ length: batchCount }, (_, batch) =>
+    SHELF_DEFS.slice(batch * BATCH, batch * BATCH + BATCH).map((def) => def.id),
+  );
   const queries = useQueries({
-    queries: SHELF_DEFS.map((def, idx) => ({
-      queryKey: ['shelf', def.id],
-      queryFn: ({ signal }: { signal: AbortSignal }) => api.shelf(def.id, signal),
-      enabled: doubanEnabled && idx < revealed,
+    queries: batches.map((ids) => ({
+      queryKey: ['shelves', ids.join(',')],
+      queryFn: ({ signal }: { signal: AbortSignal }) => api.shelves(ids, signal),
+      enabled: doubanEnabled,
       staleTime: 15 * 60_000,
       retry: 1,
     })),
@@ -75,12 +79,25 @@ export function ShelfRows({
 
   // TOP 10 和前面行已用掉的作品，后面的行不再重复
   const shelves = useMemo(() => {
+    const byId = new Map<string, { items: DoubanItem[]; loading: boolean; failed: boolean }>();
+    queries.forEach((query, batch) => {
+      const ids = batches[batch] ?? [];
+      const rows = query.data?.shelves ?? [];
+      for (const id of ids) {
+        const row = rows.find((item) => item.id === id);
+        byId.set(id, {
+          items: row?.items ?? [],
+          loading: query.isLoading,
+          failed: query.isError || Boolean(row?.error),
+        });
+      }
+    });
     const seen = new Set<string>((topQuery.data?.items ?? []).slice(0, 10).map(shelfItemKey));
     return SHELF_DEFS.map((def, idx) => {
-      const q = queries[idx];
+      const q = byId.get(def.id);
       const items: DoubanItem[] = [];
       const own = new Set<string>();
-      for (const item of q.data?.items ?? []) {
+      for (const item of q?.items ?? []) {
         if (yellowFilter && isAdultContent(item.title)) continue;
         if (isNotInterested(notInterested, item.title)) continue;
         const key = shelfItemKey(item);
@@ -95,12 +112,12 @@ export function ShelfRows({
       return {
         def,
         items: show ? items : [],
-        loading: q.isLoading || topPending,
-        failed: q.isError,
+        loading: (q?.loading ?? idx < revealed) || topPending,
+        failed: q?.failed ?? false,
         requested: idx < revealed,
       };
     });
-  }, [queries, yellowFilter, revealed, topQuery.data, topPending, notInterested]);
+  }, [queries, batches, yellowFilter, revealed, topQuery.data, topPending, notInterested]);
 
   const allRevealed = revealed >= SHELF_DEFS.length;
   const settledCount = shelves.filter((s) => s.requested && !s.loading).length;

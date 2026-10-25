@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dedupeSeasons, shelfDedupeKey, SHELF_DEFS, isShelfId } from './shelf-defs';
+import { dedupeSeasons, shelfDedupeKey, SHELF_DEFS, isShelfId, parseShelfIds } from './shelf-defs';
 import { interleave } from './shelves';
 import type { DoubanItem } from './types';
 
@@ -33,6 +33,16 @@ describe('interleave', () => {
   it('空列表安全', () => {
     expect(interleave([])).toEqual([]);
     expect(interleave([[], []])).toEqual([]);
+  });
+});
+
+describe('parseShelfIds', () => {
+  it('一批最多三行，未知的或空的不要', () => {
+    expect(parseShelfIds('hot-movies,cn-tv,anime-airing')).toEqual(['hot-movies', 'cn-tv', 'anime-airing']);
+    expect(parseShelfIds('hot-movies,hot-movies')).toEqual(['hot-movies']);
+    expect(parseShelfIds('hot-movies,nope')).toBeNull();
+    expect(parseShelfIds('hot-movies,cn-tv,anime-airing,guoman')).toBeNull();
+    expect(parseShelfIds('')).toBeNull();
   });
 });
 

@@ -1,6 +1,8 @@
 import { api, ApiError } from './client-api';
 import { db, MAX_FAVORITES, MAX_HISTORY, MAX_SEARCH_HISTORY, type HistoryEntry, type FavoriteEntry } from './db';
 import { canonicalTitle } from './title-aliases';
+import { trimHistory } from './history-work';
+import { loadNotInterestedMarks, mergeNotInterestedMarks, replaceNotInterestedMarks } from './not-interested';
 import { readTasteSnapshot, snapshotFromStored, unionTasteSnapshots, type TasteSnapshot } from './taste';
 import type { ProfileBundle } from './profile-bundle';
 import { clearActiveProfile, eraseLocalProfile, switchProfile } from './profile';
@@ -111,6 +113,7 @@ async function buildBundle(profileId: string, name: string): Promise<ProfileBund
       updatedAt: row.updatedAt,
     })),
     searches: searches.map((row) => ({ text: row.text, timestamp: row.timestamp })),
+    notInterested: loadNotInterestedMarks(profileId),
     tastes: unionTasteSnapshots(
       tasteRows.map((row) => ({
         title: row.title,
@@ -218,9 +221,10 @@ async function applyBundle(profileId: string, bundle: ProfileBundle, opts?: { li
         text: row.text,
         timestamp: row.timestamp,
       }));
-      const history = mergeSyncedRows(base, localHistory, remoteHistory, (row) => `${row.sourceKey}_${row.vodId}`, (row) => row.timestamp)
-        .sort((a, b) => b.timestamp - a.timestamp)
-        .slice(0, MAX_HISTORY);
+      const history = trimHistory(
+        mergeSyncedRows(base, localHistory, remoteHistory, (row) => `${row.sourceKey}_${row.vodId}`, (row) => row.timestamp),
+        MAX_HISTORY,
+      ).keep;
       const favorites = mergeSyncedRows(base, localFavorites, remoteFavorites, (row) => row.localId, (row) => row.addedAt)
         .sort((a, b) => b.addedAt - a.addedAt)
         .slice(0, MAX_FAVORITES);
@@ -317,6 +321,17 @@ async function applyBundle(profileId: string, bundle: ProfileBundle, opts?: { li
       }
     }
   });
+  // 旧包裹没有 notInterested 时不要清本机名单。较新的取消盖过较早的标记；
+  // 合并结果和云端不一样（本机有更新的取消）时再传上去。
+  if (bundle.notInterested) {
+    const merged = mergeNotInterestedMarks(loadNotInterestedMarks(profileId), bundle.notInterested);
+    replaceNotInterestedMarks(profileId, merged);
+    const remote = mergeNotInterestedMarks([], bundle.notInterested);
+    const same =
+      merged.length === remote.length &&
+      merged.every((mark) => remote.some((other) => other.title === mark.title && other.at === mark.at && other.on === mark.on));
+    if (!same) markProfileDirty();
+  }
 }
 
 const pulling = new Map<string, Promise<void>>();

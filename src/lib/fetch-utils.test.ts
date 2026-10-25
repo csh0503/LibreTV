@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchUpstream } from './fetch-utils';
+import { fetchUpstream, singleflight } from './fetch-utils';
 
 /**
  * 安全跳转测试：mock 全局 fetch，验证 302 跳转到内网地址会被拒绝，
@@ -20,6 +20,22 @@ function mockFetch(handlers: Array<(url: string) => Response>) {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+describe('singleflight', () => {
+  it('同一把钥匙同时进来只算一次，算完之后可以再算', async () => {
+    let n = 0;
+    const run = () =>
+      singleflight('hot-list:test', async () => {
+        n += 1;
+        await Promise.resolve();
+        return n;
+      });
+    const [a, b] = await Promise.all([run(), run()]);
+    expect(a).toBe(1);
+    expect(b).toBe(1);
+    expect(await run()).toBe(2);
+  });
 });
 
 describe('fetchUpstream 安全跳转', () => {

@@ -9,6 +9,11 @@ export interface ProfileBundle {
   progress: { localKey: string; position: number; duration: number; updatedAt: number }[];
   searches: { text: string; timestamp: number }[];
   /** 豆瓣题材。旧包裹没有这份时当作还没记过。 */
+  /**
+   * 「不再推荐」。旧包裹没有这份时，不要清掉本机名单。
+   * on 为 false 是取消；另一台较新的取消盖过较早的标记。
+   */
+  notInterested?: { title: string; at: number; on: boolean }[];
   tastes?: {
     title: string;
     updatedAt: number;

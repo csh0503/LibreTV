@@ -35,10 +35,39 @@ export function isShelfId(id: string): boolean {
   return SHELF_DEFS.some((d) => d.id === id);
 }
 
+/** 一次最多要几行。首页按这个批量请求，服务端也拒绝更长的名单。 */
+export const SHELF_BATCH = 3;
+
+/**
+ * 解析 `GET /api/shelves?ids=a,b,c`。
+ * 空的、未知的、超过一批的，都返回 null，调用方回 400。
+ */
+export function parseShelfIds(raw: string | null, max = SHELF_BATCH): string[] | null {
+  const ids: string[] = [];
+  for (const part of (raw ?? '').split(',')) {
+    const id = part.trim();
+    if (!id || ids.includes(id)) continue;
+    if (!isShelfId(id)) return null;
+    ids.push(id);
+    if (ids.length > max) return null;
+  }
+  return ids.length > 0 ? ids : null;
+}
+
 /** 季数 / 副标题归一，让「某某 第二季」和「某某」在整页里只占一个位置 */
 const SEASON_SUFFIX = /\s*(?:第[一二三四五六七八九十百\d]+[季部篇期]|(?:Season|Part|Part\.)\s*\d+|[ⅠⅡⅢⅣⅤⅥ]+)\s*$/i;
 /** 剧集常把季数直接写成结尾数字（「守护解放西5」）；电影续集（「疯狂动物城2」）是另一部作品，不归并 */
 const TV_TRAILING_NUMBER = /(?<=[一-龥])\s*[2-9]\d?$/;
+
+/** 剥掉结尾的季数（「第一季」「Season 2」「Part 2」可以叠在一起）。电影续集的结尾数字不动。 */
+export function stripSeasonTitle(title: string): string {
+  let t = title.normalize('NFKC').trim();
+  for (let prev = ''; prev !== t; ) {
+    prev = t;
+    t = t.replace(SEASON_SUFFIX, '').trim();
+  }
+  return t;
+}
 
 export function shelfDedupeKey(title: string, isTv = false): string {
   // 繁体 / 全角写法和简体半角算同一部

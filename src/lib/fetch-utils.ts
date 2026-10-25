@@ -120,6 +120,22 @@ export async function fetchUpstreamJson<T = unknown>(url: string, options: Fetch
   return data;
 }
 
+/**
+ * 同一个进程里，同一把钥匙已经在算时，后来的调用等这一次，不再打第二遍上游。
+ * 算完就放开；失败也放开，下一次可以重试。
+ */
+const inflight = new Map<string, Promise<unknown>>();
+
+export function singleflight<T>(key: string, run: () => Promise<T>): Promise<T> {
+  const existing = inflight.get(key) as Promise<T> | undefined;
+  if (existing) return existing;
+  const job = run().finally(() => {
+    if (inflight.get(key) === job) inflight.delete(key);
+  });
+  inflight.set(key, job);
+  return job;
+}
+
 /** 内存 TTL 缓存（豆瓣推荐等热点数据） */
 const cache = new Map<string, { value: unknown; expiresAt: number }>();
 

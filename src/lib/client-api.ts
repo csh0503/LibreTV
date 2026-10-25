@@ -1,6 +1,6 @@
 'use client';
 
-import type { SearchResponse, SearchStreamEvent, SourceSearchOutcome, VideoDetail, DoubanResponse, BangumiCalendarResponse, AuthStatusResponse, SourceConfig, SearchResultItem, LivePlaylistResponse, LiveEpgResponse, SourceListPayload, BrowseResponse } from './types';
+import type { SearchResponse, SearchStreamEvent, SourceSearchOutcome, VideoDetail, DoubanResponse, DoubanItem, BangumiCalendarResponse, AuthStatusResponse, SourceConfig, SearchResultItem, LivePlaylistResponse, LiveEpgResponse, SourceListPayload, BrowseResponse } from './types';
 import type { ProfileBundle } from './profile-bundle';
 
 /**
@@ -225,10 +225,16 @@ export const api = {
     return request<DoubanResponse>(`/api/hot-list?${sp.toString()}`, { signal });
   },
 
-  /** 首页货架（Netflix 式的行），一次一行 */
+  /** 首页货架（Netflix 式的行），一次一行。批量接口失败时还可以退回这一路。 */
   shelf: (id: string, signal?: AbortSignal) => {
     const sp = new URLSearchParams({ id });
     return request<DoubanResponse>(`/api/shelf?${sp.toString()}`, { signal });
+  },
+
+  /** 首页货架，一次最多三行。某一行失败时带 error，其他行照常返回。 */
+  shelves: (ids: string[], signal?: AbortSignal) => {
+    const sp = new URLSearchParams({ ids: ids.join(',') });
+    return request<{ shelves: { id: string; items: DoubanItem[]; error?: string }[] }>(`/api/shelves?${sp.toString()}`, { signal });
   },
 
   /** 即将播出：接下来 7 天的未播出内容 */

@@ -1,6 +1,6 @@
 import type { DoubanItem } from './types';
 import { judgeStatus, looksUnreleased } from './title-status';
-import { fetchUpstream, getCache, setCache } from './fetch-utils';
+import { fetchUpstream, getCache, setCache, singleflight } from './fetch-utils';
 import { WorkGroups, workKeys } from './work-identity';
 import { enrichBiliItems } from './bili-season';
 import { canonicalTitle } from './title-aliases';
@@ -1014,6 +1014,14 @@ export async function fetchHotList(id: HotListId): Promise<DoubanItem[]> {
 }
 
 export async function fetchHotListWithMeta(id: HotListId): Promise<{ items: DoubanItem[]; meta: HotListMeta }> {
+  const cacheKey = `hot-list:v2:${id}`;
+  const cached = getCache<{ items: DoubanItem[]; meta: HotListMeta }>(cacheKey);
+  if (cached) return cached;
+  // 两行货架同时要同一份热榜时，只打一遍上游
+  return singleflight(cacheKey, () => loadHotList(id));
+}
+
+async function loadHotList(id: HotListId): Promise<{ items: DoubanItem[]; meta: HotListMeta }> {
   const cacheKey = `hot-list:v2:${id}`;
   const cached = getCache<{ items: DoubanItem[]; meta: HotListMeta }>(cacheKey);
   if (cached) return cached;

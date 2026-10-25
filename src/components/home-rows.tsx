@@ -10,12 +10,13 @@ import { isAdultContent } from '@/lib/cms-parser';
 import {
   db,
   favoriteIdOf,
-  removeHistory,
+  removeHistoryWork,
+  restoreHistoryEntries,
   toggleFavorite,
-  upsertHistory,
   type FavoriteEntry,
   type HistoryEntry,
 } from '@/lib/db';
+import { collapseHistoryByWork } from '@/lib/history-work';
 import { describeContinueWatching } from '@/lib/home-features';
 import type { HotListId } from '@/lib/douban-weekly';
 import type { UpcomingItem, UpcomingKind } from '@/lib/upcoming';
@@ -573,7 +574,7 @@ export function ContinueWatchingRow() {
   );
 
   const visible = useMemo(() => {
-    const all = history ?? [];
+    const all = collapseHistoryByWork(history ?? []);
     return all
       .filter((item) => {
         if (!yellowFilter) return true;
@@ -673,23 +674,12 @@ function ContinueWatchingCard({
   const handleRemove = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    void removeHistory(item.sourceKey, item.vodId).then(() => {
+    void removeHistoryWork(item.title).then((removed) => {
       toast(`已从继续观看移除「${item.title}」`, 'info', {
         action: {
           label: '撤销',
           onClick: () => {
-            void upsertHistory({
-              sourceKey: item.sourceKey,
-              sourceUrl: item.sourceUrl,
-              vodId: item.vodId,
-              title: item.title,
-              pic: item.pic,
-              episodeIndex: item.episodeIndex,
-              totalEpisodes: item.totalEpisodes,
-              playbackPosition: item.playbackPosition,
-              duration: item.duration,
-              timestamp: item.timestamp,
-            });
+            void restoreHistoryEntries(removed);
           },
         },
       });

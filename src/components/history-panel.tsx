@@ -11,10 +11,12 @@ import { SmartImage } from './smart-image';
 import {
   db,
   clearAllHistory,
-  removeHistory,
+  removeHistoryWork,
+  restoreHistoryEntries,
   upsertHistory,
   type HistoryEntry,
 } from '@/lib/db';
+import { collapseHistoryByWork, workKeyOf } from '@/lib/history-work';
 import { buildWatchUrl, cn, formatRelativeTime, formatTime } from '@/lib/utils';
 import { useToast } from './toast';
 import { resolveSource, useAppStore } from '@/lib/store';
@@ -24,24 +26,9 @@ import { markNotInterested, unmarkNotInterested } from '@/lib/not-interested';
 
 const rowKey = (item: HistoryEntry) => `${item.sourceKey}_${item.vodId}`;
 
-/** 删掉的记录写回去（撤销用） */
+/** 删掉的记录按原时间写回去（撤销用）。同一部换过的源一起回来。 */
 function restoreHistory(items: HistoryEntry[]) {
-  return Promise.all(
-    items.map((item) =>
-      upsertHistory({
-        sourceKey: item.sourceKey,
-        sourceUrl: item.sourceUrl,
-        vodId: item.vodId,
-        title: item.title,
-        pic: item.pic,
-        episodeIndex: item.episodeIndex,
-        totalEpisodes: item.totalEpisodes,
-        playbackPosition: item.playbackPosition,
-        duration: item.duration,
-        timestamp: item.timestamp,
-      }),
-    ),
-  );
+  return restoreHistoryEntries(items);
 }
 
 /**
@@ -83,7 +70,8 @@ export function HistoryPanel({ open, onClose }: { open: boolean; onClose: () => 
   const removeMany = (items: HistoryEntry[], notInterested: boolean) => {
     if (items.length === 0) return;
     const titles = items.map((i) => i.title);
-    void Promise.all(items.map((i) => removeHistory(i.sourceKey, i.vodId))).then(() => {
+    void Promise.all(items.map((i) => removeHistoryWork(i.title))).then((dropped) => {
+      const removed = dropped.flat();
       if (notInterested) markNotInterested(profileId, titles);
       setSelected(new Set());
       toast(
@@ -96,7 +84,7 @@ export function HistoryPanel({ open, onClose }: { open: boolean; onClose: () => 
             label: '撤销',
             onClick: () => {
               if (notInterested) unmarkNotInterested(profileId, titles);
-              void restoreHistory(items).then(() => toast('已恢复', 'success'));
+              void restoreHistory(removed).then(() => toast('已恢复', 'success'));
             },
           },
         },
@@ -106,13 +94,21 @@ export function HistoryPanel({ open, onClose }: { open: boolean; onClose: () => 
 
   // 不分繁简、全半角、标点：搜「龍之家族」也找得到「龙之家族」
   const keyword = normalizeTitle(query.trim());
+  const collapsed = useMemo(() => collapseHistoryByWork(history ?? []), [history]);
   const visible = useMemo(() => {
+    if (!keyword) return collapsed.slice(0, VISIBLE_LIMIT);
     const all = history ?? [];
-    if (!keyword) return all.slice(0, VISIBLE_LIMIT);
-    return all.filter((h) => normalizeTitle(h.title).includes(keyword));
-  }, [history, keyword]);
+    return collapsed.filter((item) => {
+      const key = workKeyOf(item.title);
+      return all.some(
+        (row) =>
+          (key ? workKeyOf(row.title) === key : row.title === item.title) &&
+          normalizeTitle(row.title).includes(keyword),
+      );
+    });
+  }, [collapsed, history, keyword]);
 
-  const total = history?.length ?? 0;
+  const total = collapsed.length;
 
   return (
     <Drawer
@@ -293,13 +289,13 @@ function HistoryItem({
   });
 
   const remove = () => {
-    void removeHistory(item.sourceKey, item.vodId).then(() => {
-      // 轻操作：给撤销窗口，恢复时写回原记录
+    void removeHistoryWork(item.title).then((removed) => {
+      // 同一部换过的源一起从列表消失；撤销时按原记录写回。播放进度还留着。
       toast('已删除该记录', 'info', {
         action: {
           label: '撤销',
           onClick: () => {
-            void restoreHistory([item]).then(() => toast('已恢复', 'success'));
+            void restoreHistory(removed).then(() => toast('已恢复', 'success'));
           },
         },
       });
