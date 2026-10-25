@@ -5,6 +5,7 @@ import { rexxarToItem, type DoubanRequest } from './recommend';
 import { fetchBangumiCalendar, fetchBangumiCatalog } from './bangumi';
 import { canonicalTitle } from './title-aliases';
 import { WorkGroups, workKeys } from './work-identity';
+import { catalogLane, isCurrentCatalogItem, type CatalogLane } from './catalog-window';
 import { disambiguateTitles } from './title-disambiguate';
 import { freshnessFactor, getTmdbApiKey, timeProbe, TMDB_CODE_TO_AREA, TMDB_ID_TO_GENRE, type UpstreamProbe } from './douban-weekly';
 import { enrichBiliItems } from './bili-season';
@@ -106,6 +107,8 @@ async function fetchBiliSeasonIndex(query: DoubanFetchQuery): Promise<DoubanItem
     seasonType = 2; // 2=电影
   } else if (tags.includes('电视剧')) {
     seasonType = 5; // 5=电视剧
+  } else if (tags.includes('综艺')) {
+    seasonType = 7; // 7=综艺。热播榜没有这一类，片库索引才有
   }
   if (!seasonType) return [];
 
@@ -121,7 +124,7 @@ async function fetchBiliSeasonIndex(query: DoubanFetchQuery): Promise<DoubanItem
   // 连载中 / 已完结直接让 B站筛（is_finish：0 连载、1 完结），不在前端从热门里挑
   const finishParam = query.status === 'airing' ? '&is_finish=0' : query.status === 'ended' ? '&is_finish=1' : '';
   // 按状态筛时 B站的「连载」里混着大量「即将开播」和标错的完结番，多要一倍再自己过滤
-  const pageSize = query.status ? query.pageSize * 2 : query.pageSize;
+  const pageSize = Math.min(50, query.status ? query.pageSize * 2 : query.pageSize);
   const url = `https://api.bilibili.com/pgc/season/index/result?st=${seasonType}&season_type=${seasonType}&page=${page}&pagesize=${pageSize}&order=${order}&type=1${yearParam}${finishParam}`;
   const res = await fetchUpstream(url, {
     timeoutMs: 6500,
@@ -164,7 +167,7 @@ async function fetchBiliSeasonIndex(query: DoubanFetchQuery): Promise<DoubanItem
       year: yearTag,
       yearSoft: yearTag ? true : undefined,
       area: seasonType === 1 ? '日本' : seasonType === 4 ? '中国大陆' : undefined,
-      genres: isAnime ? '动画' : isDoc ? '纪录片' : undefined,
+      genres: isAnime ? '动画' : isDoc ? '纪录片' : seasonType === 7 ? '综艺' : undefined,
       remarks: row.index_show?.trim() || undefined,
       status,
       sourceLabel: 'B站片库',
@@ -215,7 +218,7 @@ async function fetchTmdbDiscoverCatalog(query: DoubanFetchQuery): Promise<Douban
   if (!apiKey) return [];
 
   const isTv = query.kind === 'tv';
-  const page = Math.floor(query.pageStart / 20) + 1;
+  const page = Math.floor(query.pageStart / Math.max(20, query.pageSize)) + 1;
   const genreMap = isTv ? TMDB_GENRE_MAP_TV : TMDB_GENRE_MAP_MOVIE;
   const genreIds = new Set<number>();
   let originCountry: string | undefined;
@@ -223,7 +226,6 @@ async function fetchTmdbDiscoverCatalog(query: DoubanFetchQuery): Promise<Douban
 
   for (const tag of query.tags) {
     if (genreMap[tag]) genreIds.add(genreMap[tag]);
-    if (tag === '综艺') genreIds.add(10764);
     if (TMDB_COUNTRY_MAP[tag]) originCountry = TMDB_COUNTRY_MAP[tag];
     if (/^\d{4}$/.test(tag)) yearFilter = tag;
   }
@@ -246,7 +248,9 @@ async function fetchTmdbDiscoverCatalog(query: DoubanFetchQuery): Promise<Douban
     sort_by: sortBy,
     'vote_count.gte': query.sort === 'S' ? '80' : '15',
   });
-  if (genreIds.size > 0) params.set('with_genres', [...genreIds].join(','));
+  // 综艺是真人秀或脱口秀，用「或」；逗号是「并且」，两样都要会把片库滤空
+  if (query.tags.includes('综艺')) params.set('with_genres', '10764|10767');
+  else if (genreIds.size > 0) params.set('with_genres', [...genreIds].join(','));
   // 电视剧频道：不要脱口秀 / 新闻 / 真人秀 / 动画 / 纪录片（TMDB 按热度排时美国深夜秀会占满前排）
   if (isTv && query.tags.includes('电视剧')) params.set('without_genres', '16,99,10763,10764,10767');
   if (originCountry) params.set('with_origin_country', originCountry);
@@ -335,6 +339,9 @@ export interface CatalogRank {
   freshOnly?: boolean[];
   /** 没选年份：只有这时才按时效筛 */
   anyYear?: boolean;
+  /** 热度且没选年份、也不是「已完结」：旧作不进这一页 */
+  currentOnly?: boolean;
+  lane?: CatalogLane;
   now?: number;
 }
 
@@ -427,7 +434,11 @@ export function fuseCatalogItems(lists: DoubanItem[][], limit: number, rank?: Ca
   if (!rank) return works.order.slice(0, limit).map((slot) => slot.item);
 
   const now = rank.now ?? Date.now();
-  const scored = works.order.filter((slot) => !slot.stale);
+  const scored = works.order.filter((slot) => {
+    if (slot.stale) return false;
+    if (rank.currentOnly && rank.lane && !isCurrentCatalogItem(slot.item, rank.lane, now)) return false;
+    return true;
+  });
   const keyOf = (slot: (typeof scored)[number]): number => {
     if (rank.sort === 'S') return ratingOf(slot.item) * 10 + slot.score;
     if (rank.sort === 'R') {
@@ -448,7 +459,7 @@ export function fuseCatalogItems(lists: DoubanItem[][], limit: number, rank?: Ca
 
 export async function fetchDoubanRecommend(query: DoubanFetchQuery): Promise<{ items: DoubanItem[]; total?: number }> {
   const hasTmdb = Boolean(getTmdbApiKey());
-  const cacheKey = `douban:v5:${hasTmdb ? 'tmdb:' : ''}${query.kind}:${query.tags.join(',')}:${query.sort}:${query.score}:${query.status ?? 'all'}:${query.pageStart}:${query.pageSize}`;
+  const cacheKey = `douban:v6:${hasTmdb ? 'tmdb:' : ''}${query.kind}:${query.tags.join(',')}:${query.sort}:${query.score}:${query.status ?? 'all'}:${query.pageStart}:${query.pageSize}`;
   const cached = getCache<{ items: DoubanItem[]; total?: number }>(cacheKey);
   if (cached) return cached;
 
@@ -456,7 +467,14 @@ export async function fetchDoubanRecommend(query: DoubanFetchQuery): Promise<{ i
   const isTv = query.kind === 'tv';
   const isAnime = query.tags.includes('动画');
   const tags = query.tags.join(',');
-  const rexxar = `${REXXAR_API}/${query.kind}/recommend?start=${query.pageStart}&count=${query.pageSize}&tags=${encodeURIComponent(tags)}&sort=${query.sort}&score_range=${query.score}&uncollect=false`;
+  // 热度、没选年份：旧作会占掉格子。每个来源多取一倍，翻页按加宽后的窗口走，避免和上一页重叠。
+  const anyYear = !query.tags.some((t) => /^\d{4}$|年代$/.test(t));
+  const lane = catalogLane(query.tags, query.kind);
+  const currentOnly = query.sort === 'U' && anyYear && query.status !== 'ended';
+  const take = currentOnly ? Math.min(40, Math.max(query.pageSize, query.pageSize * 2)) : query.pageSize;
+  const sourceStart = currentOnly ? Math.floor(query.pageStart / Math.max(1, query.pageSize)) * take : query.pageStart;
+  const sourceQuery = { ...query, pageStart: sourceStart, pageSize: take };
+  const rexxar = `${REXXAR_API}/${query.kind}/recommend?start=${sourceStart}&count=${take}&tags=${encodeURIComponent(tags)}&sort=${query.sort}&score_range=${query.score}&uncollect=false`;
 
   // 并发请求：豆瓣 rexxar + Bangumi v0（动漫频道）+ B站 PGC 官方片库 + TMDB Discover（若配置 Key）
   const [rexxarRes, bgmRes, biliRes, tmdbRes, unreleasedRes] = await Promise.allSettled([
@@ -466,14 +484,14 @@ export async function fetchDoubanRecommend(query: DoubanFetchQuery): Promise<{ i
           tags: query.tags,
           sort: query.sort,
           score: query.score,
-          pageStart: query.pageStart,
-          pageSize: query.pageSize,
+          pageStart: sourceStart,
+          pageSize: take,
           status: query.status,
         })
       : Promise.resolve([]),
     // B站片库条目不带年份、最新一集日期：逐季补上（每季缓存 12 小时），年份交叉核对、时效排序都要用
-    fetchBiliSeasonIndex(query).then((items) => enrichBiliItems(items, query.pageSize * 2)),
-    fetchTmdbDiscoverCatalog(query),
+    fetchBiliSeasonIndex(sourceQuery).then((items) => enrichBiliItems(items, take * 2)),
+    fetchTmdbDiscoverCatalog(sourceQuery),
     fetchUnreleasedIndex(),
   ]);
 
@@ -537,8 +555,14 @@ export async function fetchDoubanRecommend(query: DoubanFetchQuery): Promise<{ i
     candidateLists[candidateLists.indexOf(tmdbRes.value)] = await disambiguateTitles(tmdbRes.value);
   }
   // 豆瓣 / B站不过滤未播出的年番和定档作品，用开播日期索引统一剔除，它们只在「即将播出」里出现
-  const anyYear = !query.tags.some((t) => /^\d{4}$|年代$/.test(t));
-  const fused = fuseCatalogItems(candidateLists, query.pageSize * 2, { sort: query.sort, weights, freshOnly, anyYear });
+  const fused = fuseCatalogItems(candidateLists, take, {
+    sort: query.sort,
+    weights,
+    freshOnly,
+    anyYear,
+    currentOnly,
+    lane,
+  });
   const items = unreleasedRes.status === 'fulfilled' ? dropUnreleased(fused, unreleasedRes.value) : fused;
   const payload = { items, total };
   setCache(cacheKey, payload, CACHE_TTL);

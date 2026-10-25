@@ -29,6 +29,7 @@ import { absorbHallTaste, rememberDoubanItem } from '@/lib/taste-store';
 import { AdultLibrary } from './adult-library';
 import { useLoadMore } from './use-load-more';
 import { statusBadgeOf } from '@/lib/catalog-meta';
+import { catalogLane, isCurrentCatalogItem } from '@/lib/catalog-window';
 
 /** 细线图标（1.6 描边，跟着文字颜色），不再用 emoji */
 const CHANNEL_ICON_PATHS: Record<Exclude<HallChannel, 'adult'>, string> = {
@@ -182,7 +183,10 @@ export function RecommendSection({
         : allCalendar.filter((c) => parseFloat(c.rating ?? '0') >= 6.8)
       : [];
     const merged = mergeAiringCalendar(playableDouban, popularCalendar, nowYear);
-    const filtered = filterHallItems(merged, {
+    const lane = catalogLane(request.tags, request.kind);
+    const hideArchive = sortKey === 'hot' && year === '全部' && status !== 'ended';
+    const current = hideArchive ? merged.filter((item) => isCurrentCatalogItem(item, lane)) : merged;
+    const filtered = filterHallItems(current, {
       genre,
       area,
       yearRange: request.yearRange,
@@ -226,8 +230,9 @@ export function RecommendSection({
   }, [items, channel, genre]);
   useEffect(() => {
     // 年份区间会裁掉一整页。最多再补 2 页，避免某个标签把 500 条全部翻完、骨架一直不消失。
-    if (weekdayMode || items.length > 0 || isError) return;
-    if (!hasNextPage || isFetching || loadedPages >= 3) return;
+    // 旧作被拿掉以后这一页可能变薄：再要一两页，把「现在能看的」补满，而不是停在半屏
+    if (weekdayMode || items.length >= 8 || isError) return;
+    if (!hasNextPage || isFetching || loadedPages >= 4) return;
     void fetchNextPage();
   }, [weekdayMode, items.length, hasNextPage, isFetching, isError, loadedPages, fetchNextPage]);
 
