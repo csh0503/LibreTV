@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/client-api';
 import { isAdultContent } from '@/lib/cms-parser';
@@ -14,6 +14,7 @@ import type { DoubanItem, TitlePick } from '@/lib/types';
 import { ShelfRow } from './home-rows';
 import { DoubanCard } from './video-card';
 import { statusBadgeOf } from '@/lib/catalog-meta';
+import { emptySubscribe, readHotList, readShelfBatch, rememberHotList, rememberShelf } from '@/lib/view-cache';
 
 /** 一次放出几行，也是一次请求要的行数；滚动到底部再放下一批 */
 const BATCH = SHELF_BATCH;
@@ -48,31 +49,48 @@ export function ShelfRows({
   const [revealed, setRevealed] = useState(BATCH);
   const sentinelRef = useRef<HTMLDivElement>(null);
 
+  // 上次打开留下的热榜：水合之后先画出来，新榜回来再换
+  const rememberedHot = useSyncExternalStore(
+    emptySubscribe,
+    () => readHotList('realtime_all'),
+    () => undefined,
+  );
   // 与大图 / TOP 10 共用同一份缓存，不会多发请求
   const topQuery = useQuery({
     queryKey: ['hot-list', 'realtime_all'],
-    queryFn: ({ signal }) => api.hotList('realtime_all', signal),
+    queryFn: async ({ signal }) => {
+      const data = await api.hotList('realtime_all', signal);
+      rememberHotList('realtime_all', data.items);
+      return data;
+    },
     enabled: doubanEnabled,
     staleTime: 15 * 60_000,
     retry: 1,
+    placeholderData: rememberedHot ? { items: rememberedHot } : undefined,
   });
 
   const batchCount = Math.ceil(Math.min(revealed, SHELF_DEFS.length) / BATCH);
   const batches = Array.from({ length: batchCount }, (_, batch) =>
     SHELF_DEFS.slice(batch * BATCH, batch * BATCH + BATCH).map((def) => def.id),
   );
+  // 水合完成前不用本机缓存，避免和服务器画出的骨架屏不一致
+  const cacheReady = useSyncExternalStore(emptySubscribe, () => true, () => false);
   const queries = useQueries({
     queries: batches.map((ids) => ({
       queryKey: ['shelves', ids.join(',')],
-      queryFn: ({ signal }: { signal: AbortSignal }) => api.shelves(ids, signal),
+      queryFn: async ({ signal }: { signal: AbortSignal }) => {
+        const data = await api.shelves(ids, signal);
+        for (const row of data.shelves) {
+          if (!row.error && row.items.length > 0) rememberShelf(row.id, row.items);
+        }
+        return data;
+      },
       enabled: doubanEnabled,
       staleTime: 15 * 60_000,
       retry: 1,
+      placeholderData: cacheReady ? readShelfBatch(ids) : undefined,
     })),
   });
-
-  // TOP 10 落地前先不排货架，否则它回来时货架里的卡片会突然消失
-  const topPending = topQuery.isLoading;
 
   // 你标了「不再推荐」的不放
   const notInterested = useNotInterested(useProfile().id);
@@ -112,12 +130,12 @@ export function ShelfRows({
       return {
         def,
         items: show ? items : [],
-        loading: (q?.loading ?? idx < revealed) || topPending,
+        loading: q?.loading ?? idx < revealed,
         failed: q?.failed ?? false,
         requested: idx < revealed,
       };
     });
-  }, [queries, batches, yellowFilter, revealed, topQuery.data, topPending, notInterested]);
+  }, [queries, batches, yellowFilter, revealed, topQuery.data, notInterested]);
 
   const allRevealed = revealed >= SHELF_DEFS.length;
   const settledCount = shelves.filter((s) => s.requested && !s.loading).length;

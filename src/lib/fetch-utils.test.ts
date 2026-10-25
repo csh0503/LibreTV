@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchUpstream, singleflight } from './fetch-utils';
+import { fetchUpstream, getCache, peekStale, setCache, singleflight } from './fetch-utils';
 
 /**
  * 安全跳转测试：mock 全局 fetch，验证 302 跳转到内网地址会被拒绝，
@@ -20,6 +20,25 @@ function mockFetch(handlers: Array<(url: string) => Response>) {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+});
+
+describe('缓存过期后先返回旧值', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('TTL 内 getCache 能读到，刚过期由 peekStale 读到，宽限过后两边都没有', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-25T00:00:00Z'));
+    setCache('shelf:test', ['甲'], 1_000);
+    expect(getCache('shelf:test')).toEqual(['甲']);
+    expect(peekStale('shelf:test')).toBeUndefined();
+    vi.setSystemTime(new Date('2026-10-25T00:00:02Z'));
+    expect(getCache('shelf:test')).toBeUndefined();
+    expect(peekStale('shelf:test')).toEqual(['甲']);
+    vi.setSystemTime(new Date('2026-10-25T03:00:00Z'));
+    expect(peekStale('shelf:test')).toBeUndefined();
+  });
 });
 
 describe('singleflight', () => {

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { useLiveQuery } from 'dexie-react-hooks';
 import Link from 'next/link';
@@ -17,6 +17,7 @@ import {
   type HistoryEntry,
 } from '@/lib/db';
 import { collapseHistoryByWork, latestSameWork, workKeyOf } from '@/lib/history-work';
+import { emptySubscribe, readHotList, rememberHotList } from '@/lib/view-cache';
 import { describeContinueWatching } from '@/lib/home-features';
 import type { HotListId } from '@/lib/douban-weekly';
 import type { UpcomingItem, UpcomingKind } from '@/lib/upcoming';
@@ -168,14 +169,24 @@ export function ShelfRow({
 function useTopRankItems(listId: HotListId, enabled: boolean) {
   const yellowFilter = useAppStore((s) => s.yellowFilter);
 
+  const remembered = useSyncExternalStore(
+    emptySubscribe,
+    () => readHotList(listId),
+    () => undefined,
+  );
   const hotQuery = useQuery({
     queryKey: ['hot-list', listId],
-    queryFn: ({ signal }) => api.hotList(listId, signal),
+    queryFn: async ({ signal }) => {
+      const data = await api.hotList(listId, signal);
+      rememberHotList(listId, data.items);
+      return data;
+    },
     enabled,
     staleTime: 15 * 60_000,
     // 页面一直开着也跟着服务端每 15 分钟的重算走
     refetchInterval: 15 * 60_000,
     retry: 1,
+    placeholderData: remembered ? { items: remembered } : undefined,
   });
 
   const fallbackKind =

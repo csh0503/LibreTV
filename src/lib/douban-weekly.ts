@@ -1,6 +1,6 @@
 import type { DoubanItem } from './types';
 import { judgeStatus, looksUnreleased } from './title-status';
-import { fetchUpstream, getCache, setCache, singleflight } from './fetch-utils';
+import { fetchUpstream, getCache, peekStale, setCache, singleflight } from './fetch-utils';
 import { WorkGroups, workKeys } from './work-identity';
 import { enrichBiliItems } from './bili-season';
 import { canonicalTitle } from './title-aliases';
@@ -1017,8 +1017,14 @@ export async function fetchHotListWithMeta(id: HotListId): Promise<{ items: Doub
   const cacheKey = `hot-list:v2:${id}`;
   const cached = getCache<{ items: DoubanItem[]; meta: HotListMeta }>(cacheKey);
   if (cached) return cached;
-  // 两行货架同时要同一份热榜时，只打一遍上游
-  return singleflight(cacheKey, () => loadHotList(id));
+  // 两行货架同时要同一份热榜时，只打一遍上游。刚过期的先返回，重算放背后。
+  const pending = singleflight(cacheKey, () => loadHotList(id));
+  const stale = peekStale<{ items: DoubanItem[]; meta: HotListMeta }>(cacheKey);
+  if (stale) {
+    void pending.catch(() => {});
+    return stale;
+  }
+  return pending;
 }
 
 async function loadHotList(id: HotListId): Promise<{ items: DoubanItem[]; meta: HotListMeta }> {

@@ -2,15 +2,20 @@
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useEffect, useState, type ReactNode } from 'react';
+import dynamic from 'next/dynamic';
 import { ToastProvider } from './toast';
 import { AuthProvider } from './auth';
 import { ThemeProvider } from './theme';
-import { GlobalDownloadManager } from './download-manager';
 import { useAppStore, hydrateLiveProbeResults } from '@/lib/store';
 import { api, STATUS_QUERY_KEY } from '@/lib/client-api';
 import { applyEnvPresets } from '@/lib/subscription-sync';
 import { startProfiles } from '@/lib/profile';
 import { startProfileSync } from '@/lib/profile-sync';
+
+const GlobalDownloadManager = dynamic(
+  () => import('./download-manager').then((m) => m.GlobalDownloadManager),
+  { ssr: false },
+);
 
 export function Providers({ children }: { children: ReactNode }) {
   const [queryClient] = useState(

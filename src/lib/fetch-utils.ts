@@ -136,27 +136,43 @@ export function singleflight<T>(key: string, run: () => Promise<T>): Promise<T> 
   return job;
 }
 
-/** 内存 TTL 缓存（豆瓣推荐等热点数据） */
-const cache = new Map<string, { value: unknown; expiresAt: number }>();
+/** 过期后仍可先返回的时间。这段里请求立刻拿到旧结果，刷新在背后做。 */
+const STALE_GRACE_MS = 2 * 60 * 60 * 1000;
 
-export function getCache<T>(key: string): T | undefined {
+/** 内存 TTL 缓存（豆瓣推荐等热点数据） */
+const cache = new Map<string, { value: unknown; expiresAt: number; staleUntil: number }>();
+
+function readEntry(key: string) {
   const entry = cache.get(key);
   if (!entry) return undefined;
-  if (Date.now() > entry.expiresAt) {
+  if (Date.now() > entry.staleUntil) {
     cache.delete(key);
     return undefined;
   }
+  return entry;
+}
+
+export function getCache<T>(key: string): T | undefined {
+  const entry = readEntry(key);
+  if (!entry || Date.now() > entry.expiresAt) return undefined;
+  return entry.value as T;
+}
+
+/** 刚过期、还没过宽限的旧值。用来先回应，再在背后重算。 */
+export function peekStale<T>(key: string): T | undefined {
+  const entry = readEntry(key);
+  if (!entry || Date.now() <= entry.expiresAt) return undefined;
   return entry.value as T;
 }
 
 export function setCache(key: string, value: unknown, ttlMs: number): void {
   if (cache.size > 500) {
-    // 简单防膨胀：超限时清掉最早过期的条目
     const now = Date.now();
     for (const [k, v] of cache) {
-      if (now > v.expiresAt) cache.delete(k);
+      if (now > v.staleUntil) cache.delete(k);
     }
     if (cache.size > 500) cache.clear();
   }
-  cache.set(key, { value, expiresAt: Date.now() + ttlMs });
+  const now = Date.now();
+  cache.set(key, { value, expiresAt: now + ttlMs, staleUntil: now + ttlMs + STALE_GRACE_MS });
 }

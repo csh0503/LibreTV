@@ -1,5 +1,5 @@
 import type { DoubanItem } from './types';
-import { getCache, setCache, singleflight } from './fetch-utils';
+import { getCache, peekStale, setCache, singleflight } from './fetch-utils';
 import { fetchHotList, tmdbTrendingToItem, type HotListId, type TmdbTrendingRaw } from './douban-weekly';
 import { tmdbGet } from './tmdb';
 import { dropUnreleased, fetchUnreleasedIndex } from './unreleased';
@@ -259,8 +259,14 @@ export async function loadShelf(id: string, now = Date.now()): Promise<DoubanIte
   const key = `shelf:${id}`;
   const cached = getCache<DoubanItem[]>(key);
   if (cached) return cached;
-  // 同一行已经在算（批量接口和旧的单行接口撞上）时，等这一次
-  return singleflight(key, () => loadShelfUncached(id, now));
+  // 同一行已经在算时等这一次。刚过期的先返回，重算放背后。
+  const pending = singleflight(key, () => loadShelfUncached(id, now));
+  const stale = peekStale<DoubanItem[]>(key);
+  if (stale) {
+    void pending.catch(() => {});
+    return stale;
+  }
+  return pending;
 }
 
 async function loadShelfUncached(id: string, now: number): Promise<DoubanItem[]> {
