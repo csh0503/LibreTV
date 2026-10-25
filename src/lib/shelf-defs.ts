@@ -1,4 +1,5 @@
 import { toSimplifiedChars } from './cms-parser';
+import { canonicalTitle } from './title-aliases';
 
 /**
  * 首页「货架」目录（Netflix 式的行）。
@@ -78,7 +79,9 @@ export function shelfDedupeKey(title: string, isTv = false): string {
     t = t.replace(SEASON_SUFFIX, '');
     if (isTv) t = t.replace(TV_TRAILING_NUMBER, '');
   }
-  return t.replace(/[\s·:：!！?？,，.。\-—~～]+/g, '').toLowerCase();
+  const compact = t.replace(/[\s·:：!！?？,，.。\-—~～]+/g, '').toLowerCase();
+  // 海贼王 / 航海王这种已知译名在货架、片库去重里也只占一张卡
+  return canonicalTitle(compact) || compact;
 }
 
 /** 整页去重用的作品键 */

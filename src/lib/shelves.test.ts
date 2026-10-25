@@ -19,6 +19,13 @@ describe('shelfDedupeKey', () => {
     expect(shelfDedupeKey('请回答1988', true)).toBe('请回答1988');
   });
 
+  it('已知译名在货架上只占一张卡', () => {
+    expect(shelfDedupeKey('海贼王')).toBe(shelfDedupeKey('航海王'));
+    expect(shelfDedupeKey('海贼王 第一季')).toBe(shelfDedupeKey('航海王'));
+    expect(shelfDedupeKey('ONE PIECE')).toBe(shelfDedupeKey('航海王'));
+    expect(shelfDedupeKey('海贼王剧场版')).not.toBe(shelfDedupeKey('海贼王'));
+  });
+
   it('忽略空格和标点，但不同作品不混', () => {
     expect(shelfDedupeKey('赛博朋克：边缘行者')).toBe(shelfDedupeKey('赛博朋克: 边缘行者'));
     expect(shelfDedupeKey('鲸口脱险')).not.toBe(shelfDedupeKey('希望'));

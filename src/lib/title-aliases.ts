@@ -150,6 +150,18 @@ export function canonicalTitle(title: string): string {
   return normalized;
 }
 
+const FIRST_SEASON = /\s*(?:第一[季部]|第1[季部]|season\s*1)\s*$/i;
+
+/**
+ * 推荐里「看过的这一季」：译名收成同一个，第一季写不写都算这一部，第二季和第三季仍分开。
+ * 看过《海贼王》第二季就不再推《航海王》第二季，但第三季照推。
+ */
+export function sameSeasonKey(title: string): string {
+  const aliased = replaceAliasInTitle(title.normalize('NFKC').trim());
+  const withoutFirst = aliased.replace(FIRST_SEASON, '').trim();
+  return canonicalTitle(withoutFirst);
+}
+
 /**
  * 将标题中出现的已知同义词前缀替换为统一主名（保留季数/副标题），
  * 例如「黑色四叶草 第二季」→「黑色五叶草 第二季」。

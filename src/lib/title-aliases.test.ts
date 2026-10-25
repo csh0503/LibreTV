@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   canonicalTitle,
+  sameSeasonKey,
   expandSearchTerms,
   aggregateResults,
   extractCoreSearchStem,
@@ -36,6 +37,9 @@ describe('片名别名与搜索降级分词', () => {
     expect(canonicalTitle('ONE PIECE')).toBe(canonicalTitle('航海王'));
     expect(canonicalTitle('黑色四叶草')).toBe(canonicalTitle('黑色五叶草'));
     expect(canonicalTitle('海贼王剧场版')).not.toBe(canonicalTitle('海贼王'));
+    expect(sameSeasonKey('海贼王 第二季')).toBe(sameSeasonKey('航海王第二季'));
+    expect(sameSeasonKey('海贼王 第二季')).not.toBe(sameSeasonKey('航海王 第三季'));
+    expect(sameSeasonKey('海贼王第一季')).toBe(sameSeasonKey('航海王'));
   });
 
   it('replaceAliasInTitle 将异名带后缀标题替换为统一主名', () => {

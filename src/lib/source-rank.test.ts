@@ -22,6 +22,7 @@ describe('rankSources：「播放」默认用哪个源', () => {
     expect(episodeCount('更新至第12集')).toBe(12);
     expect(episodeCount('全24话')).toBe(24);
     expect(episodeCount('HD')).toBe(0);
+    expect(episodeCount('更新至20251016期')).toBe(0);
   });
 });
 

@@ -16,13 +16,13 @@ import {
   type FavoriteEntry,
   type HistoryEntry,
 } from '@/lib/db';
-import { collapseHistoryByWork } from '@/lib/history-work';
+import { collapseHistoryByWork, latestSameWork, workKeyOf } from '@/lib/history-work';
 import { describeContinueWatching } from '@/lib/home-features';
 import type { HotListId } from '@/lib/douban-weekly';
 import type { UpcomingItem, UpcomingKind } from '@/lib/upcoming';
 import { resolveSource, useAppStore } from '@/lib/store';
 import { rememberDoubanItem } from '@/lib/taste-store';
-import { aggregateResults, canonicalTitle, hasTitleMatch } from '@/lib/title-aliases';
+import { aggregateResults, hasTitleMatch } from '@/lib/title-aliases';
 import {
   acknowledgeListUpdate,
   listUpdateBadge,
@@ -288,12 +288,9 @@ export function HeroBillboard({ onPick }: { onPick: (title: string, pick?: Title
   const matchedHistory = useLiveQuery(
     async () => {
       if (!profileId || !current) return undefined;
-      const key = canonicalTitle(current.title);
-      if (!key) return undefined;
+      if (!workKeyOf(current.title)) return undefined;
       const rows = await db.history.where('profileId').equals(profileId).toArray();
-      return rows
-        .filter((r) => canonicalTitle(r.title) === key)
-        .sort((a, b) => b.timestamp - a.timestamp)[0];
+      return latestSameWork(rows, current.title);
     },
     [profileId, current?.title],
   );
@@ -899,11 +896,11 @@ export function MyListRow({
   }, [boundCounts, searchResults]);
 
   const badgeOf = (row: FavoriteEntry) => {
-    const key = canonicalTitle(row.title);
+    const key = workKeyOf(row.title);
     const watchedTotal = Math.max(
       0,
       ...(history ?? [])
-        .filter((h) => (row.sourceKey && h.sourceKey === row.sourceKey && h.vodId === row.vodId) || (key && canonicalTitle(h.title) === key))
+        .filter((h) => (row.sourceKey && h.sourceKey === row.sourceKey && h.vodId === row.vodId) || (key && workKeyOf(h.title) === key))
         .map((h) => h.totalEpisodes || 0),
     );
     return listUpdateBadge(updates[row.localId], watchedTotal);
@@ -914,14 +911,12 @@ export function MyListRow({
   const handleOpenFavorite = (row: FavoriteEntry) => {
     commitUpdates((prev) => acknowledgeListUpdate(prev, row.localId));
     // 1. 若有同片观看记录，优先直接续播
-    const key = canonicalTitle(row.title);
-    const hist = (history ?? [])
-      .filter(
-        (h) =>
-          (row.sourceKey && row.vodId && h.sourceKey === row.sourceKey && h.vodId === row.vodId) ||
-          (key && canonicalTitle(h.title) === key),
-      )
-      .sort((a, b) => b.timestamp - a.timestamp)[0];
+    const hist =
+      (row.sourceKey && row.vodId
+        ? (history ?? [])
+            .filter((h) => h.sourceKey === row.sourceKey && h.vodId === row.vodId)
+            .sort((a, b) => b.timestamp - a.timestamp)[0]
+        : undefined) ?? latestSameWork(history ?? [], row.title);
 
     if (hist) {
       const src = resolveSource({ customAPIs, envSources }, hist.sourceKey, {
@@ -1478,7 +1473,7 @@ export function ScheduleRow({ onPick }: { onPick: (title: string, pick?: TitlePi
       .sort((a, b) => b.at - a.at);
     const seen = new Map<string, (typeof rows)[number]>();
     for (const r of rows) {
-      const key = canonicalTitle(r.title);
+      const key = workKeyOf(r.title);
       if (!key) continue;
       const prev = seen.get(key);
       if (!prev) seen.set(key, r);

@@ -187,6 +187,27 @@ describe('排序', () => {
     expect(titles).not.toContain('海贼王');
   });
 
+  it('看过第二季不再推同一季的另一个译名，第三季仍可以推', () => {
+    const taste = assembleTaste({
+      watches: [...watches, { title: '海贼王 第二季', playbackPosition: 90, duration: 100, episodeIndex: 0, totalEpisodes: 12, timestamp: NOW }],
+      saves: [],
+      metas: [...metas, meta('海贼王 第二季', '热血')],
+      now: NOW,
+    });
+    const ranked = rankTaste({
+      events: taste!.events,
+      userPool: [card('航海王 第二季', '热血', '9'), card('航海王 第三季', '热血', '8'), card('新热血', '热血', '9')],
+      anchorPool: [],
+      anchorTitle: null,
+      blocked: taste!.blocked,
+      now: NOW,
+      hideAdult: true,
+    });
+    const titles = ranked.forYou.map((item) => item.title);
+    expect(titles).not.toContain('航海王 第二季');
+    expect(titles).toContain('航海王 第三季');
+  });
+
   it('同样的口味，评分高的在前面', () => {
     const taste = assembleTaste({ watches, saves: [], metas, now: NOW });
     const ranked = rankTaste({

@@ -8,7 +8,8 @@ import { addSearchHistory, db, favoriteIdOf, toggleFavorite } from '@/lib/db';
 import { loadListUpdates, markListUnavailable, saveListUpdates } from '@/lib/watchlist-updates';
 import { describeContinueWatching } from '@/lib/home-features';
 import { resolveSource, useAppStore } from '@/lib/store';
-import { aggregateResults, canonicalTitle, matchingGroups, rankGroupsForPick, specificTitle, type AggregatedGroup } from '@/lib/title-aliases';
+import { aggregateResults, matchingGroups, rankGroupsForPick, specificTitle, type AggregatedGroup } from '@/lib/title-aliases';
+import { latestSameWork, workKeyOf } from '@/lib/history-work';
 import type { SearchResultItem, TitlePick } from '@/lib/types';
 import { useProfile } from '@/lib/use-profile';
 import { buildWatchUrl, cn, formatTime } from '@/lib/utils';
@@ -133,10 +134,10 @@ function TitleModalBody({
   // 看过同一部（按标准片名）→ 主按钮变成「继续播放」
   // 看过的可能是用别名找到的那一版（大师计划 → 偷天父子兵），两个名字都算
   const history = useLiveQuery(async () => {
-    const keys = new Set([pick.title, recallAlias(pick.title) ?? ''].map((t) => canonicalTitle(t)).filter(Boolean));
-    if (!profileId || keys.size === 0) return undefined;
+    if (!profileId || !workKeyOf(pick.title)) return undefined;
     const rows = await db.history.where('profileId').equals(profileId).toArray();
-    return rows.filter((r) => keys.has(canonicalTitle(r.title))).sort((a, b) => b.timestamp - a.timestamp)[0];
+    const alias = recallAlias(pick.title);
+    return latestSameWork(rows, pick.title) ?? (alias ? latestSameWork(rows, alias) : undefined);
   }, [profileId, pick.title]);
   const resumeView = history ? describeContinueWatching(history, undefined, formatTime) : undefined;
 

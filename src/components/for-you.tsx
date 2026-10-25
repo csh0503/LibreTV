@@ -12,7 +12,7 @@ import { useAppStore } from '@/lib/store';
 import { assembleTaste, confidenceOf, mergeSimilar, rankTaste, signalWeight, type TasteChannel } from '@/lib/taste';
 import { shelfDedupeKey } from '@/lib/shelf-defs';
 import { rememberDoubanItem } from '@/lib/taste-store';
-import { canonicalTitle } from '@/lib/title-aliases';
+import { sameSeasonKey } from '@/lib/title-aliases';
 import type { DoubanItem, TitlePick } from '@/lib/types';
 import { useProfile } from '@/lib/use-profile';
 import { isNotInterested, useNotInterested } from '@/lib/not-interested';
@@ -132,11 +132,11 @@ export function ForYouRows({ onPick }: { onPick: (title: string, pick?: TitlePic
     const events = assembled?.events ?? [];
     const lookup = new Map<string, { doubanId?: string; isTv?: boolean; year?: string }>();
     for (const row of history ?? []) {
-      const key = canonicalTitle(row.title);
+      const key = sameSeasonKey(row.title);
       if (key && !lookup.has(key)) lookup.set(key, { doubanId: row.tasteDoubanId, isTv: row.totalEpisodes > 1 ? true : undefined, year: row.tasteYear });
     }
     for (const row of favorites ?? []) {
-      const key = canonicalTitle(row.title);
+      const key = sameSeasonKey(row.title);
       const prev = lookup.get(key);
       if (key) lookup.set(key, { doubanId: prev?.doubanId || row.tasteDoubanId, isTv: prev?.isTv, year: prev?.year || row.year || row.tasteYear });
     }
@@ -148,12 +148,12 @@ export function ForYouRows({ onPick }: { onPick: (title: string, pick?: TitlePic
     // 「因为你看过」的那部排第一个（它的相似推荐单独成一行）
     const main = assembled?.anchorTitle ?? singleFallback?.anchorTitle;
     if (main) {
-      const at = ranked.findIndex((r) => canonicalTitle(r.title) === canonicalTitle(main));
+      const at = ranked.findIndex((r) => sameSeasonKey(r.title) === sameSeasonKey(main));
       if (at > 0) ranked.unshift(...ranked.splice(at, 1));
       else if (at < 0) ranked.unshift({ title: main, weight: 1, year: undefined });
     }
     return ranked.slice(0, 3).map((r) => {
-      const meta = lookup.get(canonicalTitle(r.title));
+      const meta = lookup.get(sameSeasonKey(r.title));
       return { ...r, doubanId: meta?.doubanId, kind: meta?.isTv ? ('tv' as const) : undefined, year: r.year || meta?.year };
     });
   }, [assembled, singleFallback, history, favorites, notInterested]);
@@ -241,11 +241,11 @@ export function ForYouRows({ onPick }: { onPick: (title: string, pick?: TitlePic
       channelOf: (item) => channels.get(item.id),
     });
     const blockedSet = new Set(
-      [...assembled.blocked, ...notInterested].map((t) => canonicalTitle(t)).filter(Boolean),
+      [...assembled.blocked, ...notInterested].map((t) => sameSeasonKey(t)).filter(Boolean),
     );
     const because = assembled.anchorTitle ? becauseFrom(blockedSet, ranked.because) : [];
     // 「为你推荐」：几部的相似推荐投票合并，不和下一排重复；不够 18 部用按题材召回的补
-    const taken = new Set(because.map((item) => canonicalTitle(item.title)));
+    const taken = new Set(because.map((item) => shelfDedupeKey(item.title, item.isTv)));
     const voted = mergeSimilar(similarLists, {
       blocked: new Set([...blockedSet, ...taken]),
       seriesKeyOf,
@@ -253,10 +253,10 @@ export function ForYouRows({ onPick }: { onPick: (title: string, pick?: TitlePic
       limit: 18,
     });
     const forYou = [...voted];
-    const have = new Set([...taken, ...voted.map((item) => canonicalTitle(item.title))]);
+    const have = new Set([...taken, ...voted.map((item) => shelfDedupeKey(item.title, item.isTv))]);
     for (const item of ranked.forYou) {
       if (forYou.length >= 18) break;
-      const key = canonicalTitle(item.title);
+      const key = shelfDedupeKey(item.title, item.isTv);
       if (!key || have.has(key)) continue;
       have.add(key);
       forYou.push(item);
@@ -292,13 +292,13 @@ export function ForYouRows({ onPick }: { onPick: (title: string, pick?: TitlePic
   }
 
   if (singleFallback) {
-    const blockedSet = new Set([...singleFallback.blocked.map((t) => canonicalTitle(t)).filter(Boolean), ...notInterested]);
+    const blockedSet = new Set([...singleFallback.blocked.map((t) => sameSeasonKey(t)).filter(Boolean), ...notInterested]);
     const singleItems = anchorPool
       .filter((item) => {
         if (yellowFilter && (isAdultContent(item.title) || isAdultContent(item.genres) || isAdultContent(item.remarks))) {
           return false;
         }
-        const key = canonicalTitle(item.title);
+        const key = sameSeasonKey(item.title);
         return Boolean(key && !blockedSet.has(key));
       })
       .slice(0, 12);

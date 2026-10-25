@@ -28,6 +28,18 @@ export function collapseHistoryByWork<T extends HistoryLike>(rows: T[]): T[] {
   return out;
 }
 
+/** 这部作品最近一次观看（译名、写不写第一季都算）。没有则 undefined。 */
+export function latestSameWork<T extends HistoryLike>(rows: T[], title: string): T | undefined {
+  const key = workKeyOf(title);
+  if (!key) return undefined;
+  let best: T | undefined;
+  for (const row of rows) {
+    if (workKeyOf(row.title) !== key) continue;
+    if (!best || row.timestamp >= best.timestamp) best = row;
+  }
+  return best;
+}
+
 /** 和这部同一作品的全部源（含它自己）。 */
 export function sameWorkHistory<T extends { title: string }>(rows: T[], title: string): T[] {
   const key = workKeyOf(title);

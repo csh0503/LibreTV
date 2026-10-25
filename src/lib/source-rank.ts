@@ -17,7 +17,8 @@ const UNKNOWN_MS = 3000;
 
 export function episodeCount(remarks?: string): number {
   if (!remarks) return 0;
-  const m = remarks.match(/(?:更新至|全|共)?\s*第?\s*(\d+)\s*[集话期]/);
+  // 只要「集 / 话」。综艺日期「更新至20251016期」不是集数，否则这种源会永远排到最前。
+  const m = remarks.match(/(?:^|[^\d])(\d{1,4})\s*[集话話]/);
   return m ? parseInt(m[1], 10) : 0;
 }
 

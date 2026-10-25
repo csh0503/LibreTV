@@ -1,6 +1,7 @@
 import type { DoubanItem } from './types';
 import { isAdultContent } from './cms-parser';
-import { canonicalTitle } from './title-aliases';
+import { canonicalTitle, sameSeasonKey } from './title-aliases';
+import { workKeyOf } from './history-work';
 import { type HallChannel, type HallSelection } from './recommend';
 
 /**
@@ -339,7 +340,7 @@ function blankMeta(): TasteMeta {
 function metaByTitle(metas: TasteMeta[]): Map<string, TasteMeta> {
   const map = new Map<string, TasteMeta>();
   for (const meta of metas) {
-    const key = canonicalTitle(meta.title);
+    const key = sameSeasonKey(meta.title);
     if (!key) continue;
     const prev = map.get(key) ?? blankMeta();
     map.set(key, {
@@ -363,12 +364,12 @@ export function assembleTaste(input: {
   const blocked = new Set<string>();
   const byKey = new Map<string, TasteEvent>();
   const block = (title: string) => {
-    const key = canonicalTitle(title);
+    const key = sameSeasonKey(title);
     if (key) blocked.add(key);
   };
   for (const watch of input.watches) {
     block(watch.title);
-    const key = canonicalTitle(watch.title);
+    const key = sameSeasonKey(watch.title);
     if (!key) continue;
     const meta = metas.get(key);
     const described = describeWatch(watch);
@@ -404,7 +405,7 @@ export function assembleTaste(input: {
   }
   for (const save of input.saves) {
     block(save.title);
-    const key = canonicalTitle(save.title);
+    const key = sameSeasonKey(save.title);
     if (!key) continue;
     const prev = byKey.get(key);
     if (prev) {
@@ -501,7 +502,7 @@ function ratingPrior(rating?: string): number {
 function dedupeItems(items: DoubanItem[]): DoubanItem[] {
   const map = new Map<string, DoubanItem>();
   for (const item of items) {
-    const key = canonicalTitle(item.title) || item.id;
+    const key = sameSeasonKey(item.title) || item.id;
     if (!key) continue;
     const prev = map.get(key);
     if (!prev || ratingNum(item.rating) > ratingNum(prev.rating)) map.set(key, item);
@@ -540,8 +541,8 @@ function scorePool(
   const scored: ScoredItem[] = [];
   for (const item of dedupeItems(items)) {
     if (hideAdult && (isAdultContent(item.title) || isAdultContent(item.genres) || isAdultContent(item.remarks))) continue;
-    const key = canonicalTitle(item.title);
-    if (!key || blocked.has(key)) continue;
+    const key = sameSeasonKey(item.title);
+    if (!key || blocked.has(key) || blocked.has(workKeyOf(item.title))) continue;
     const tokens = featureTokens({
       channel: channelOf?.(item),
       genres: splitGenres(item.genres),
@@ -587,7 +588,7 @@ export function rankTaste(input: {
   hideAdult: boolean;
   channelOf?: (item: DoubanItem) => TasteChannel | undefined;
 }): { forYou: DoubanItem[]; because: DoubanItem[] } {
-  const blocked = new Set(input.blocked.map((title) => canonicalTitle(title)).filter(Boolean));
+  const blocked = new Set(input.blocked.map((title) => sameSeasonKey(title)).filter(Boolean));
   const userItems = dedupeItems(input.userPool);
   const anchorItems = dedupeItems(input.anchorPool);
   const docs = [
@@ -601,8 +602,8 @@ export function rankTaste(input: {
     scorePool(userItems, user, user, idf, blocked, input.hideAdult, input.channelOf).map((row) => ({ ...row, value: row.item })),
     FOR_YOU_LIMIT,
   );
-  const anchor = input.events.find((event) => input.anchorTitle && canonicalTitle(event.title) === canonicalTitle(input.anchorTitle));
-  const taken = new Set(forYou.map((item) => canonicalTitle(item.title)));
+  const anchor = input.events.find((event) => input.anchorTitle && sameSeasonKey(event.title) === sameSeasonKey(input.anchorTitle));
+  const taken = new Set(forYou.map((item) => sameSeasonKey(item.title)));
   const becauseBlocked = new Set([...blocked, ...taken]);
   const because = anchor
     ? mmrPick(
@@ -747,9 +748,10 @@ export function mergeSimilar(
   for (const { weight, items } of lists) {
     if (!(weight > 0)) continue;
     items.forEach((item, rank) => {
-      const key = canonicalTitle(item.title);
-      // 看过的那几季不再推荐；没看过的续作（看了第 2 季推第 3 季）照常推荐
-      if (!key || opts.blocked.has(key)) return;
+      const key = sameSeasonKey(item.title);
+      // 看过的那几季不再推荐；没看过的续作（看了第 2 季推第 3 季）照常推荐。
+      // 不再推荐是整部系列（workKeyOf），看过只挡住这一季。
+      if (!key || opts.blocked.has(key) || opts.blocked.has(workKeyOf(item.title))) return;
       if (opts.hideAdult && (isAdultContent(item.title) || isAdultContent(item.genres))) return;
       const prev = score.get(key);
       const add = weight / (rank + 3);

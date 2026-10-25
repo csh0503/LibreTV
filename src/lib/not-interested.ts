@@ -2,7 +2,7 @@
 
 import { useSyncExternalStore } from 'react';
 import { markProfileDirty } from './profile-session';
-import { canonicalTitle } from './title-aliases';
+import { workKeyOf } from './history-work';
 
 /**
  * 「不再推荐这部」：误点进去的、看了不喜欢的。按设定档记在本机，并放进设定档包裹带走。
@@ -32,7 +32,7 @@ export function mergeNotInterestedMarks(
   if (!remote) return local;
   const byTitle = new Map<string, NotInterestedMark>();
   for (const mark of [...local, ...remote]) {
-    const title = canonicalTitle(mark.title);
+    const title = workKeyOf(mark.title);
     if (!title || typeof mark.at !== 'number') continue;
     const next = { title, at: mark.at, on: Boolean(mark.on) };
     const prev = byTitle.get(title);
@@ -58,7 +58,7 @@ function readStored(profileId: string): NotInterestedMark[] {
     if (Array.isArray(legacy)) {
       return legacy
         .filter((item): item is string => typeof item === 'string')
-        .map((title) => ({ title: canonicalTitle(title), at: 0, on: true }))
+        .map((title) => ({ title: workKeyOf(title), at: 0, on: true }))
         .filter((mark) => mark.title);
     }
   } catch {
@@ -113,7 +113,7 @@ function touch(profileId: string, titles: string[], on: boolean) {
   const next = new Map(loadNotInterestedMarks(profileId).map((mark) => [mark.title, mark]));
   const at = Date.now();
   for (const title of titles) {
-    const key = canonicalTitle(title);
+    const key = workKeyOf(title);
     if (key) next.set(key, { title: key, at, on });
   }
   writeMarks(profileId, [...next.values()], true);
@@ -128,7 +128,7 @@ export function unmarkNotInterested(profileId: string, titles: string[]) {
 }
 
 export function isNotInterested(set: ReadonlySet<string>, title: string): boolean {
-  return set.size > 0 && set.has(canonicalTitle(title));
+  return set.size > 0 && set.has(workKeyOf(title));
 }
 
 export function useNotInterested(profileId: string): ReadonlySet<string> {
