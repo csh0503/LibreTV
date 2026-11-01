@@ -35,6 +35,19 @@ for (const file of files) {
   if (PRIVATE_METHOD.test(code)) left += 1;
 }
 
+// inset 要 Chrome 87，旧 WebView 上 fixed 弹窗会跑出屏幕（登录框看不见），展开成 top/right/bottom/left
+const cssRoot = path.join('.next', 'static', 'css');
+for (const file of readdirSync(cssRoot).filter((name) => name.endsWith('.css'))) {
+  const full = path.join(cssRoot, file);
+  const { code } = await transform(readFileSync(full, 'utf8'), {
+    loader: 'css',
+    target: TARGET,
+    minify: true,
+    legalComments: 'none',
+  });
+  writeFileSync(full, code);
+}
+
 // 没降干净就让构建失败，不要把会白屏的产物部署出去
 if (left > 0) {
   console.error(`lower-client-syntax: ${left} 个 chunk 仍含私有方法`);
