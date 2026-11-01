@@ -1,0 +1,26 @@
+{
+    "dock_apps":  [
+                      "com.limelight",
+                      "com.xiaodianshi.tv.yst",
+                      "com.tcl.appmarket2",
+                      "com.tcl.ui_mediaCenter"
+                  ],
+    "columns":  5,
+    "rows_below_dock":  1,
+    "background_color":  "#0E0F12",
+    "wallpaper":  false,
+    "sky_intensity":  0,
+    "show_greeting":  false,
+    "dock_title":  false,
+    "dock_band":  false,
+    "ambient_glow":  false,
+    "app_glow":  false,
+    "glass_style":  "glass",
+    "icon_only_buttons":  true,
+    "icon_only_inputs":  true,
+    "focus_overshoot":  false,
+    "advanced_effects":  false,
+    "stock_home_redirect":  "com.tcl.cyberui",
+    "source_panel_service":  "com.tcl.settings/.ShowWindowService",
+    "source_panel_action":  "com.tcl.insrc.SHOW_WINDOW"
+}

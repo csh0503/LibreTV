@@ -1,0 +1,7 @@
+com.tcl.bootadservice
+com.tcl.bi
+com.tcl.logkit
+com.tcl.c2dm.client
+android.autoinstalls.config.tcl.device
+com.tcl.recognize.service
+com.tcl.useragreement
