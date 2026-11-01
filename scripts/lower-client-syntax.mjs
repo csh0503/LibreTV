@@ -26,6 +26,8 @@ let left = 0;
 for (const file of files) {
   const { code } = await transform(readFileSync(file, 'utf8'), {
     target: TARGET,
+    // chunk 是共用全局作用域的普通脚本，esbuild 的辅助函数放在顶层会互相覆盖，所以各包一层
+    format: 'iife',
     minify: true,
     legalComments: 'none',
   });
