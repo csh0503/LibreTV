@@ -3,6 +3,17 @@
 @tailwind utilities;
 
 /*
+ * Tailwind 的 preflight 用 :where() 清按钮底色，Chrome 88 以下整条规则失效，
+ * 旧电视 WebView 上按钮会露出浏览器默认的浅灰底。放在 base 层，bg-* 工具类仍能覆盖。
+ */
+@layer base {
+  button {
+    background-color: transparent;
+    background-image: none;
+  }
+}
+
+/*
  * 语义化配色（RGB 三元组，供 Tailwind 以 <alpha-value> 注入透明度）。
  * 2026-10-19 改版：莫兰迪色系（低饱和、带一点灰的暖色），版式参考 Apple TV / Netflix。
  * 暗色是暖炭灰底、燕麦白字；亮色是米灰底、深灰褐字。主色是雾霾蓝，状态色是鼠尾草绿 / 赭黄 / 豆沙红。
