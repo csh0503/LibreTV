@@ -21,7 +21,7 @@ export { aggregateResults, buildGroupTitleKey, normalizeYearToken, type Aggregat
 /**
  * 聚合影片卡片：
  * - 单源：点击直接打开该源详情（与旧体验一致）；
- * - 多源：显示「N 个来源」徽章，点击展开各源列表，选择具体源后打开详情。
+ * - 多源：底部先标出按健康度和集数排在前面的来源，点开展开后按清晰度和广告再排，第一项标推荐。
  */
 export function AggregatedCard({
   group,
@@ -53,7 +53,7 @@ export function AggregatedCard({
   };
 
   return (
-    <div className={cn('card', !multi && 'hover:scale-[1.02] hover:shadow-md', multi && expanded && 'ring-1 ring-accent/40')}>
+    <div className={cn('card transition-transform duration-300 hover:-translate-y-0.5 hover:shadow-md focus-within:-translate-y-0.5', multi && expanded && 'ring-1 ring-accent/40')}>
       {/* 不用 h-full：展开面板需要撑高卡片，等高裁切会让面板不可见 */}
       <div
         className="flex h-full cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60"
@@ -112,7 +112,7 @@ export function AggregatedCard({
           </div>
           <div className="flex items-center justify-between mt-auto pt-1.5 border-t border-line">
             <span className="tag bg-chip text-muted truncate max-w-[80%]">
-              {multi ? `${group.items.length} 个来源` : group.items[0].sourceName}
+              {multi ? `推荐 ${rankedItems[0]?.sourceName ?? group.items[0].sourceName} · ${group.items.length} 个来源` : group.items[0].sourceName}
             </span>
             {multi && (
               <svg
@@ -181,7 +181,7 @@ export function VideoCard({ item, onClick }: { item: SearchResultItem; onClick: 
 
   return (
     <div
-      className="card cursor-pointer hover:scale-[1.02] hover:shadow-md h-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+      className="card cursor-pointer h-full transition-transform duration-300 hover:-translate-y-0.5 hover:shadow-md focus-visible:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
       role="button"
       tabIndex={0}
       onClick={onClick}
@@ -270,14 +270,14 @@ export function DoubanCard({
         }
       }}
     >
-      <div className="relative aspect-[2/3] bg-chip rounded-xl overflow-hidden ring-1 ring-inset ring-content/[0.06] shadow-[0_2px_10px_rgba(0,0,0,0.14)] transition-[transform,box-shadow] duration-300 ease-out group-hover/card:-translate-y-1 group-hover/card:shadow-[0_14px_30px_rgba(0,0,0,0.28)]">
+      <div className="relative aspect-[2/3] bg-chip rounded-xl overflow-hidden ring-1 ring-inset ring-content/[0.06] shadow-[0_2px_10px_rgba(0,0,0,0.14)] transition-[transform,box-shadow] duration-300 ease-out group-hover/card:-translate-y-1 group-focus-visible/card:-translate-y-1 group-hover/card:shadow-[0_14px_30px_rgba(0,0,0,0.28)] group-focus-visible/card:shadow-[0_14px_30px_rgba(0,0,0,0.28)]">
         {item.cover && !imgFailed ? (
           <SmartImage
             url={item.cover}
             mode={imageProxyMode}
             customProxy={customImageProxy}
             alt={item.title}
-            className="w-full h-full object-cover"
+            className="w-full h-full object-cover transition-transform duration-500 ease-out group-hover/card:scale-[1.04] group-focus-visible/card:scale-[1.04]"
             onExhausted={() => setImgFailed(true)}
           />
         ) : (

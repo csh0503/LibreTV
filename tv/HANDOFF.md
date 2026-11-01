@@ -17,14 +17,14 @@
 | 遙控器方向鍵導覽 | 用指令測過；實體遙控器只確認能進入首頁 |
 | 靜止 60 fps | 達成 |
 | **捲動 60 fps** | **未達成**，見下方數據 |
-| **影片播放** | **完全沒測過**，這是最大未知數 |
+| **影片播放** | WebView 已測過一部：H.264 720p 能播、硬解、續播。聲音、HEVC、代理、換集還沒測。見「影片播放實測」 |
 | 把 LibreTV 放到新桌面 | 未做，目前排序由系統決定 |
 | 關閉除錯 | **未做**，見「收尾清單」 |
 
 ## 建議的下一步
 
-1. 先測影片播放（HLS、硬解、遙控器控制）。結果會決定播放器怎麼做。
-2. 做**原生 Android TV App**：資料走下方 API，清單用 RecyclerView，播放用 Media3／ExoPlayer。第一版只做登入、設定檔、首頁、搜尋、詳情選集和播放。
+1. 影片播放已在 WebView 測過一部，見「影片播放實測」。原生播放器要自己處理確定鍵和播放／暫停鍵：網頁播放器只認空白鍵。
+2. **原生 Android TV App** 已開始，原始碼在 `tv/android-native/`，套件名 `app.libretv.player`（跟 WebView 外殼分開，安裝不會蓋掉它）。第一版做登入、設定檔、首頁、搜尋、詳情選集和 Media3 播放。還沒裝上電視。
 3. 原生版不成立時的備案：用 Moonlight 串流電腦上的瀏覽器。電視已裝 Moonlight v12.2，電腦有 Apollo，但實際 4K 60 未驗證。
 
 繼續調 WebView 很難到 60 fps，原因見下方。
@@ -106,6 +106,21 @@ Trace（往下捲 3.2 秒）：`UpdateLayoutTree` 約 680–790 ms，每次約 4
 
 **量測的限制：** 用的是 JS `scrollBy` 加 `requestAnimationFrame`，屬於壓力測試，遙控器一格一格按的實際感受沒量過。
 
+## 影片播放實測
+
+2026-11-01，在已安裝的 WebView 外殼裡，從首頁「繼續觀看」打開《咒術回戰》第 1 集（來源顯示為「极速」）。
+
+| 項目 | 結果 |
+|---|---|
+| 出畫面 | 約 5 秒，從 02:25 續播，畫面 1280×720，字幕看得到 |
+| 播放路徑 | `video` 位址是 `blob:`，所以是 MSE／hls.js，不是把 m3u8 直接塞給 `<video>`。這次沒有改走 `/api/proxy` |
+| 硬解 | `OMX.amlogic.avc.decoder.awesome2`，`video/avc`。解碼大約 24–28 fps，這段丟幀數是 0 |
+| 緩衝警告 | 設定輸出緩衝數量 15 失敗（`-1010`），播放沒有停 |
+| 方向鍵 | 焦點在頁面本身時，右鍵快進約 10 秒，下鍵把播放器音量從 80% 調到 70% |
+| 確定／播放鍵 | 有送到頁面（`Enter`、`MediaPlayPause`），播放器只認空白鍵，所以這兩個鍵不會暫停 |
+
+沒測：有沒有聲音、HEVC、4K、直連失敗後改代理、換集。測試結束時已回到首頁；這一集的觀看進度會從 02:25 往後記一段。
+
 ## 除錯方法
 
 App 目前開著 WebView 遠端除錯，可以直接讀頁面：
@@ -132,7 +147,7 @@ adb -s 192.168.31.184:5555 shell "logcat -d -s LibreTvWeb:*"
 | 設定檔同步 | `/api/profile-sync` |
 | 首頁貨架 | `/api/shelves`、`/api/shelf`、`/api/hot-list`、`/api/upcoming`、`/api/schedule` |
 | 片庫與推薦 | `/api/douban`、`/api/browse`、`/api/similar`、`/api/bangumi/calendar` |
-| 搜尋與詳情 | `/api/search`（`stream=1` 是 NDJSON）、`/api/detail` |
+| 搜尋與詳情 | `/api/search`：不走串流時是 POST JSON `{ wd, sources, filterAdult }`，`sources` 用 `/api/status` 的 `defaultSources`。`stream=1` 才是 NDJSON。詳情是 `GET /api/detail?id=&source=`，`source` 是片源設定的 JSON |
 | 播放 | `/api/proxy`（直連失敗時）、`/api/skip-times` |
 | 直播 | `/api/live/playlist`、`/api/live/epg`、`/api/live/stream` |
 
@@ -165,7 +180,7 @@ adb -s 192.168.31.184:5555 shell "logcat -d -s LibreTvWeb:*"
 
 ## 收尾清單
 
-- [ ] 測影片播放
+- [x] 測影片播放（WebView，見「影片播放實測」；聲音、HEVC、代理、換集還沒測）
 - [ ] 移除 `WebView.setWebContentsDebuggingEnabled(true)`、`onConsoleMessage` 記錄和 `early.js`
 - [ ] 把 App 放到新桌面（`tv/cleanup/my-theme/config.json` 的 `dock_apps` 加 `app.libretv.tv`，再用 `tools/theme.ps1` 推送）
 - [ ] 全部完成且使用者不再要裝 App 時，關閉電視的 ADB

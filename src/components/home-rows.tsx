@@ -258,7 +258,18 @@ export function HeroBillboard({ onPick }: { onPick: (title: string, pick?: Title
   const [activeIndex, setActiveIndex] = useState(0);
   const [imgFailed, setImgFailed] = useState(false);
   const [backdropFailed, setBackdropFailed] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const [hidden, setHidden] = useState(false);
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+  const reducedMotion = useSyncExternalStore(
+    (onChange) => {
+      const media = window.matchMedia('(prefers-reduced-motion: reduce)');
+      media.addEventListener('change', onChange);
+      return () => media.removeEventListener('change', onChange);
+    },
+    () => window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+    () => false,
+  );
 
   useEffect(() => {
     if (activeIndex >= featuredList.length) setActiveIndex(0);
@@ -280,14 +291,22 @@ export function HeroBillboard({ onPick }: { onPick: (title: string, pick?: Title
     setActiveIndex((i) => (i + 1) % featuredList.length);
   }, [featuredList.length]);
 
-  // 自动轮播：每 8 秒温和切换主推影片
   useEffect(() => {
-    if (featuredList.length <= 1) return;
-    const timer = window.setInterval(() => {
+    const onVis = () => setHidden(document.hidden);
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, []);
+
+  // 停 8 秒换下一部。鼠标停在大图上、切到别的标签页、或系统要求减少动效时不转。
+  // 手动换过或继续计时时，从这一部重新数 8 秒。
+  const holdRotation = paused || hidden || reducedMotion;
+  useEffect(() => {
+    if (holdRotation || featuredList.length <= 1) return;
+    const timer = window.setTimeout(() => {
       setActiveIndex((i) => (i + 1) % featuredList.length);
     }, 8000);
-    return () => window.clearInterval(timer);
-  }, [featuredList.length]);
+    return () => window.clearTimeout(timer);
+  }, [holdRotation, activeIndex, featuredList.length]);
 
   const favLocalId = current ? favoriteIdOf({ title: current.title }) : '';
   const isSaved = useLiveQuery(
@@ -393,10 +412,17 @@ export function HeroBillboard({ onPick }: { onPick: (title: string, pick?: Title
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
       className="group/hero relative mb-10 rounded-[22px] overflow-hidden ring-1 ring-inset ring-white/[0.06] bg-[#151413] text-white shadow-[0_18px_50px_rgba(0,0,0,0.35)] select-none"
+      onMouseEnter={() => setPaused(true)}
+      onMouseLeave={() => setPaused(false)}
+      onFocus={() => setPaused(true)}
+      onBlur={(event) => {
+        const next = event.relatedTarget;
+        if (!(next instanceof Node) || !event.currentTarget.contains(next)) setPaused(false);
+      }}
     >
       {/* 背景大图氛围层：有 16:9 横版海报时高清展示，仅竖版海报时作高斯模糊氛围背景 */}
       {bgUrl && (!imgFailed || hasWidescreenBackdrop) && (
-        <div className="absolute inset-0 overflow-hidden pointer-events-none" aria-hidden>
+        <div key={current.id} className="absolute inset-0 overflow-hidden pointer-events-none animate-fade-in" aria-hidden>
           <SmartImage
             url={bgUrl}
             mode={imageProxyMode}
@@ -449,7 +475,7 @@ export function HeroBillboard({ onPick }: { onPick: (title: string, pick?: Title
         </>
       )}
 
-      <div className="relative z-10 px-6 py-5 sm:px-12 sm:py-7 md:px-14 md:py-8 flex items-center justify-between gap-6">
+      <div key={current.id} className="relative z-10 px-6 py-5 sm:px-12 sm:py-7 md:px-14 md:py-8 flex items-center justify-between gap-6 animate-fade-in">
         <div className="min-w-0 flex-1 max-w-2xl space-y-3">
           {/* 元数据一行文字（Apple TV 式），不再是一排胶囊 */}
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-white/70">
@@ -546,10 +572,17 @@ export function HeroBillboard({ onPick }: { onPick: (title: string, pick?: Title
                 aria-label={`切换到主推：${item.title}`}
                 title={item.title}
                 className={cn(
-                  'h-1.5 rounded-full transition-all cursor-pointer',
-                  idx === activeIndex ? 'w-6 bg-white' : 'w-2 bg-white/35 hover:bg-white/60',
+                  'relative h-1.5 overflow-hidden rounded-full transition-all cursor-pointer',
+                  idx === activeIndex ? 'w-8 bg-white/30' : 'w-2 bg-white/35 hover:bg-white/60',
                 )}
-              />
+              >
+                {idx === activeIndex && (
+                  <span
+                    key={holdRotation ? 'held' : activeIndex}
+                    className={cn('absolute inset-0 origin-left bg-white', !holdRotation && featuredList.length > 1 && 'animate-hero-progress')}
+                  />
+                )}
+              </button>
             ))}
           </div>
         </div>

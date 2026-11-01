@@ -927,9 +927,24 @@ export function PlayerShell({
     // —— 键盘快捷键（旧版 hotkey:false + 自定义逻辑的移植） ——
     const shortcuts = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
+      const current = artRef.current;
+      // 电视遥控器的播放键没有空白键。焦点在按钮上时也要能暂停，不能只把按钮点下去。
+      if (current && (e.key === 'MediaPlayPause' || e.key === 'MediaPlay' || e.key === 'MediaPause')) {
+        if (e.key === 'MediaPlay') {
+          current.play();
+          showHint('播放');
+        } else if (e.key === 'MediaPause') {
+          current.pause();
+          showHint('暂停');
+        } else {
+          current.toggle();
+          showHint('播放/暂停');
+        }
+        e.preventDefault();
+        return;
+      }
       // 输入框或按钮获得焦点时不劫持按键：否则空格会吞掉按钮的默认激活
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.closest('button')) return;
-      const current = artRef.current;
       if (!current) return;
       if (e.altKey && e.key === 'ArrowLeft') { e.preventDefault(); return; } // 由父层处理集数切换
       if (e.altKey && e.key === 'ArrowRight') { e.preventDefault(); return; }
@@ -954,6 +969,7 @@ export function PlayerShell({
           if (current.volume > 0) { current.volume = Math.max(0, current.volume - 0.1); showHint(`音量 ${Math.round(current.volume * 100)}%`); e.preventDefault(); }
           break;
         case ' ':
+        case 'Enter':
           current.toggle(); showHint('播放/暂停'); e.preventDefault();
           break;
         case 'f': case 'F':

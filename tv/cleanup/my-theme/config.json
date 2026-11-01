@@ -1,10 +1,19 @@
 {
     "dock_apps":  [
+                      "app.libretv.player",
+                      "org.smarttube.stable",
+                      "com.V2.blb5",
+                      "org.xbmc.kodi",
+                      "org.videolan.vlc",
+                      "org.localsend.localsend_app",
                       "com.limelight",
                       "com.xiaodianshi.tv.yst",
-                      "com.tcl.appmarket2",
-                      "com.tcl.ui_mediaCenter"
+                      "com.tcl.ui_mediaCenter",
+                      "com.tcl.appmarket2"
                   ],
+    "library_apps":  [
+                         "com.tcl.appmarket2"
+                     ],
     "columns":  5,
     "rows_below_dock":  1,
     "background_color":  "#0E0F12",

@@ -1,0 +1,542 @@
+package app.libretv.player;
+
+import android.app.Activity;
+import android.content.Intent;
+import android.os.Bundle;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.Button;
+import android.widget.ImageView;
+import android.widget.TextView;
+
+import androidx.annotation.NonNull;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
+
+import org.json.JSONException;
+
+import org.json.JSONArray;
+import org.json.JSONObject;
+
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+
+public class HomeActivity extends Activity {
+    private static final String[] SHELF_IDS = {
+            "hot-movies", "cn-tv", "anime-airing",
+            "guoman", "kr-jp-tv", "us-tv",
+            "variety", "acclaimed", "g-crime",
+            "g-scifi", "g-romance", "g-comedy",
+            "g-action", "doc"
+    };
+    private final List<Row> rows = new ArrayList<>();
+    private final Row[] shelfSlots = new Row[SHELF_IDS.length];
+    private final boolean[] shelfDone = new boolean[SHELF_IDS.length];
+    private final JSONArray[] shelfRaw = new JSONArray[SHELF_IDS.length];
+    private final RecyclerView.RecycledViewPool cardPool = new RecyclerView.RecycledViewPool();
+    private int loadedThrough;
+    private boolean batchBusy;
+    private static final int SHELF_CARDS = 16;
+    private boolean historyPlaced;
+    private boolean historyReady;
+    private boolean allowHistoryRefresh;
+    private boolean userMoved;
+    private RecyclerView list;
+    private TextView message;
+
+    @Override
+    protected void onCreate(Bundle saved) {
+        super.onCreate(saved);
+        setContentView(R.layout.activity_home);
+        message = findViewById(R.id.message);
+        list = findViewById(R.id.rows);
+        list.setLayoutManager(new LinearLayoutManager(this));
+        list.setItemAnimator(null);
+        list.setHasFixedSize(true);
+        list.setItemViewCacheSize(4);
+        cardPool.setMaxRecycledViews(0, 20);
+        list.setAdapter(new RowAdapter());
+        list.addOnScrollListener(new RecyclerView.OnScrollListener() {
+            @Override
+            public void onScrolled(@NonNull RecyclerView recyclerView, int dx, int dy) {
+                if (dy > 0) maybeLoadMore();
+            }
+        });
+        Button search = findViewById(R.id.search);
+        search.setOnClickListener(v -> startActivity(new Intent(this, SearchActivity.class)));
+        Button profile = findViewById(R.id.profile);
+        profile.setOnClickListener(v -> startActivity(new Intent(this, ProfileActivity.class)));
+        message.setText("正在准备首页…");
+        JSONArray cached = ShelfCache.read(this);
+        if (cached != null) acceptShelves(0, SHELF_IDS.length, cached, false);
+        requestNextBatch();
+        String profileId = ProfileActivity.rememberedId(this);
+        NativeApp.io(this, () -> {
+            if (NativeApp.api().sources().length() == 0) NativeApp.api().status();
+            return profileId.isEmpty() ? new JSONObject() : NativeApp.api().bundle(profileId);
+        }, this::showBundle, e -> message.setText(e.getMessage()));
+    }
+
+    private void showBundle(JSONObject bundle) {
+        String name = bundle.optString("name", "LibreTV");
+        ((Button) findViewById(R.id.profile)).setText(name);
+        addHistory(bundle.optJSONArray("history"));
+        addFavorites(bundle.optJSONArray("favorites"));
+        historyReady = true;
+        allowHistoryRefresh = true;
+        if (!historyPlaced) focusFirstPlayable();
+        if (message.getText().toString().startsWith("正在准备")) message.setText("");
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        userMoved = false;
+        if (!allowHistoryRefresh) return;
+        String profileId = ProfileActivity.rememberedId(this);
+        if (profileId.isEmpty()) return;
+        NativeApp.io(this, () -> NativeApp.api().bundle(profileId), bundle -> replaceHistory(bundle.optJSONArray("history")), e -> {
+        });
+    }
+
+    @Override
+    public boolean dispatchKeyEvent(android.view.KeyEvent event) {
+        if (historyReady && event.getAction() == android.view.KeyEvent.ACTION_DOWN) {
+            int code = event.getKeyCode();
+            if (code == android.view.KeyEvent.KEYCODE_DPAD_UP || code == android.view.KeyEvent.KEYCODE_DPAD_DOWN
+                    || code == android.view.KeyEvent.KEYCODE_DPAD_LEFT || code == android.view.KeyEvent.KEYCODE_DPAD_RIGHT
+                    || code == android.view.KeyEvent.KEYCODE_DPAD_CENTER) {
+                userMoved = true;
+            }
+        }
+        return super.dispatchKeyEvent(event);
+    }
+
+    private void replaceHistory(JSONArray history) {
+        if (historyPlaced && !rows.isEmpty()) {
+            rows.remove(0);
+            historyPlaced = false;
+            if (list.getAdapter() != null) list.getAdapter().notifyItemRemoved(0);
+        }
+        addHistory(history);
+    }
+
+    private void addHistory(JSONArray history) {
+        List<JSONObject> items = WorkKey.collapse(HistorySync.merge(history));
+        if (items.isEmpty()) return;
+        List<Card> cards = new ArrayList<>();
+        int limit = Math.min(items.size(), 18);
+        for (int i = 0; i < limit; i++) {
+            JSONObject item = items.get(i);
+            int episode = item.optInt("episodeIndex");
+            int position = item.optInt("playbackPosition");
+            int duration = item.optInt("duration");
+            String subtitle = "第 " + (episode + 1) + " 集";
+            if (position > 10) subtitle += " · " + format(position);
+            int progress = duration > 30 && position > 0 ? Math.min(100, position * 100 / duration) : 0;
+            cards.add(new Card(
+                    item.optString("title"),
+                    item.optString("pic"),
+                    subtitle,
+                    item.optString("vodId"),
+                    Open.sourceJson(item),
+                    episode,
+                    position,
+                    progress
+            ));
+        }
+        rows.add(0, new Row("继续观看", cards));
+        historyPlaced = true;
+        list.getAdapter().notifyItemInserted(0);
+        focusContinue();
+        layoutShelves();
+    }
+
+    /** Shelves often finish first and used to keep the focus. Keep putting it back on 继续观看 until the user moves. */
+    private void focusContinue() {
+        if (userMoved || !historyPlaced) return;
+        list.scrollToPosition(0);
+        list.post(() -> focusCard(0, 0));
+    }
+
+    private void focusCard(int rowIndex, int attempt) {
+        if (userMoved) return;
+        RecyclerView.ViewHolder row = list.findViewHolderForAdapterPosition(rowIndex);
+        if (row == null) {
+            if (attempt < 4) list.post(() -> focusCard(rowIndex, attempt + 1));
+            return;
+        }
+        RecyclerView cards = row.itemView.findViewById(R.id.row_cards);
+        if (cards == null) return;
+        cards.scrollToPosition(0);
+        cards.post(() -> {
+            if (userMoved) return;
+            RecyclerView.ViewHolder card = cards.findViewHolderForAdapterPosition(0);
+            if (card != null) card.itemView.requestFocus();
+            else if (attempt < 4) list.post(() -> focusCard(rowIndex, attempt + 1));
+        });
+    }
+
+    private void focusFirstPlayable() {
+        if (userMoved || list.findFocus() != null) return;
+        list.post(() -> focusCard(0, 0));
+    }
+
+    private void addFavorites(JSONArray favorites) {
+        if (favorites == null || favorites.length() == 0) return;
+        List<JSONObject> items = new ArrayList<>();
+        for (int i = 0; i < favorites.length(); i++) {
+            JSONObject item = favorites.optJSONObject(i);
+            if (item != null && !item.optString("title").isEmpty()) items.add(item);
+        }
+        items.sort((a, b) -> Long.compare(b.optLong("addedAt"), a.optLong("addedAt")));
+        List<Card> cards = new ArrayList<>();
+        int limit = Math.min(items.size(), 18);
+        for (int i = 0; i < limit; i++) {
+            JSONObject item = items.get(i);
+            cards.add(new Card(
+                    item.optString("title"),
+                    item.optString("pic"),
+                    item.optString("year"),
+                    item.optString("vodId"),
+                    Open.sourceJson(item),
+                    0,
+                    0
+            ));
+        }
+        if (cards.isEmpty()) return;
+        int index = historyPlaced ? 1 : 0;
+        rows.add(index, new Row("我的片单", cards));
+        list.getAdapter().notifyItemInserted(index);
+        layoutShelves();
+    }
+
+    /** One batch at a time. The rest wait until the user scrolls near the bottom. */
+    private void requestNextBatch() {
+        if (batchBusy || loadedThrough >= SHELF_IDS.length) return;
+        int from = loadedThrough;
+        int to = Math.min(from + 3, SHELF_IDS.length);
+        StringBuilder ids = new StringBuilder();
+        for (int i = from; i < to; i++) {
+            if (ids.length() > 0) ids.append(',');
+            ids.append(SHELF_IDS[i]);
+        }
+        batchBusy = true;
+        NativeApp.io(this, () -> {
+            if (NativeApp.api().sources().length() == 0) NativeApp.api().status();
+            return NativeApp.api().shelves(ids.toString());
+        }, shelves -> {
+            batchBusy = false;
+            loadedThrough = to;
+            acceptShelves(from, to, shelves, true);
+            rememberShelves();
+            if (loadedThrough < 6) requestNextBatch();
+            else maybeLoadMore();
+        }, e -> {
+            batchBusy = false;
+            loadedThrough = to;
+            message.setText(e.getMessage());
+            acceptShelves(from, to, new JSONArray(), true);
+            maybeLoadMore();
+        });
+    }
+
+    private void maybeLoadMore() {
+        if (batchBusy || loadedThrough >= SHELF_IDS.length || rows.isEmpty()) return;
+        RecyclerView.LayoutManager manager = list.getLayoutManager();
+        if (!(manager instanceof LinearLayoutManager)) return;
+        int last = ((LinearLayoutManager) manager).findLastVisibleItemPosition();
+        if (last == RecyclerView.NO_POSITION) {
+            list.post(this::maybeLoadMore);
+            return;
+        }
+        if (last >= rows.size() - 4) requestNextBatch();
+    }
+
+    private void rememberShelves() {
+        JSONArray snapshot = new JSONArray();
+        try {
+            for (int i = 0; i < SHELF_IDS.length; i++) {
+                JSONArray items = shelfRaw[i];
+                if (items == null || items.length() == 0) continue;
+                JSONArray kept = new JSONArray();
+                for (int n = 0; n < items.length() && kept.length() < 24; n++) {
+                    JSONObject item = items.optJSONObject(n);
+                    if (item == null || item.optString("title").isEmpty()) continue;
+                    JSONObject copy = new JSONObject();
+                    copy.put("title", item.optString("title"));
+                    copy.put("cover", item.optString("cover"));
+                    copy.put("remarks", item.optString("remarks"));
+                    copy.put("year", item.optString("year"));
+                    copy.put("rating", item.optString("rating"));
+                    kept.put(copy);
+                }
+                if (kept.length() == 0) continue;
+                JSONObject shelf = new JSONObject();
+                shelf.put("id", SHELF_IDS[i]);
+                shelf.put("items", kept);
+                snapshot.put(shelf);
+            }
+        } catch (JSONException e) {
+            return;
+        }
+        if (snapshot.length() == 0) return;
+        String json;
+        try {
+            JSONObject root = new JSONObject();
+            root.put("at", System.currentTimeMillis());
+            root.put("shelves", snapshot);
+            json = root.toString();
+        } catch (JSONException e) {
+            return;
+        }
+        NativeApp.io(this, () -> {
+            ShelfCache.write(this, json);
+            return Boolean.TRUE;
+        }, ok -> {
+        }, err -> {
+        });
+    }
+
+    private void acceptShelves(int from, int to, JSONArray shelves, boolean persistable) {
+        for (int slot = from; slot < to; slot++) {
+            JSONArray items = itemsOf(SHELF_IDS[slot], shelves);
+            if (items != null) shelfRaw[slot] = items;
+            shelfDone[slot] = true;
+        }
+        layoutShelves();
+        if (!persistable) {
+            if (historyReady && historyPlaced) focusContinue();
+            else if (historyReady && list.findFocus() == null) focusFirstPlayable();
+        }
+        if (message.getText().toString().startsWith("正在准备") && rows.size() > 0) message.setText("");
+    }
+
+    /** One show occupies the earliest row only, same rule as the website shelves. */
+    private void layoutShelves() {
+        Set<String> seen = personalKeys();
+        for (int slot = 0; slot < SHELF_IDS.length; slot++) {
+            if (!shelfDone[slot]) continue;
+            putSlot(slot, rowFromRaw(slot, seen));
+        }
+    }
+
+    private Set<String> personalKeys() {
+        Set<String> seen = new HashSet<>();
+        for (Row row : rows) {
+            if (!"继续观看".equals(row.title) && !"我的片单".equals(row.title)) continue;
+            for (Card card : row.cards) {
+                String key = WorkKey.of(card.title);
+                if (!key.isEmpty()) seen.add(key);
+            }
+        }
+        return seen;
+    }
+
+    private static JSONArray itemsOf(String id, JSONArray shelves) {
+        for (int i = 0; i < shelves.length(); i++) {
+            JSONObject shelf = shelves.optJSONObject(i);
+            if (shelf != null && id.equals(shelf.optString("id"))) return shelf.optJSONArray("items");
+        }
+        return null;
+    }
+
+    private Row rowFromRaw(int slot, Set<String> seen) {
+        JSONArray items = shelfRaw[slot];
+        if (items == null) return null;
+        List<Card> cards = new ArrayList<>();
+        for (int n = 0; n < items.length(); n++) {
+            JSONObject item = items.optJSONObject(n);
+            if (item == null || item.optString("title").isEmpty()) continue;
+            String key = WorkKey.of(item.optString("title"));
+            if (!key.isEmpty() && seen.contains(key)) continue;
+            if (cards.size() >= SHELF_CARDS) break;
+            if (!key.isEmpty()) seen.add(key);
+            String subtitle = item.optString("remarks");
+            if (subtitle.isEmpty()) subtitle = item.optString("year");
+            String rating = item.optString("rating");
+            if (!rating.isEmpty()) subtitle = subtitle.isEmpty() ? "★ " + rating : "★ " + rating + " · " + subtitle;
+            cards.add(new Card(item.optString("title"), item.optString("cover"), subtitle, "", "", 0, 0));
+        }
+        return cards.isEmpty() ? null : new Row(titleOf(SHELF_IDS[slot]), cards);
+    }
+
+    private void putSlot(int slot, Row fresh) {
+        Row old = shelfSlots[slot];
+        if (fresh == null) {
+            shelfSlots[slot] = null;
+            if (old == null) return;
+            int index = rows.indexOf(old);
+            if (index >= 0 && list.getAdapter() != null) {
+                rows.remove(index);
+                list.getAdapter().notifyItemRemoved(index);
+            }
+            return;
+        }
+        if (old != null && sameCards(old, fresh)) return;
+        shelfSlots[slot] = fresh;
+        if (old != null) {
+            int index = rows.indexOf(old);
+            if (index >= 0) {
+                rows.set(index, fresh);
+                if (list.getAdapter() != null) list.getAdapter().notifyItemChanged(index);
+                return;
+            }
+        }
+        int at = shelfInsertAt(slot);
+        rows.add(at, fresh);
+        if (list.getAdapter() != null) list.getAdapter().notifyItemInserted(at);
+    }
+
+    private static boolean sameCards(Row old, Row fresh) {
+        if (old.cards.size() != fresh.cards.size()) return false;
+        for (int i = 0; i < old.cards.size(); i++) {
+            if (!old.cards.get(i).title.equals(fresh.cards.get(i).title)) return false;
+        }
+        return true;
+    }
+
+    private int shelfInsertAt(int slot) {
+        for (int i = slot - 1; i >= 0; i--) {
+            if (shelfSlots[i] == null) continue;
+            int index = rows.indexOf(shelfSlots[i]);
+            if (index >= 0) return index + 1;
+        }
+        int at = 0;
+        if (at < rows.size() && "继续观看".equals(rows.get(at).title)) at += 1;
+        if (at < rows.size() && "我的片单".equals(rows.get(at).title)) at += 1;
+        return at;
+    }
+
+    private static String titleOf(String id) {
+        switch (id) {
+            case "hot-movies": return "热门电影";
+            case "cn-tv": return "华语热剧";
+            case "anime-airing": return "日漫新番";
+            case "guoman": return "国漫热播";
+            case "kr-jp-tv": return "日韩剧集";
+            case "us-tv": return "欧美剧集";
+            case "variety": return "综艺热播";
+            case "acclaimed": return "口碑佳作";
+            case "g-crime": return "悬疑 · 犯罪";
+            case "g-scifi": return "科幻 · 奇幻";
+            case "g-romance": return "爱情 · 治愈";
+            case "g-comedy": return "轻松喜剧";
+            case "g-action": return "动作 · 冒险";
+            case "doc": return "纪录片精选";
+            default: return id;
+        }
+    }
+
+    private static String format(int seconds) {
+        return String.format("%d:%02d", seconds / 60, seconds % 60);
+    }
+
+    private static final class Row {
+        final String title;
+        final List<Card> cards;
+
+        Row(String title, List<Card> cards) {
+            this.title = title;
+            this.cards = cards;
+        }
+    }
+
+    private final class RowAdapter extends RecyclerView.Adapter<RowAdapter.Holder> {
+        @NonNull
+        @Override
+        public Holder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
+            return new Holder(getLayoutInflater().inflate(R.layout.row_shelf, parent, false));
+        }
+
+        @Override
+        public void onBindViewHolder(@NonNull Holder holder, int position) {
+            Row row = rows.get(position);
+            holder.title.setText(row.title);
+            if (holder.cards.getLayoutManager() == null) {
+                holder.cards.setLayoutManager(new LinearLayoutManager(HomeActivity.this, LinearLayoutManager.HORIZONTAL, false));
+                holder.cards.setItemAnimator(null);
+                holder.cards.setNestedScrollingEnabled(false);
+                holder.cards.setRecycledViewPool(cardPool);
+                holder.cards.setItemViewCacheSize(4);
+            }
+            if (holder.cards.getAdapter() instanceof CardAdapter) {
+                CardAdapter adapter = (CardAdapter) holder.cards.getAdapter();
+                if (adapter.cards != row.cards) {
+                    adapter.cards = row.cards;
+                    holder.cards.post(adapter::notifyDataSetChanged);
+                }
+            } else {
+                holder.cards.setAdapter(new CardAdapter(row.cards));
+            }
+        }
+
+        @Override
+        public int getItemCount() {
+            return rows.size();
+        }
+
+        final class Holder extends RecyclerView.ViewHolder {
+            final TextView title;
+            final RecyclerView cards;
+
+            Holder(View view) {
+                super(view);
+                title = view.findViewById(R.id.row_title);
+                cards = view.findViewById(R.id.row_cards);
+            }
+        }
+    }
+
+    private final class CardAdapter extends RecyclerView.Adapter<CardAdapter.Holder> {
+        List<Card> cards;
+
+        CardAdapter(List<Card> cards) {
+            this.cards = cards;
+        }
+
+        @NonNull
+        @Override
+        public Holder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
+            return new Holder(getLayoutInflater().inflate(R.layout.item_card, parent, false));
+        }
+
+        @Override
+        public void onBindViewHolder(@NonNull Holder holder, int position) {
+            Card card = cards.get(position);
+            holder.title.setText(card.title);
+            holder.subtitle.setText(card.subtitle);
+            if (card.progressPercent > 0) {
+                holder.progress.setVisibility(View.VISIBLE);
+                holder.progress.setProgress(card.progressPercent);
+            } else {
+                holder.progress.setVisibility(View.GONE);
+            }
+            Images.load(holder.image, card.image);
+            FocusMotion.bind(holder.itemView);
+            holder.itemView.setOnClickListener(v -> Open.card(HomeActivity.this, card));
+        }
+
+        @Override
+        public int getItemCount() {
+            return cards.size();
+        }
+
+        final class Holder extends RecyclerView.ViewHolder {
+            final ImageView image;
+            final TextView title;
+            final TextView subtitle;
+            final android.widget.ProgressBar progress;
+
+            Holder(View view) {
+                super(view);
+                image = view.findViewById(R.id.cover);
+                title = view.findViewById(R.id.title);
+                subtitle = view.findViewById(R.id.subtitle);
+                progress = view.findViewById(R.id.progress);
+            }
+        }
+    }
+}
