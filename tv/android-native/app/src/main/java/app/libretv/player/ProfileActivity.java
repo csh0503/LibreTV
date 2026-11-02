@@ -20,6 +20,7 @@ import org.json.JSONObject;
 public class ProfileActivity extends Activity {
     private static final String PROFILE_ID = "profile_id";
     private TextView message;
+    private TextView retry;
     private JSONArray profiles = new JSONArray();
 
     @Override
@@ -27,6 +28,8 @@ public class ProfileActivity extends Activity {
         super.onCreate(saved);
         setContentView(R.layout.activity_profiles);
         message = findViewById(R.id.message);
+        retry = findViewById(R.id.retry);
+        retry.setOnClickListener(v -> load());
         RecyclerView list = findViewById(R.id.list);
         list.setLayoutManager(new LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false));
         list.setAdapter(new Adapter());
@@ -38,9 +41,21 @@ public class ProfileActivity extends Activity {
             Intent login = new Intent(this, LoginActivity.class);
             login.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
             startActivity(login);
-        }, e -> message.setText(e.getMessage())));
+        }, e -> message.setText(HomeActivity.friendly(e))));
+        load();
+    }
+
+    /** 拉云端名单。失败时给一句人话 + 一个「重试」，否则用户只能强杀重开。 */
+    private void load() {
+        retry.setVisibility(View.GONE);
         message.setText("正在读取设定档…");
-        NativeApp.io(this, () -> NativeApp.api().profiles(), this::showProfiles, e -> message.setText(e.getMessage()));
+        NativeApp.io(this, () -> NativeApp.api().profiles(), this::showProfiles, e -> {
+            message.setText(HomeActivity.friendly(e));
+            retry.setVisibility(View.VISIBLE);
+            retry.post(() -> {
+                if (!retry.requestFocus()) retry.requestFocusFromTouch();
+            });
+        });
     }
 
     private void showProfiles(JSONArray incoming) {
@@ -67,11 +82,21 @@ public class ProfileActivity extends Activity {
         }
         int index = focusIndex;
         list.scrollToPosition(index);
-        list.post(() -> {
-            RecyclerView.ViewHolder holder = list.findViewHolderForAdapterPosition(index);
-            if (holder != null) holder.itemView.requestFocus();
-            else list.requestFocus();
-        });
+        list.post(() -> focusCard(list, index, 0));
+    }
+
+    /**
+     * 把焦点放到指定的设定档卡片上。
+     * 列表刚绑定时 findViewHolder 还是 null，直接 requestFocus 也会因为 touch mode 失败，
+     * 所以这里重试几次，并补 requestFocusFromTouch。
+     */
+    private void focusCard(RecyclerView list, int index, int attempt) {
+        if (attempt > 8) return;
+        RecyclerView.ViewHolder holder = list.findViewHolderForAdapterPosition(index);
+        if (holder != null) {
+            if (holder.itemView.requestFocus() || holder.itemView.requestFocusFromTouch()) return;
+        }
+        list.postDelayed(() -> focusCard(list, index, attempt + 1), 60);
     }
 
     private void choose(JSONObject profile) {

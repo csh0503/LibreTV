@@ -15,6 +15,24 @@
         android:textSize="34sp"
         android:textStyle="bold" />
 
+    <!-- 读取设定档失败时的出路：以前只显示一句英文异常，用户只能强杀重开 -->
+    <TextView
+        android:id="@+id/retry"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:background="@drawable/focus_bg"
+        android:clickable="true"
+        android:focusable="true"
+        android:paddingStart="26dp"
+        android:paddingTop="12dp"
+        android:paddingEnd="26dp"
+        android:paddingBottom="12dp"
+        android:text="重试"
+        android:textColor="#FFFFFFFF"
+        android:textSize="18sp"
+        android:visibility="gone" />
+
     <!-- 卡片组垂直居中：原来贴着标题、下面留一大片空 -->
     <Space
         android:layout_width="match_parent"

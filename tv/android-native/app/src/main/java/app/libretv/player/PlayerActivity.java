@@ -81,9 +81,12 @@ public class PlayerActivity extends AppCompatActivity {
                 .build();
         PlayerView view = findViewById(R.id.player);
         view.setPlayer(player);
-        // 默认静音：这台电视平时开着当背景/在工作，出声很打扰。按 ↑ 或音量键恢复。
-        player.setVolume(0f);
+        // 静音是持久设定：默认静音，只在用户主动按 ↑ 时才解除，并记住这个选择。
+        // 这台电视长期没人对着看，突然出声很打扰。
+        muted = getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(KEY_MUTED, true);
+        player.setVolume(muted ? 0f : 1f);
         mutedBadge = findViewById(R.id.muted_badge);
+        mutedBadge.setVisibility(muted ? View.VISIBLE : View.GONE);
         picker = findViewById(R.id.picker);
         pickerList = findViewById(R.id.picker_list);
         pickerList.setLayoutManager(new androidx.recyclerview.widget.GridLayoutManager(this, 6));
@@ -412,7 +415,9 @@ public class PlayerActivity extends AppCompatActivity {
     private long lastSeekAt;
     private int lastSeekDir;
     private int seekBurst = 1;
-    /** 每次进播放页都从静音开始 */
+    private static final String PREFS = "libretv_player";
+    private static final String KEY_MUTED = "muted";
+    /** 静音设定会持久化：默认静音，解除后也记住 */
     private boolean muted = true;
     private TextView mutedBadge;
     private View picker;
@@ -547,6 +552,7 @@ public class PlayerActivity extends AppCompatActivity {
     /** 播放器层面的静音：系统音量调多大都没用，这里才是真正的开关。 */
     private void setMuted(boolean value) {
         muted = value;
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(KEY_MUTED, value).apply();
         if (player != null) player.setVolume(value ? 0f : 1f);
         if (mutedBadge != null) mutedBadge.setVisibility(value ? View.VISIBLE : View.GONE);
         show(value ? "已静音 · 按 ↑ 恢复声音" : "已恢复声音");
