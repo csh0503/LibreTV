@@ -84,6 +84,11 @@ public class PlayerActivity extends AppCompatActivity {
         // 默认静音：这台电视平时开着当背景/在工作，出声很打扰。按 ↑ 或音量键恢复。
         player.setVolume(0f);
         mutedBadge = findViewById(R.id.muted_badge);
+        picker = findViewById(R.id.picker);
+        pickerList = findViewById(R.id.picker_list);
+        pickerList.setLayoutManager(new androidx.recyclerview.widget.GridLayoutManager(this, 6));
+        pickerList.setItemAnimator(null);
+        pickerList.setAdapter(new EpisodePickerAdapter());
         hud = findViewById(R.id.hud);
         hudPosition = findViewById(R.id.hud_position);
         hudDuration = findViewById(R.id.hud_duration);
@@ -195,26 +200,100 @@ public class PlayerActivity extends AppCompatActivity {
     }
 
     private void playNext() {
-        org.json.JSONArray episodes = watch.optJSONArray("episodes");
-        int next = watch.optInt("episodeIndex") + 1;
-        if (episodes == null || next >= episodes.length()) return;
-        String url = episodes.optString(next);
-        if (url.isEmpty()) return;
+        playEpisode(watch.optInt("episodeIndex") + 1);
+    }
+
+    /** 切到指定集（选集面板和「下一集」共用）。 */
+    private void playEpisode(int index) {
+        org.json.JSONArray episodes = watch == null ? null : watch.optJSONArray("episodes");
+        if (episodes == null || index < 0 || index >= episodes.length()) return;
+        String url = episodes.optString(index);
+        if (url.isEmpty()) {
+            show("这一集没有地址");
+            return;
+        }
         saveWatch();
         try {
-            watch.put("episodeIndex", next);
+            watch.put("episodeIndex", index);
             watch.put("playbackPosition", 0);
         } catch (org.json.JSONException ignored) {
             return;
         }
-        String label = episodeLabel(next);
+        String label = episodeLabel(index);
         String showTitle = watch.optString("title");
         heading.setText(showTitle.isEmpty() ? label : showTitle + " · " + label);
         directUrl = url;
         triedProxy = false;
         cancelNext = false;
         hideNext();
+        hidePicker();
         play(url, 0);
+    }
+
+    /** 长按确定打开选集面板：不用退出播放器就能换集。 */
+    private void showPicker() {
+        if (watch == null || picker == null) return;
+        org.json.JSONArray episodes = watch.optJSONArray("episodes");
+        if (episodes == null || episodes.length() == 0) {
+            show("这一路没有分集");
+            return;
+        }
+        pickerShowing = true;
+        if (heading != null) heading.setVisibility(View.GONE);
+        picker.setVisibility(View.VISIBLE);
+        pickerList.getAdapter().notifyDataSetChanged();
+        int current = watch.optInt("episodeIndex");
+        pickerList.post(() -> {
+            pickerList.scrollToPosition(current);
+            pickerList.postDelayed(() -> {
+                androidx.recyclerview.widget.RecyclerView.ViewHolder holder =
+                        pickerList.findViewHolderForAdapterPosition(current);
+                if (holder == null) return;
+                if (!holder.itemView.requestFocus()) holder.itemView.requestFocusFromTouch();
+            }, 80);
+        });
+    }
+
+    private void hidePicker() {
+        if (!pickerShowing || picker == null) return;
+        pickerShowing = false;
+        picker.setVisibility(View.GONE);
+        if (heading != null) heading.setVisibility(View.VISIBLE);
+        if (player != null) player.play();
+    }
+
+    private final class EpisodePickerAdapter extends androidx.recyclerview.widget.RecyclerView.Adapter<EpisodePickerAdapter.Holder> {
+        @NonNull
+        @Override
+        public Holder onCreateViewHolder(@NonNull android.view.ViewGroup parent, int viewType) {
+            return new Holder(getLayoutInflater().inflate(R.layout.item_episode, parent, false));
+        }
+
+        @Override
+        public void onBindViewHolder(@NonNull Holder holder, int position) {
+            holder.label.setText(String.valueOf(position + 1));
+            holder.itemView.setActivated(watch != null && position == watch.optInt("episodeIndex"));
+            FocusMotion.bind(holder.itemView);
+            int index = position;
+            holder.itemView.setOnClickListener(v -> playEpisode(index));
+        }
+
+        @Override
+        public int getItemCount() {
+            org.json.JSONArray episodes = watch == null ? null : watch.optJSONArray("episodes");
+            return episodes == null ? 0 : episodes.length();
+        }
+
+        final class Holder extends androidx.recyclerview.widget.RecyclerView.ViewHolder {
+            final TextView label;
+
+            Holder(View view) {
+                super(view);
+                label = view.findViewById(R.id.label);
+                View fill = view.findViewById(R.id.ep_fill);
+                if (fill != null) fill.setVisibility(View.GONE);
+            }
+        }
     }
 
     private String episodeLabel(int index) {
@@ -241,6 +320,14 @@ public class PlayerActivity extends AppCompatActivity {
 
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
+        // 选集面板开着的时候把按键交给列表自己处理，只留返回键用来关闭
+        if (pickerShowing) {
+            if (event.getAction() == KeyEvent.ACTION_DOWN && event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
+                hidePicker();
+                return true;
+            }
+            return false;
+        }
         if (player != null && event.getAction() == KeyEvent.ACTION_DOWN) {
             int repeat = event.getRepeatCount();
             showHud();
@@ -269,7 +356,8 @@ public class PlayerActivity extends AppCompatActivity {
                     return true;
                 case KeyEvent.KEYCODE_MENU:
                 case KeyEvent.KEYCODE_INFO:
-                    if (repeat == 0) chooseQuality();
+                    // 菜单键 = 选集（换集比挑清晰度常用得多）；清晰度挪到长按确定
+                    if (repeat == 0) showPicker();
                     return true;
                 case KeyEvent.KEYCODE_DPAD_CENTER:
                 case KeyEvent.KEYCODE_ENTER:
@@ -277,6 +365,11 @@ public class PlayerActivity extends AppCompatActivity {
                 case KeyEvent.KEYCODE_MEDIA_PLAY:
                 case KeyEvent.KEYCODE_MEDIA_PAUSE:
                 case KeyEvent.KEYCODE_HEADSETHOOK:
+                    if (repeat >= 2) {
+                        // 长按确定 = 选清晰度
+                        chooseQuality();
+                        return true;
+                    }
                     if (repeat == 0) {
                         // 片尾「即将播放下一集」的卡片正显示时，确定键应该是「马上播」，
                         // 而不是暂停一集马上就要结束的视频。
@@ -322,6 +415,9 @@ public class PlayerActivity extends AppCompatActivity {
     /** 每次进播放页都从静音开始 */
     private boolean muted = true;
     private TextView mutedBadge;
+    private View picker;
+    private androidx.recyclerview.widget.RecyclerView pickerList;
+    private boolean pickerShowing;
     /** 进页面时要续播的秒数，用来说明「从哪继续」 */
     private int resumeFrom;
     private View hud;
