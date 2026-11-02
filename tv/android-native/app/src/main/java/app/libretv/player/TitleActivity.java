@@ -242,6 +242,7 @@ public class TitleActivity extends Activity {
             if (episodes == null) episodes = new JSONArray();
             names = detail.optJSONArray("episodeNames");
             if (names == null) names = new JSONArray();
+            showSynopsis(detail);
             episodeList.getAdapter().notifyDataSetChanged();
             if (episodes.length() == 0) message.setText("这个源没有剧集，换一个片源");
             String listed = episodes.optString(0);
@@ -256,6 +257,24 @@ public class TitleActivity extends Activity {
         }, e -> {
             if (seq == detailSeq) message.setText(HomeActivity.friendly(e));
         });
+    }
+
+    /** 剧情简介：不同源给的字段名不一样，挨个试一遍；没有就不占地方。 */
+    private void showSynopsis(JSONObject detail) {
+        TextView view = findViewById(R.id.synopsis);
+        if (view == null) return;
+        String text = detail.optString("desc");
+        if (text.isEmpty()) text = detail.optString("intro");
+        if (text.isEmpty()) text = detail.optString("content");
+        text = text.replaceAll("<[^>]+>", "").replace("&nbsp;", " ").trim();
+        // 简介里常带一堆空白和换行，压成一行再交给 maxLines 截断
+        text = text.replaceAll("\\s+", " ");
+        if (text.isEmpty()) {
+            view.setVisibility(View.GONE);
+            return;
+        }
+        view.setText(text);
+        view.setVisibility(View.VISIBLE);
     }
 
     /**

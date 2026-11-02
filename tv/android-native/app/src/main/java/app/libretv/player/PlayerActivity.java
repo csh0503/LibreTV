@@ -94,7 +94,10 @@ public class PlayerActivity extends AppCompatActivity {
             public void onPlaybackStateChanged(int state) {
                 if (state == Player.STATE_READY && !hinted) {
                     hinted = true;
-                    show(muted ? "已静音 · 按 ↑ 恢复声音" : "菜单键选择清晰度 · 片尾自动下一集");
+                    String hint = muted ? "已静音 · 按 ↑ 恢复声音" : "菜单键选择清晰度 · 片尾自动下一集";
+                    // 从上次的位置接着播时说清楚，免得用户以为漏看了
+                    if (resumeFrom > 30) hint = hint + " · 从 " + clock(resumeFrom) + " 继续";
+                    show(hint);
                 }
                 if (state == Player.STATE_ENDED) {
                     hideNext();
@@ -118,6 +121,7 @@ public class PlayerActivity extends AppCompatActivity {
             }
         });
         int position = getIntent().getIntExtra(POSITION, 0);
+        resumeFrom = position;
         play(directUrl, position * 1000L);
         overlay.post(watchEnding);
     }
@@ -307,6 +311,8 @@ public class PlayerActivity extends AppCompatActivity {
     private int seekBurst = 1;
     /** 每次进播放页都从静音开始 */
     private boolean muted = true;
+    /** 进页面时要续播的秒数，用来说明「从哪继续」 */
+    private int resumeFrom;
     private View hud;
     private TextView hudPosition;
     private TextView hudDuration;
@@ -346,7 +352,9 @@ public class PlayerActivity extends AppCompatActivity {
         if (player == null || hudPosition == null) return;
         long duration = player.getDuration();
         long position = player.getCurrentPosition();
-        hudPosition.setText(clock(Math.max(0, position) / 1000));
+        // 暂停时在时间前面挂个 ❚❚：提示条 2.6 秒就淡掉了，之后靠这个看状态
+        boolean playing = player.isPlaying() || player.getPlaybackState() != Player.STATE_READY;
+        hudPosition.setText((playing ? "" : "❚❚ ") + clock(Math.max(0, position) / 1000));
         hudDuration.setText(duration > 0 ? clock(duration / 1000) : "--:--");
         hudBar.setProgress(duration > 0 ? (int) Math.min(1000, Math.max(0, position * 1000 / duration)) : 0);
     }

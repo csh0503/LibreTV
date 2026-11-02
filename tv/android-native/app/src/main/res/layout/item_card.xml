@@ -16,7 +16,8 @@
             android:id="@+id/cover"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:background="#FF1A1A1A"
+            android:background="@drawable/poster_round"
+                        android:clipToOutline="true"
             android:contentDescription=""
             android:scaleType="centerCrop" />
 

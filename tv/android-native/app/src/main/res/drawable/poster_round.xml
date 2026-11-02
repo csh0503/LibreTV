@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 海报底：圆角背景。ImageView 配 clipToOutline="true" 就能把图片裁成圆角。 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#FF1A1A1A" />
+    <corners android:radius="10dp" />
+</shape>
