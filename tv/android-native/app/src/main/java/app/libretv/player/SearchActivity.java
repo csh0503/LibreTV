@@ -145,8 +145,33 @@ public class SearchActivity extends Activity {
                 query.setSelection(text.length());
                 runSearch();
             });
+            // 长按删除这一条
+            chip.setOnLongClickListener(v -> {
+                removeRecent(text);
+                renderRecent();
+                message.setText("已删除「" + text + "」");
+                return true;
+            });
             recent.addView(chip);
         }
+        TextView clear = new TextView(this);
+        clear.setText("清除记录");
+        clear.setTextSize(15);
+        clear.setTextColor(0xFFAAAAAA);
+        clear.setPadding(dp(22), dp(12), dp(22), dp(12));
+        clear.setBackgroundResource(R.drawable.focus_bg);
+        clear.setFocusable(true);
+        clear.setClickable(true);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.setMarginEnd(dp(10));
+        clear.setLayoutParams(lp);
+        clear.setOnClickListener(v -> {
+            getSharedPreferences(PREFS, MODE_PRIVATE).edit().remove(RECENT_KEY).apply();
+            renderRecent();
+            message.setText("已清除搜索记录");
+        });
+        recent.addView(clear);
     }
 
     private List<String> recentQueries() {
@@ -160,6 +185,14 @@ public class SearchActivity extends Activity {
         } catch (Exception ignored) {
         }
         return out;
+    }
+
+    private void removeRecent(String text) {
+        List<String> items = recentQueries();
+        items.remove(text);
+        JSONArray array = new JSONArray();
+        for (String item : items) array.put(item);
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(RECENT_KEY, array.toString()).apply();
     }
 
     private void remember(String text) {
