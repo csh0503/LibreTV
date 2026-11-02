@@ -7,8 +7,10 @@ export default function manifest(): MetadataRoute.Manifest {
     description: '免费在线视频搜索与观看平台',
     start_url: '/',
     display: 'standalone',
-    background_color: '#111111',
-    theme_color: '#0b101a',
+    // 和 layout.tsx 的 viewport.themeColor / globals.css 的暗色 --c-page（#151413）保持一致：
+    // 以前是旧版赛博蓝 #0b101a，装到桌面后启动画面会闪一下蓝黑
+    background_color: '#151413',
+    theme_color: '#151413',
     icons: [
       {
         src: '/icons/icon-192.png',

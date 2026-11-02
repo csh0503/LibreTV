@@ -3,6 +3,16 @@ import { POST } from './route';
 import { SESSION_COOKIE, signSession } from '@/lib/auth';
 
 /**
+ * 单测不该依赖真实 DNS：本文件用的主机名都是假的（*.test），
+ * 没有 DNS 的机器上要 12 秒才回 ENOTFOUND，直接超过 5 秒的用例上限。
+ * 这里统一解析成一个公网 TEST-NET 地址，SSRF 判定走确定性分支。
+ */
+vi.mock('node:dns/promises', () => {
+  const lookup = vi.fn(async () => [{ address: '203.0.113.10', family: 4 }]);
+  return { default: { lookup }, lookup };
+});
+
+/**
  * 测活接口单测：流式 NDJSON、codec 解析、内容校验、结果缓存、内网放行。
  * 上游一律用 mock fetch，不产生真实网络请求。
  */

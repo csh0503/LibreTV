@@ -1,0 +1,43 @@
+name: CI
+
+# 质量闸门：类型 / 风格 / 单测 / 生产构建。
+# 之前只有 Docker 发布流水线，这些检查全靠手工跑；main 上测试长期有 10 个红点也无人发现。
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci --no-audit --no-fund
+
+      - name: 类型检查
+        run: npm run typecheck
+
+      - name: ESLint
+        run: npm run lint
+
+      - name: 单元测试
+        run: npm test
+
+      # 构建能抓到 tsc 看不到的问题（客户端 / 服务端边界、静态生成失败等）
+      - name: 生产构建
+        run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+          PASSWORD: ci-build-only

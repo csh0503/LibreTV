@@ -29,9 +29,9 @@
   --c-line: 220 214 205;           /* #dcd6cd */
   --c-content: 46 43 40;           /* #2e2b28 */
   --c-muted: 88 83 77;             /* #58534d */
-  --c-faint: 116 110 102;          /* #746e66（米灰底 4.6:1） */
-  --c-accent: 98 120 136;          /* #627888 雾霾蓝 */
-  --c-accent-hover: 84 105 120;
+  --c-faint: 103 97 90;            /* #67615a（米灰底 5.4:1，chip 上 4.7:1；旧的 #746e66 只有 4.4 / 3.9） */
+  --c-accent: 85 106 123;          /* #556a7b 雾霾蓝（米灰底 5.0:1，白字 5.6:1；旧的 #627888 只有 4.05） */
+  --c-accent-hover: 74 93 108;
   --c-on-accent: 255 255 255;
   --c-danger: 160 88 82;           /* #a05852 豆沙红 */
   --c-danger-hover: 138 72 67;
@@ -296,3 +296,19 @@ html.player-web-fullscreen body {
     padding-bottom: calc(52px + env(safe-area-inset-bottom));
   }
 }
+
+/*
+ * 系统开了「减少动态效果」就不要动：骨架 pulse、卡片上浮、抽屉 slide-up 全部停掉。
+ * 用超短时长而不是 animation: none —— 有些组件靠 animationend 回调收尾，直接掐掉会卡住状态。
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
