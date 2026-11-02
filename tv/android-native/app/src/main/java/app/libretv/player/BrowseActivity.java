@@ -40,6 +40,8 @@ public class BrowseActivity extends Activity {
     private LinearLayout filterRow;
     private int pageStart;
     private boolean loading;
+    /** 每次换频道/筛选都 +1，用来丢弃上一轮还在飞的响应 */
+    private int generation;
     private boolean end;
     /** 一次取回多少条（跟 Api.browse 里的 pageSize 一致） */
     private static final int PAGE_SIZE = 30;
@@ -124,12 +126,15 @@ public class BrowseActivity extends Activity {
                 if (id.equals(channel)) return;
                 channel = id;
                 rememberBrowse();
+                generation++;
+                loading = false;
                 pageStart = 0;
                 end = false;
                 items.clear();
                 grid.getAdapter().notifyDataSetChanged();
                 grid.scrollToPosition(0);
                 for (int n = 0; n < IDS.length; n++) tabs[n].setActivated(IDS[n].equals(channel));
+                buildFilters();
                 loadMore();
             });
             tabs[i] = chip;
@@ -148,10 +153,21 @@ public class BrowseActivity extends Activity {
         addChip("s:U", "热门", () -> { sort = "U"; reload(); });
         addChip("s:R", "高分", () -> { sort = "R"; reload(); });
         addChip("s:S", "最新", () -> { sort = "S"; reload(); });
-        addChip("t:", "全部", () -> { status = ""; reload(); });
-        addChip("t:airing", "连载中", () -> { status = "airing"; reload(); });
-        addChip("t:ended", "已完结", () -> { status = "ended"; reload(); });
+        if (hasEpisodes(channel)) {
+            addChip("t:", "全部", () -> { status = ""; reload(); });
+            addChip("t:airing", "连载中", () -> { status = "airing"; reload(); });
+            addChip("t:ended", "已完结", () -> { status = "ended"; reload(); });
+        } else if (!status.isEmpty()) {
+            // 切到电影/纪录片时把上次的「连载中」清掉，否则等于筛出一个空列表
+            status = "";
+            rememberBrowse();
+        }
         refreshFilters();
+    }
+
+    /** 这个频道的内容有没有「集」的概念：电影、纪录片、高分榜没有。 */
+    private static boolean hasEpisodes(String channel) {
+        return "tv".equals(channel) || "anime".equals(channel) || "show".equals(channel);
     }
 
     private void addChip(String tag, String label, Runnable onClick) {
@@ -189,6 +205,8 @@ public class BrowseActivity extends Activity {
 
     private void reload() {
         rememberBrowse();
+        generation++;
+        loading = false;
         pageStart = 0;
         end = false;
         items.clear();
@@ -202,12 +220,14 @@ public class BrowseActivity extends Activity {
     private void loadMore() {
         if (loading || end) return;
         loading = true;
+        final int gen = generation;
         if (items.isEmpty()) message.setText("正在加载…");
         else message.setText("正在载入更多…");
         final int start = pageStart;
         final String kind = kindOf(channel);
         final String tags = tagsOf(channel);
         NativeApp.io(this, () -> NativeApp.api().browse(kind, tags, start, sort, status), list -> {
+            if (gen != generation) return;
             loading = false;
             // 固定步进一页 30 条：用「返回条数」推进会因为过滤掉的条目而重叠，翻页翻出重复卡片
             pageStart = start + PAGE_SIZE;
@@ -247,6 +267,7 @@ public class BrowseActivity extends Activity {
                 });
             }
         }, e -> {
+            if (gen != generation) return;
             loading = false;
             message.setText(HomeActivity.friendly(e));
         });
