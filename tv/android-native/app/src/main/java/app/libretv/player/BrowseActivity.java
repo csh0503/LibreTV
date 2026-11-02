@@ -48,7 +48,7 @@ public class BrowseActivity extends Activity {
 
     public static void open(Activity from, String channel) {
         Intent intent = new Intent(from, BrowseActivity.class);
-        intent.putExtra(CHANNEL, channel == null || channel.isEmpty() ? "movie" : channel);
+        if (channel != null && !channel.isEmpty()) intent.putExtra(CHANNEL, channel);
         from.startActivity(intent);
     }
 
@@ -70,11 +70,26 @@ public class BrowseActivity extends Activity {
                 if (last >= items.size() - 6) loadMore();
             }
         });
+        // 恢复上次看的频道和筛选：每天都看剧集的人不该每次都从「电影 · 热门」开始
+        android.content.SharedPreferences prefs = getSharedPreferences("libretv_browse", MODE_PRIVATE);
+        channel = prefs.getString("channel", channel);
+        sort = prefs.getString("sort", sort);
+        status = prefs.getString("status", status);
+        if (indexOf(channel) < 0) channel = "movie";
         String preset = getIntent().getStringExtra(CHANNEL);
         if (preset != null && indexOf(preset) >= 0) channel = preset;
         buildTabs();
         buildFilters();
         loadMore();
+    }
+
+    /** 每次改频道 / 排序 / 状态都记下来，下次进片库直接接着看。 */
+    private void rememberBrowse() {
+        getSharedPreferences("libretv_browse", MODE_PRIVATE).edit()
+                .putString("channel", channel)
+                .putString("sort", sort)
+                .putString("status", status)
+                .apply();
     }
 
     private int indexOf(String id) {
@@ -108,6 +123,7 @@ public class BrowseActivity extends Activity {
             chip.setOnClickListener(v -> {
                 if (id.equals(channel)) return;
                 channel = id;
+                rememberBrowse();
                 pageStart = 0;
                 end = false;
                 items.clear();
@@ -172,6 +188,7 @@ public class BrowseActivity extends Activity {
     }
 
     private void reload() {
+        rememberBrowse();
         pageStart = 0;
         end = false;
         items.clear();

@@ -81,7 +81,7 @@ public class HomeActivity extends Activity {
         Button search = findViewById(R.id.search);
         search.setOnClickListener(v -> startActivity(new Intent(this, SearchActivity.class)));
         Button browse = findViewById(R.id.browse);
-        browse.setOnClickListener(v -> BrowseActivity.open(this, "movie"));
+        browse.setOnClickListener(v -> BrowseActivity.open(this, ""));
         Button profile = findViewById(R.id.profile);
         profile.setOnClickListener(v -> startActivity(new Intent(this, ProfileActivity.class)));
         hero = findViewById(R.id.hero);
