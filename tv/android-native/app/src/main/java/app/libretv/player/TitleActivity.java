@@ -77,7 +77,9 @@ public class TitleActivity extends Activity {
         favoriteView.setAlpha(0.6f);
         sourceList = findViewById(R.id.sources);
         // 两行网格：一屏看得到 10 个源，不用一路往右推
-        sourceList.setLayoutManager(new GridLayoutManager(this, 2, LinearLayoutManager.HORIZONTAL, false));
+        // 固定 5 列、纵向滚动：横向网格会尽量塞满可视宽度，右边永远露出半张下一栏的卡片，
+        // 聚焦到那半张时白框就贴出屏幕。纵向 5 列由 LayoutManager 均分，不会露边。
+        sourceList.setLayoutManager(new GridLayoutManager(this, 5));
         sourceList.setAdapter(new SourceAdapter());
         episodeList = findViewById(R.id.episodes);
         episodeList.setLayoutManager(new GridLayoutManager(this, 6));
@@ -220,6 +222,10 @@ public class TitleActivity extends Activity {
 
     private void setFavoriteLabel(boolean added) {
         favoriteView.setText(added ? "✓ 已在片单" : "＋ 加入片单");
+    }
+
+    private int dp(int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
     private void select(int index) {
@@ -520,6 +526,8 @@ public class TitleActivity extends Activity {
         @NonNull
         @Override
         public Holder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
+            // 宽度交给 GridLayoutManager 均分（固定 5 列，纵向滚动）：
+            // 横向网格会尽量塞满，右边永远会露出半张下一栏的卡片，聚焦过去就出界。
             return new Holder(getLayoutInflater().inflate(R.layout.item_source, parent, false));
         }
 
