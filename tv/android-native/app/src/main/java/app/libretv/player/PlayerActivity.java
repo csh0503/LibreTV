@@ -204,10 +204,10 @@ public class PlayerActivity extends AppCompatActivity {
             int repeat = event.getRepeatCount();
             switch (event.getKeyCode()) {
                 case KeyEvent.KEYCODE_DPAD_LEFT:
-                    seek(-seekStep(repeat));
+                    seekBy(-1, repeat);
                     return true;
                 case KeyEvent.KEYCODE_DPAD_RIGHT:
-                    seek(seekStep(repeat));
+                    seekBy(1, repeat);
                     return true;
                 case KeyEvent.KEYCODE_DPAD_UP:
                     volume(AudioManager.ADJUST_RAISE);
@@ -242,13 +242,27 @@ public class PlayerActivity extends AppCompatActivity {
         return super.dispatchKeyEvent(event);
     }
 
+    private long lastSeekAt;
+    private int lastSeekDir;
+    private int seekBurst = 1;
+
     /**
-     * 按住不放逐步加速：10 → 20 → 30 → 40 → 50 → 60 秒一跳。
-     * 以前只认第一次按（repeatCount == 0），想跳两分钟要按 12 下。
+     * 快退/快进：按住不放（硬體連發）或快速連按，兩種都逐級加速 10 → 60 秒。
+     * 很多電視遙控器只送單次按鍵、不送 repeat，所以不能只靠 repeatCount。
      */
-    private static long seekStep(int repeat) {
-        int level = 1 + Math.min(5, repeat / 3);
-        return 10_000L * level;
+    private void seekBy(int direction, int repeat) {
+        long now = System.currentTimeMillis();
+        if (repeat > 0) {
+            // 硬體連發：每 3 個 repeat 升一級
+            seekBurst = Math.min(6, 1 + repeat / 3);
+        } else if (direction == lastSeekDir && now - lastSeekAt < 550) {
+            seekBurst = Math.min(6, seekBurst + 1);
+        } else {
+            seekBurst = 1;
+        }
+        lastSeekAt = now;
+        lastSeekDir = direction;
+        seek(direction * 10_000L * seekBurst);
     }
 
     private void chooseQuality() {
