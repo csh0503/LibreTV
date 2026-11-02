@@ -439,6 +439,21 @@ public class HomeActivity extends Activity {
             else if (historyReady && list.findFocus() == null) focusFirstPlayable();
         }
         if (message.getText().toString().startsWith("正在准备") && rows.size() > 0) message.setText("");
+        focusHomeIfIdle();
+    }
+
+    /**
+     * 刚进首页时整个界面没有焦点（实测第一次按 DOWN 会落到顶栏的「搜索」），
+     * 这里把焦点放到引导图上：它是首屏最显眼的东西，按 DOWN 就直接进第一排。
+     * 只在「谁都没焦点」时动手，不抢用户已经移走的焦点。
+     */
+    private void focusHomeIfIdle() {
+        if (rows.isEmpty() || hero == null || hero.getVisibility() != View.VISIBLE) return;
+        if (hero.hasFocus() || list.findFocus() != null) return;
+        hero.post(() -> {
+            if (hero.hasFocus() || list.findFocus() != null) return;
+            if (!hero.requestFocus()) hero.requestFocusFromTouch();
+        });
     }
 
     /** One show occupies the earliest row only, same rule as the website shelves. */
