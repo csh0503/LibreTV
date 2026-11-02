@@ -1,23 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  三种状态视觉要能分开：
+  focused  = 白色粗框 + 放大（FocusMotion）——「光标在这」
+  activated = 蓝色细框 ——「当前正在用的源 / 当前频道」
+  默认     = 无框
+  focused 放前面，同时聚焦又选中的时候显示白框（焦点永远最显眼）。
+-->
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:state_activated="true">
-        <shape>
-            <solid android:color="#33FFFFFF" />
-            <stroke android:width="3dp" android:color="#FFFFFFFF" />
-            <corners android:radius="8dp" />
-        </shape>
-    </item>
     <item android:state_focused="true">
         <shape>
-            <solid android:color="#22FFFFFF" />
+            <solid android:color="#2EFFFFFF" />
             <stroke android:width="3dp" android:color="#FFFFFFFF" />
-            <corners android:radius="8dp" />
+            <corners android:radius="10dp" />
+        </shape>
+    </item>
+    <item android:state_activated="true">
+        <shape>
+            <solid android:color="#1F4FA3D1" />
+            <stroke android:width="2dp" android:color="#FF64B5F6" />
+            <corners android:radius="10dp" />
         </shape>
     </item>
     <item>
         <shape>
             <solid android:color="#14FFFFFF" />
-            <corners android:radius="8dp" />
+            <corners android:radius="10dp" />
         </shape>
     </item>
 </selector>

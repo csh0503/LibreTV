@@ -601,14 +601,19 @@ public class HomeActivity extends Activity {
             }
             FocusMotion.bind(holder.itemView);
             if (card.seeAll) {
-                // 结尾的「查看全部」：没有封面，把标题放大居中，一眼能认出来是入口。
-                holder.image.setImageDrawable(null);
+                // 结尾的「查看全部」：用箭头代替封面，跟旁边海报一眼能分开
+                holder.image.setImageResource(R.drawable.ic_chevron);
+                holder.image.setScaleType(ImageView.ScaleType.CENTER_INSIDE);
                 holder.image.setBackgroundColor(0xFF1C1C1C);
+                int pad = Math.round(40 * getResources().getDisplayMetrics().density);
+                holder.image.setPadding(pad, pad, pad, pad);
                 holder.title.setTextSize(18);
-                holder.subtitle.setVisibility(View.GONE);
+                holder.subtitle.setVisibility(View.VISIBLE);
                 holder.itemView.setOnClickListener(v -> BrowseActivity.open(HomeActivity.this, card.channel));
             } else {
                 holder.title.setTextSize(16);
+                holder.image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+                holder.image.setPadding(0, 0, 0, 0);
                 holder.subtitle.setVisibility(View.VISIBLE);
                 Images.load(holder.image, card.image);
                 holder.itemView.setOnClickListener(v -> Open.card(HomeActivity.this, card));

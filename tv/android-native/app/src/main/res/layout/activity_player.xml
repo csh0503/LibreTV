@@ -11,7 +11,63 @@
         android:layout_height="match_parent"
         app:show_buffering="when_playing"
         app:surface_type="texture_view"
-        app:use_controller="true" />
+        app:use_controller="false" />
+
+    <!-- 电视上没有鼠标：不用 Media3 那套播放控制栏，自己做一条细进度条 -->
+    <LinearLayout
+        android:id="@+id/hud"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:background="#B3000000"
+        android:orientation="vertical"
+        android:paddingStart="40dp"
+        android:paddingTop="14dp"
+        android:paddingEnd="40dp"
+        android:paddingBottom="22dp"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/hud_position"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#FFEEEEEE"
+                android:textSize="16sp" />
+
+            <ProgressBar
+                android:id="@+id/hud_bar"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="0dp"
+                android:layout_height="4dp"
+                android:layout_marginStart="16dp"
+                android:layout_marginEnd="16dp"
+                android:layout_weight="1"
+                android:max="1000"
+                android:progressBackgroundTint="#55FFFFFF"
+                android:progressTint="#FFFFFFFF" />
+
+            <TextView
+                android:id="@+id/hud_duration"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#FFAAAAAA"
+                android:textSize="16sp" />
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="◀ ▶ 快退快进（连按加速）   ↑ ↓ 音量   确定 暂停   返回 退出"
+            android:textColor="#FF999999"
+            android:textSize="13sp" />
+    </LinearLayout>
 
     <TextView
         android:id="@+id/title"

@@ -66,7 +66,8 @@ public class TitleActivity extends Activity {
         episodeLabel = findViewById(R.id.episode_label);
         Images.load(findViewById(R.id.poster), text(IMAGE));
         sourceList = findViewById(R.id.sources);
-        sourceList.setLayoutManager(new LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false));
+        // 两行网格：一屏看得到 10 个源，不用一路往右推
+        sourceList.setLayoutManager(new GridLayoutManager(this, 2, LinearLayoutManager.HORIZONTAL, false));
         sourceList.setAdapter(new SourceAdapter());
         episodeList = findViewById(R.id.episodes);
         episodeList.setLayoutManager(new GridLayoutManager(this, 6));

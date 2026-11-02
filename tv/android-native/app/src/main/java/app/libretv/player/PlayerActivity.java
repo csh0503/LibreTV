@@ -81,6 +81,10 @@ public class PlayerActivity extends AppCompatActivity {
                 .build();
         PlayerView view = findViewById(R.id.player);
         view.setPlayer(player);
+        hud = findViewById(R.id.hud);
+        hudPosition = findViewById(R.id.hud_position);
+        hudDuration = findViewById(R.id.hud_duration);
+        hudBar = findViewById(R.id.hud_bar);
         player.addListener(new Player.Listener() {
             private boolean hinted;
 
@@ -202,6 +206,7 @@ public class PlayerActivity extends AppCompatActivity {
     public boolean dispatchKeyEvent(KeyEvent event) {
         if (player != null && event.getAction() == KeyEvent.ACTION_DOWN) {
             int repeat = event.getRepeatCount();
+            showHud();
             switch (event.getKeyCode()) {
                 case KeyEvent.KEYCODE_DPAD_LEFT:
                     seekBy(-1, repeat);
@@ -245,11 +250,50 @@ public class PlayerActivity extends AppCompatActivity {
     private long lastSeekAt;
     private int lastSeekDir;
     private int seekBurst = 1;
+    private View hud;
+    private TextView hudPosition;
+    private TextView hudDuration;
+    private android.widget.ProgressBar hudBar;
+    private final android.os.Handler hudHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable hudTick = new Runnable() {
+        @Override
+        public void run() {
+            updateHud();
+            if (hud.getVisibility() == View.VISIBLE) hudHandler.postDelayed(this, 500);
+        }
+    };
+    private final Runnable hudHide = new Runnable() {
+        @Override
+        public void run() {
+            hud.setVisibility(View.GONE);
+            hudHandler.removeCallbacks(hudTick);
+        }
+    };
 
     /**
      * 快退/快进：按住不放（硬體連發）或快速連按，兩種都逐級加速 10 → 60 秒。
      * 很多電視遙控器只送單次按鍵、不送 repeat，所以不能只靠 repeatCount。
      */
+    /** 任何按键都先把进度条亮出来，2.6 秒后自动收。 */
+    private void showHud() {
+        if (hud == null) return;
+        hud.setVisibility(View.VISIBLE);
+        hudHandler.removeCallbacks(hudHide);
+        hudHandler.removeCallbacks(hudTick);
+        updateHud();
+        hudHandler.postDelayed(hudTick, 500);
+        hudHandler.postDelayed(hudHide, 2600);
+    }
+
+    private void updateHud() {
+        if (player == null || hudPosition == null) return;
+        long duration = player.getDuration();
+        long position = player.getCurrentPosition();
+        hudPosition.setText(clock(Math.max(0, position) / 1000));
+        hudDuration.setText(duration > 0 ? clock(duration / 1000) : "--:--");
+        hudBar.setProgress(duration > 0 ? (int) Math.min(1000, Math.max(0, position * 1000 / duration)) : 0);
+    }
+
     private void seekBy(int direction, int repeat) {
         long now = System.currentTimeMillis();
         if (repeat > 0) {
@@ -383,6 +427,7 @@ public class PlayerActivity extends AppCompatActivity {
     @Override
     protected void onDestroy() {
         overlay.removeCallbacks(watchEnding);
+        hudHandler.removeCallbacksAndMessages(null);
         if (player != null) {
             player.release();
             player = null;

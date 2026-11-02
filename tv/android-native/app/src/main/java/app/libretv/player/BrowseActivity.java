@@ -91,6 +91,8 @@ public class BrowseActivity extends Activity {
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             lp.setMarginEnd(dp(10));
             chip.setLayoutParams(lp);
+            // 明确把「下」指向网格：默认焦点搜索在网格还没布局好时会跑到隔壁频道
+            chip.setNextFocusDownId(R.id.grid);
             chip.setActivated(IDS[i].equals(channel));
             final String id = IDS[i];
             chip.setOnClickListener(v -> {
