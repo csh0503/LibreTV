@@ -14,6 +14,7 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
+import androidx.recyclerview.widget.GridLayoutManager;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
@@ -46,7 +47,8 @@ public class SearchActivity extends Activity {
         list = findViewById(R.id.results);
         recent = findViewById(R.id.recent);
         recentScroll = findViewById(R.id.recent_scroll);
-        list.setLayoutManager(new LinearLayoutManager(this));
+        // 电视上一屏能放 5 列海报，比单列横卡的信息密度高得多
+        list.setLayoutManager(new GridLayoutManager(this, 5));
         list.setAdapter(new ResultAdapter());
         query.setOnEditorActionListener((v, actionId, event) -> {
             if (actionId == EditorInfo.IME_ACTION_SEARCH || (event != null && event.getKeyCode() == KeyEvent.KEYCODE_ENTER && event.getAction() == KeyEvent.ACTION_DOWN)) {
@@ -179,7 +181,7 @@ public class SearchActivity extends Activity {
         @NonNull
         @Override
         public Holder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
-            return new Holder(getLayoutInflater().inflate(R.layout.item_result, parent, false));
+            return new Holder(getLayoutInflater().inflate(R.layout.item_poster, parent, false));
         }
 
         @Override
