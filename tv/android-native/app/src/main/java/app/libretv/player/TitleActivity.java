@@ -398,8 +398,27 @@ public class TitleActivity extends Activity {
                 }
             }
             if (episodeList.getAdapter() != null) episodeList.getAdapter().notifyDataSetChanged();
+            // 顺手把「是否已在片单」也读了：不然已收藏的片进来，按钮还写着「加入片单」
+            applyFavoriteState(bundle);
         }, e -> {
         });
+    }
+
+    /** 从 bundle 的 favorites 里看这部在不在片单，更新按钮文案。 */
+    private void applyFavoriteState(JSONObject bundle) {
+        if (bundle == null || favoriteView == null || showTitle.isEmpty()) return;
+        JSONArray favorites = bundle.optJSONArray("favorites");
+        boolean has = false;
+        if (favorites != null) {
+            for (int i = 0; i < favorites.length(); i++) {
+                JSONObject item = favorites.optJSONObject(i);
+                if (item != null && showTitle.equals(item.optString("title"))) {
+                    has = true;
+                    break;
+                }
+            }
+        }
+        setFavoriteLabel(has);
     }
 
     private void probe(Line line) {
