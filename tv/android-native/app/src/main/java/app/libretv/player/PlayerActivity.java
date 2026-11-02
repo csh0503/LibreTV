@@ -81,6 +81,8 @@ public class PlayerActivity extends AppCompatActivity {
                 .build();
         PlayerView view = findViewById(R.id.player);
         view.setPlayer(player);
+        // 默认静音：这台电视平时开着当背景/在工作，出声很打扰。按 ↑ 或音量键恢复。
+        player.setVolume(0f);
         hud = findViewById(R.id.hud);
         hudPosition = findViewById(R.id.hud_position);
         hudDuration = findViewById(R.id.hud_duration);
@@ -92,7 +94,7 @@ public class PlayerActivity extends AppCompatActivity {
             public void onPlaybackStateChanged(int state) {
                 if (state == Player.STATE_READY && !hinted) {
                     hinted = true;
-                    show("菜单键选择清晰度 · 片尾自动下一集");
+                    show(muted ? "已静音 · 按 ↑ 恢复声音" : "菜单键选择清晰度 · 片尾自动下一集");
                 }
                 if (state == Player.STATE_ENDED) {
                     hideNext();
@@ -157,6 +159,36 @@ public class PlayerActivity extends AppCompatActivity {
         }).start();
     }
 
+    /** 遥控器上的「上一首」/CH- 键：回到上一集，进度从 0 开始。 */
+    private void playPrev() {
+        org.json.JSONArray episodes = watch == null ? null : watch.optJSONArray("episodes");
+        int prev = watch == null ? -1 : watch.optInt("episodeIndex") - 1;
+        if (episodes == null || prev < 0) {
+            show("已经是第一集");
+            return;
+        }
+        String url = episodes.optString(prev);
+        if (url.isEmpty()) {
+            show("上一集没有地址");
+            return;
+        }
+        saveWatch();
+        try {
+            watch.put("episodeIndex", prev);
+            watch.put("playbackPosition", 0);
+        } catch (org.json.JSONException ignored) {
+            return;
+        }
+        String label = episodeLabel(prev);
+        String showTitle = watch.optString("title");
+        heading.setText(showTitle.isEmpty() ? label : showTitle + " · " + label);
+        directUrl = url;
+        triedProxy = false;
+        cancelNext = false;
+        hideNext();
+        play(url, 0);
+    }
+
     private void playNext() {
         org.json.JSONArray episodes = watch.optJSONArray("episodes");
         int next = watch.optInt("episodeIndex") + 1;
@@ -215,10 +247,20 @@ public class PlayerActivity extends AppCompatActivity {
                     seekBy(1, repeat);
                     return true;
                 case KeyEvent.KEYCODE_DPAD_UP:
-                    volume(AudioManager.ADJUST_RAISE);
+                case KeyEvent.KEYCODE_VOLUME_UP:
+                    // 静音状态下按上键＝先恢复声音，不静音时才是调大系统音量
+                    if (muted) {
+                        setMuted(false);
+                    } else {
+                        volume(AudioManager.ADJUST_RAISE);
+                    }
                     return true;
                 case KeyEvent.KEYCODE_DPAD_DOWN:
+                case KeyEvent.KEYCODE_VOLUME_DOWN:
                     volume(AudioManager.ADJUST_LOWER);
+                    return true;
+                case KeyEvent.KEYCODE_VOLUME_MUTE:
+                    setMuted(!muted);
                     return true;
                 case KeyEvent.KEYCODE_MENU:
                 case KeyEvent.KEYCODE_INFO:
@@ -231,6 +273,19 @@ public class PlayerActivity extends AppCompatActivity {
                 case KeyEvent.KEYCODE_MEDIA_PAUSE:
                 case KeyEvent.KEYCODE_HEADSETHOOK:
                     if (repeat == 0) toggle();
+                    return true;
+                case KeyEvent.KEYCODE_MEDIA_NEXT:
+                case KeyEvent.KEYCODE_MEDIA_SKIP_FORWARD:
+                case KeyEvent.KEYCODE_CHANNEL_UP:
+                    if (repeat == 0) {
+                        cancelNext = false;
+                        playNext();
+                    }
+                    return true;
+                case KeyEvent.KEYCODE_MEDIA_PREVIOUS:
+                case KeyEvent.KEYCODE_MEDIA_SKIP_BACKWARD:
+                case KeyEvent.KEYCODE_CHANNEL_DOWN:
+                    if (repeat == 0) playPrev();
                     return true;
                 case KeyEvent.KEYCODE_BACK:
                     if (repeat == 0 && nextVisible && player.getPlaybackState() != Player.STATE_ENDED) {
@@ -250,6 +305,8 @@ public class PlayerActivity extends AppCompatActivity {
     private long lastSeekAt;
     private int lastSeekDir;
     private int seekBurst = 1;
+    /** 每次进播放页都从静音开始 */
+    private boolean muted = true;
     private View hud;
     private TextView hudPosition;
     private TextView hudDuration;
@@ -360,6 +417,13 @@ public class PlayerActivity extends AppCompatActivity {
     private void volume(int direction) {
         AudioManager audio = (AudioManager) getSystemService(AUDIO_SERVICE);
         audio.adjustStreamVolume(AudioManager.STREAM_MUSIC, direction, AudioManager.FLAG_SHOW_UI);
+    }
+
+    /** 播放器层面的静音：系统音量调多大都没用，这里才是真正的开关。 */
+    private void setMuted(boolean value) {
+        muted = value;
+        if (player != null) player.setVolume(value ? 0f : 1f);
+        show(value ? "已静音 · 按 ↑ 恢复声音" : "已恢复声音");
     }
 
     private void toggle() {
