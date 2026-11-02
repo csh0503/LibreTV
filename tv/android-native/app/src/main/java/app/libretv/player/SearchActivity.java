@@ -36,6 +36,7 @@ public class SearchActivity extends Activity {
     private LinearLayout recent;
     private HorizontalScrollView recentScroll;
     private int searchGeneration;
+    private int focusAttempt;
 
     @Override
     protected void onCreate(Bundle saved) {
@@ -78,6 +79,7 @@ public class SearchActivity extends Activity {
         }
         message.setText("正在搜索…");
         results.clear();
+        focusAttempt = 0;
         list.getAdapter().notifyDataSetChanged();
         int generation = ++searchGeneration;
         NativeApp.streamSearch(this, text, item -> {
@@ -97,7 +99,7 @@ public class SearchActivity extends Activity {
             if (results.size() == 1) {
                 // 第一部回来就收键盘、把焦点交给结果，否则软键盘会一直挡着半屏
                 hideKeyboard();
-                list.requestFocus();
+                focusFirstResult();
             }
         }, failures -> {
             if (generation != searchGeneration) return;
@@ -105,8 +107,29 @@ public class SearchActivity extends Activity {
             renderRecent();
             if (results.isEmpty()) message.setText("没有找到「" + text + "」· 换个片名，或只打两个字试试");
             else if (failures > 0) message.setText(results.size() + " 部 · " + failures + " 个源没有回应");
+            // 结果是一路流进来的，第一部到达时可能还没布局好，这里再兜一次
+            if (!results.isEmpty() && list.findFocus() == null) {
+                focusAttempt = 0;
+                focusFirstResult();
+            }
         }, e -> {
             if (generation == searchGeneration) message.setText(HomeActivity.friendly(e));
+        });
+    }
+
+    /**
+     * 把焦点放到第一张结果卡上。
+     * 注意：点过屏幕以后窗口处于 touch mode，普通 requestFocus() 会静默失败，
+     * 必须用 requestFocusFromTouch() 才能把焦点拿过去。
+     */
+    private void focusFirstResult() {
+        if (results.isEmpty() || focusAttempt > 8) return;
+        focusAttempt++;
+        list.post(() -> {
+            if (list.findFocus() != null) return;
+            View child = list.getChildAt(0);
+            if (child != null && (child.requestFocus() || child.requestFocusFromTouch())) return;
+            list.postDelayed(this::focusFirstResult, 150);
         });
     }
 
