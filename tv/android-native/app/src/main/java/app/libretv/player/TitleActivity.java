@@ -40,6 +40,10 @@ public class TitleActivity extends Activity {
     private String showTitle = "";
     private TextView favoriteView;
     private boolean favoriteBusy;
+    /** 「看过这部的人也喜欢」：{title, cover, subtitle} */
+    private final java.util.List<Card> similarCards = new java.util.ArrayList<>();
+    private TextView similarLabel;
+    private RecyclerView similarList;
     /** 这一路片源每集看到百分之几（来自设定档 bundle 的 progress 表） */
     private final java.util.HashMap<Integer, Integer> episodeProgress = new java.util.HashMap<>();
     private String progressPrefix = "";
@@ -72,6 +76,7 @@ public class TitleActivity extends Activity {
         Images.load(findViewById(R.id.poster), text(IMAGE));
         favoriteView = findViewById(R.id.favorite);
         favoriteView.setOnClickListener(v -> toggleFavorite());
+        setupSimilar();
         // 片源还没回来之前先不让它吃焦点：以前一进详情页按 OK 会直接把片子加入/移出片单
         favoriteView.setFocusable(false);
         favoriteView.setAlpha(0.6f);
@@ -263,6 +268,78 @@ public class TitleActivity extends Activity {
         }, e -> {
             if (seq == detailSeq) message.setText(HomeActivity.friendly(e));
         });
+    }
+
+    /** 「看过这部的人也喜欢」——详情页底部的一排海报，选片时给个「接下来看什么」。 */
+    private void setupSimilar() {
+        similarLabel = findViewById(R.id.similar_label);
+        similarList = findViewById(R.id.similar);
+        if (similarList == null) return;
+        similarList.setLayoutManager(new androidx.recyclerview.widget.LinearLayoutManager(this, androidx.recyclerview.widget.LinearLayoutManager.HORIZONTAL, false));
+        similarList.setItemAnimator(null);
+        similarList.setAdapter(new RecyclerView.Adapter<SimilarHolder>() {
+            @NonNull
+            @Override
+            public SimilarHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
+                return new SimilarHolder(getLayoutInflater().inflate(R.layout.item_card, parent, false));
+            }
+
+            @Override
+            public void onBindViewHolder(@NonNull SimilarHolder holder, int position) {
+                Card card = similarCards.get(position);
+                holder.title.setText(card.title);
+                holder.subtitle.setText(card.subtitle);
+                Images.load(holder.cover, card.image);
+                FocusMotion.bind(holder.itemView);
+                int index = position;
+                holder.itemView.setOnClickListener(v -> {
+                    Card picked = similarCards.get(index);
+                    Open.detail(TitleActivity.this, picked.title, "", "", 0, 0, picked.image, picked.subtitle);
+                });
+            }
+
+            @Override
+            public int getItemCount() {
+                return similarCards.size();
+            }
+        });
+        if (!showTitle.isEmpty()) loadSimilar();
+    }
+
+    private void loadSimilar() {
+        String title = showTitle;
+        NativeApp.io(this, () -> NativeApp.api().similar(title, "", ""), items -> {
+            if (items == null || items.length() == 0) return;
+            similarCards.clear();
+            for (int i = 0; i < items.length() && similarCards.size() < 12; i++) {
+                JSONObject item = items.optJSONObject(i);
+                if (item == null) continue;
+                String name = item.optString("title");
+                if (name.isEmpty()) continue;
+                String subtitle = item.optString("year");
+                String rating = item.optString("rating");
+                if (!rating.isEmpty()) subtitle = "★ " + rating + (subtitle.isEmpty() ? "" : " · " + subtitle);
+                similarCards.add(new Card(name, item.optString("cover"), subtitle, "", "", 0, 0));
+            }
+            if (similarCards.isEmpty()) return;
+            similarList.getAdapter().notifyDataSetChanged();
+            similarLabel.setVisibility(View.VISIBLE);
+            similarList.setVisibility(View.VISIBLE);
+        }, e -> {
+        });
+    }
+
+    private static final class SimilarHolder extends RecyclerView.ViewHolder {
+        final android.widget.ImageView cover;
+        final TextView title;
+        final TextView subtitle;
+
+        SimilarHolder(View view) {
+            super(view);
+            cover = view.findViewById(R.id.cover);
+            title = view.findViewById(R.id.title);
+            subtitle = view.findViewById(R.id.subtitle);
+        }
     }
 
     /** 剧情简介：不同源给的字段名不一样，挨个试一遍；没有就不占地方。 */

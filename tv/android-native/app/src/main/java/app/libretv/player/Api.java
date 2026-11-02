@@ -181,6 +181,19 @@ public final class Api {
         return list == null ? new JSONArray() : list;
     }
 
+    /**
+     * 「看过这部的人也喜欢」。回传豆瓣条目（title / cover / year / rating），
+     * 同样没有可播地址，点开走按片名找源。
+     */
+    public JSONArray similar(String title, String year, String kind) throws IOException {
+        HttpUrl.Builder builder = HttpUrl.parse(BASE + "/api/similar").newBuilder()
+                .addQueryParameter("title", title == null ? "" : title);
+        if (year != null && year.matches("\\d{4}")) builder.addQueryParameter("year", year);
+        if ("tv".equals(kind) || "movie".equals(kind)) builder.addQueryParameter("kind", kind);
+        JSONArray items = execute(new Request.Builder().url(builder.build()).get().build(), true).optJSONArray("items");
+        return items == null ? new JSONArray() : items;
+    }
+
     public JSONObject detail(String vodId, JSONObject source) throws IOException {
         HttpUrl url = HttpUrl.parse(BASE + "/api/detail").newBuilder()
                 .addQueryParameter("id", vodId)

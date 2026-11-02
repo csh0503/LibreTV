@@ -1,130 +1,162 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<!-- 整页可滚动：片源多的时候（20+ 个源 = 5 排）加上「同类推荐」会超出 720dp -->
+<androidx.core.widget.NestedScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:clipChildren="false"
-    android:orientation="vertical"
-    android:paddingStart="28dp"
-    android:paddingTop="20dp"
-    android:paddingEnd="28dp"
-    android:paddingBottom="12dp">
+    android:fillViewport="true">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal">
-
-        <ImageView
-            android:id="@+id/poster"
-            android:layout_width="120dp"
-            android:layout_height="180dp"
-            android:background="@drawable/poster_round"
-                        android:clipToOutline="true"
-            android:contentDescription=""
-            android:scaleType="centerCrop" />
+        android:clipChildren="false"
+        android:orientation="vertical"
+        android:paddingStart="28dp"
+        android:paddingTop="20dp"
+        android:paddingEnd="28dp"
+        android:paddingBottom="20dp">
 
         <LinearLayout
-            android:layout_width="0dp"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginStart="18dp"
-            android:layout_weight="1"
-            android:orientation="vertical">
+            android:orientation="horizontal">
+
+            <ImageView
+                android:id="@+id/poster"
+                android:layout_width="120dp"
+                android:layout_height="180dp"
+                android:background="@drawable/poster_round"
+                android:clipToOutline="true"
+                android:contentDescription=""
+                android:scaleType="centerCrop" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="18dp"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/title"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:textSize="28sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/meta"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:textColor="#FFCCCCCC"
+                    android:textSize="16sp" />
+
+                <TextView
+                    android:id="@+id/message"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:textColor="#FFFFCC66"
+                    android:textSize="15sp" />
+
+                <!-- 简介：选片时最想知道「这部讲什么」，网页版有，电视版以前只有片源列表 -->
+                <TextView
+                    android:id="@+id/synopsis"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:ellipsize="end"
+                    android:maxLines="3"
+                    android:textColor="#FFAAAAAA"
+                    android:textSize="14sp"
+                    android:visibility="gone" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
 
             <TextView
-                android:id="@+id/title"
-                android:layout_width="match_parent"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:textSize="28sp"
+                android:text="片源"
+                android:textSize="18sp"
                 android:textStyle="bold" />
 
             <TextView
-                android:id="@+id/meta"
-                android:layout_width="match_parent"
+                android:id="@+id/favorite"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
-                android:textColor="#FFCCCCCC"
-                android:textSize="16sp" />
-
-            <TextView
-                android:id="@+id/message"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:textColor="#FFFFCC66"
+                android:layout_marginStart="20dp"
+                android:background="@drawable/focus_bg"
+                android:clickable="true"
+                android:focusable="true"
+                android:paddingStart="18dp"
+                android:paddingTop="8dp"
+                android:paddingEnd="18dp"
+                android:paddingBottom="8dp"
+                android:text="＋ 加入片单"
+                android:textColor="#FFFFFFFF"
                 android:textSize="15sp" />
-
-            <!-- 简介：选片时最想知道「这部讲什么」，网页版有，电视版以前只有片源列表 -->
-            <TextView
-                android:id="@+id/synopsis"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:ellipsize="end"
-                android:maxLines="3"
-                android:textColor="#FFAAAAAA"
-                android:textSize="14sp"
-                android:visibility="gone" />
         </LinearLayout>
-    </LinearLayout>
 
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
-        android:gravity="center_vertical"
-        android:orientation="horizontal">
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/sources"
+            android:layout_width="match_parent"
+            android:layout_height="224dp"
+            android:layout_marginTop="6dp"
+            android:clipChildren="false"
+            android:clipToPadding="false"
+            android:nestedScrollingEnabled="false"
+            android:paddingStart="14dp"
+            android:paddingTop="6dp"
+            android:paddingEnd="14dp"
+            android:paddingBottom="6dp" />
 
         <TextView
+            android:id="@+id/episode_label"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="片源"
+            android:layout_marginTop="8dp"
+            android:text="选集"
             android:textSize="18sp"
             android:textStyle="bold" />
 
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/episodes"
+            android:layout_width="match_parent"
+            android:layout_height="300dp"
+            android:layout_marginTop="6dp"
+            android:clipToPadding="false"
+            android:nestedScrollingEnabled="false"
+            android:paddingStart="6dp"
+            android:paddingEnd="6dp" />
+
         <TextView
-            android:id="@+id/favorite"
+            android:id="@+id/similar_label"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginStart="20dp"
-            android:background="@drawable/focus_bg"
-            android:clickable="true"
-            android:focusable="true"
-            android:paddingStart="18dp"
-            android:paddingTop="8dp"
-            android:paddingEnd="18dp"
-            android:paddingBottom="8dp"
-            android:text="＋ 加入片单"
-            android:textColor="#FFFFFFFF"
-            android:textSize="15sp" />
+            android:layout_marginTop="16dp"
+            android:text="看过这部的人也喜欢"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/similar"
+            android:layout_width="match_parent"
+            android:layout_height="320dp"
+            android:layout_marginTop="6dp"
+            android:clipChildren="false"
+            android:clipToPadding="false"
+            android:nestedScrollingEnabled="false"
+            android:paddingStart="4dp"
+            android:paddingEnd="4dp"
+            android:visibility="gone" />
     </LinearLayout>
-
-    <androidx.recyclerview.widget.RecyclerView
-        android:id="@+id/sources"
-        android:clipChildren="false"
-        android:clipToPadding="false"
-        android:layout_width="match_parent"
-        android:layout_height="224dp"
-        android:layout_marginTop="6dp"
-        android:paddingStart="14dp"
-        android:paddingTop="6dp"
-        android:paddingEnd="14dp"
-        android:paddingBottom="6dp" />
-
-    <TextView
-        android:id="@+id/episode_label"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:text="选集"
-        android:textSize="18sp"
-        android:textStyle="bold" />
-
-    <androidx.recyclerview.widget.RecyclerView
-        android:id="@+id/episodes"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_marginTop="6dp"
-        android:layout_weight="1"
-        android:paddingStart="6dp"
-        android:paddingEnd="6dp" />
-</LinearLayout>
+</androidx.core.widget.NestedScrollView>
