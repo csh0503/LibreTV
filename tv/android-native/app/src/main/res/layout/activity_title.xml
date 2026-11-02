@@ -71,6 +71,24 @@
                     android:textColor="#FFAAAAAA"
                     android:textSize="14sp"
                     android:visibility="gone" />
+
+                <!-- 一个片源都没找到时的出路：以前只能退出去再进来 -->
+                <TextView
+                    android:id="@+id/retry_sources"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:background="@drawable/focus_bg"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:paddingStart="22dp"
+                    android:paddingTop="10dp"
+                    android:paddingEnd="22dp"
+                    android:paddingBottom="10dp"
+                    android:text="重新查找片源"
+                    android:textColor="#FFFFFFFF"
+                    android:textSize="15sp"
+                    android:visibility="gone" />
             </LinearLayout>
         </LinearLayout>
 

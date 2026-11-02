@@ -39,6 +39,7 @@ public class TitleActivity extends Activity {
     private TextView episodeLabel;
     private String showTitle = "";
     private TextView favoriteView;
+    private TextView retrySources;
     private boolean favoriteBusy;
     /** 「看过这部的人也喜欢」：{title, cover, subtitle} */
     private final java.util.List<Card> similarCards = new java.util.ArrayList<>();
@@ -76,6 +77,15 @@ public class TitleActivity extends Activity {
         Images.load(findViewById(R.id.poster), text(IMAGE));
         favoriteView = findViewById(R.id.favorite);
         favoriteView.setOnClickListener(v -> toggleFavorite());
+        retrySources = findViewById(R.id.retry_sources);
+        retrySources.setOnClickListener(v -> {
+            retrySources.setVisibility(View.GONE);
+            sources.clear();
+            others.clear();
+            selected = -1;
+            sourceList.getAdapter().notifyDataSetChanged();
+            startSearch();
+        });
         setupSimilar();
         // 片源还没回来之前先不让它吃焦点：以前一进详情页按 OK 会直接把片子加入/移出片单
         favoriteView.setFocusable(false);
@@ -89,7 +99,6 @@ public class TitleActivity extends Activity {
         episodeList = findViewById(R.id.episodes);
         episodeList.setLayoutManager(new GridLayoutManager(this, 6));
         episodeList.setAdapter(new EpisodeAdapter());
-        message.setText("正在查找片源，清晰度和广告会逐个出来");
         if (!resumeVod.isEmpty() && !resumeSource.isEmpty()) {
             Line known = new Line(showTitle, "上次看到的源", text(SUB), resumeVod, resumeSource, "");
             known.label = "正在分析清晰度和广告…";
@@ -101,6 +110,12 @@ public class TitleActivity extends Activity {
             message.setText("没有片名");
             return;
         }
+        startSearch();
+    }
+
+    /** 按片名在所有源里找一遍。（「重新查找片源」按钮也走这里） */
+    private void startSearch() {
+        message.setText("正在查找片源，清晰度和广告会逐个出来");
         NativeApp.streamSearch(this, showTitle, this::consider, this::finishSearch, e -> message.setText(HomeActivity.friendly(e)));
     }
 
@@ -149,9 +164,18 @@ public class TitleActivity extends Activity {
             }
             if (selected < 0 && !sources.isEmpty()) select(0);
         }
-        if (sources.isEmpty()) message.setText("暂无片源");
-        else if (failures > 0) message.setText("片源 " + sources.size() + " 个 · " + failures + " 个源没有回应");
+        if (sources.isEmpty()) {
+            message.setText("这部片暂时没有找到片源 · " + failures + " 个源没有回应");
+            // 全都没找到时给一个「重新查找片源」，否则只能退出去再进来
+            if (retrySources != null) {
+                retrySources.setVisibility(View.VISIBLE);
+                retrySources.post(() -> {
+                    if (!retrySources.requestFocus()) retrySources.requestFocusFromTouch();
+                });
+            }
+        } else if (failures > 0) message.setText("片源 " + sources.size() + " 个 · " + failures + " 个源没有回应");
         else message.setText("片源 " + sources.size() + " 个");
+        if (!sources.isEmpty() && retrySources != null) retrySources.setVisibility(View.GONE);
         focusSourcesOnce();
         // 没片源也要能加片单
         enableFavorite();
