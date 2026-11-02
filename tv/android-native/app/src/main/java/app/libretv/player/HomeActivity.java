@@ -63,6 +63,12 @@ public class HomeActivity extends Activity {
         list.setItemAnimator(null);
         list.setHasFixedSize(true);
         list.setItemViewCacheSize(4);
+        // 引导图的 nextFocusDown 指向这个列表：列表拿到焦点后马上转交给第一排第一张卡，
+        // 否则焦点停在列表本身（没有可见的焦点框），还要再按一次方向键。
+        list.setDescendantFocusability(ViewGroup.FOCUS_AFTER_DESCENDANTS);
+        list.setOnFocusChangeListener((v, hasFocus) -> {
+            if (hasFocus) forwardFocusToFirstCard();
+        });
         cardPool.setMaxRecycledViews(0, 20);
         list.setAdapter(new RowAdapter());
         list.addOnScrollListener(new RecyclerView.OnScrollListener() {
@@ -231,6 +237,27 @@ public class HomeActivity extends Activity {
             RecyclerView.ViewHolder card = cards.findViewHolderForAdapterPosition(0);
             if (card != null) card.itemView.requestFocus();
             else if (attempt < 4) list.post(() -> focusCard(rowIndex, attempt + 1));
+        });
+    }
+
+    /** 列表拿到焦点时，把焦点交给当前第一排的第一张卡（引导图按 DOWN 走这里）。 */
+    private void forwardFocusToFirstCard() {
+        list.post(() -> {
+            int row = 0;
+            RecyclerView.LayoutManager manager = list.getLayoutManager();
+            if (manager instanceof LinearLayoutManager) {
+                int first = ((LinearLayoutManager) manager).findFirstVisibleItemPosition();
+                if (first != RecyclerView.NO_POSITION) row = first;
+            }
+            RecyclerView.ViewHolder holder = list.findViewHolderForAdapterPosition(row);
+            if (holder == null) return;
+            RecyclerView cards = holder.itemView.findViewById(R.id.row_cards);
+            if (cards == null) return;
+            cards.post(() -> {
+                View first = cards.getChildAt(0);
+                if (first == null) return;
+                if (!first.requestFocus()) first.requestFocusFromTouch();
+            });
         });
     }
 
