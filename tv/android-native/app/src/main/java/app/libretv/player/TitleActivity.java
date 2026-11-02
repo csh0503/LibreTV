@@ -40,6 +40,9 @@ public class TitleActivity extends Activity {
     private String showTitle = "";
     private TextView favoriteView;
     private boolean favoriteBusy;
+    /** 这一路片源每集看到百分之几（来自设定档 bundle 的 progress 表） */
+    private final java.util.HashMap<Integer, Integer> episodeProgress = new java.util.HashMap<>();
+    private String progressPrefix = "";
     private String resumeVod = "";
     private String resumeSource = "";
     private int resumeEpisode;
@@ -223,6 +226,7 @@ public class TitleActivity extends Activity {
         if (line.label.isEmpty()) line.label = "正在分析清晰度和广告…";
         probe(line);
         episodeLabel.setText("选集 · " + line.sourceName);
+        loadEpisodeProgress(line);
         int seq = ++detailSeq;
         episodes = new JSONArray();
         names = new JSONArray();
@@ -246,6 +250,52 @@ public class TitleActivity extends Activity {
             if (focus >= 0 && focus < episodes.length()) episodeList.scrollToPosition(focus);
         }, e -> {
             if (seq == detailSeq) message.setText(HomeActivity.friendly(e));
+        });
+    }
+
+    /**
+     * 读设定档里的 progress 表，算出这一路片源每集看到百分之几。
+     * localKey 形如 `sourceKey_vodId_集号`（云端包裹里已经去掉设定档前缀）。
+     */
+    private void loadEpisodeProgress(Line line) {
+        String profileId = ProfileActivity.rememberedId(this);
+        if (profileId.isEmpty() || line == null) {
+            episodeProgress.clear();
+            return;
+        }
+        String key;
+        try {
+            key = new JSONObject(line.sourceJson).optString("key");
+        } catch (org.json.JSONException e) {
+            key = "";
+        }
+        final String prefix = key + "_" + line.vodId + "_";
+        if (prefix.equals(progressPrefix)) return;
+        progressPrefix = prefix;
+        episodeProgress.clear();
+        NativeApp.io(this, () -> NativeApp.api().bundle(profileId), bundle -> {
+            if (!prefix.equals(progressPrefix)) return;
+            episodeProgress.clear();
+            JSONArray progress = bundle.optJSONArray("progress");
+            if (progress != null) {
+                for (int i = 0; i < progress.length(); i++) {
+                    JSONObject item = progress.optJSONObject(i);
+                    if (item == null) continue;
+                    String local = item.optString("localKey");
+                    if (!local.startsWith(prefix)) continue;
+                    int index;
+                    try {
+                        index = Integer.parseInt(local.substring(prefix.length()));
+                    } catch (NumberFormatException e) {
+                        continue;
+                    }
+                    int position = item.optInt("position");
+                    int duration = item.optInt("duration");
+                    if (duration > 30) episodeProgress.put(index, Math.min(100, position * 100 / duration));
+                }
+            }
+            if (episodeList.getAdapter() != null) episodeList.getAdapter().notifyDataSetChanged();
+        }, e -> {
         });
     }
 
@@ -488,8 +538,7 @@ public class TitleActivity extends Activity {
         @NonNull
         @Override
         public Holder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
-            TextView view = (TextView) getLayoutInflater().inflate(R.layout.item_episode, parent, false);
-            return new Holder(view);
+            return new Holder(getLayoutInflater().inflate(R.layout.item_episode, parent, false));
         }
 
         @Override
@@ -503,11 +552,18 @@ public class TitleActivity extends Activity {
             if (resume && resumePosition > 10) label = label + " · 续播";
             else if (watched) label = label + " ✓";
             holder.label.setText(label);
-            holder.label.setActivated(resume);
+            holder.itemView.setActivated(resume);
             holder.label.setAlpha(watched ? 0.55f : 1f);
-            FocusMotion.bind(holder.label);
+            Integer percent = episodeProgress.get(position);
+            if (percent != null && percent > 0 && percent < 100) {
+                holder.progress.setVisibility(View.VISIBLE);
+                holder.progress.setProgress(percent);
+            } else {
+                holder.progress.setVisibility(View.GONE);
+            }
+            FocusMotion.bind(holder.itemView);
             int index = position;
-            holder.label.setOnClickListener(v -> play(index));
+            holder.itemView.setOnClickListener(v -> play(index));
         }
 
         @Override
@@ -517,10 +573,12 @@ public class TitleActivity extends Activity {
 
         final class Holder extends RecyclerView.ViewHolder {
             final TextView label;
+            final android.widget.ProgressBar progress;
 
             Holder(View view) {
                 super(view);
-                label = (TextView) view;
+                label = view.findViewById(R.id.label);
+                progress = view.findViewById(R.id.ep_progress);
             }
         }
     }

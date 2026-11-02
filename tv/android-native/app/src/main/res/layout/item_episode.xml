@@ -1,11 +1,29 @@
 <?xml version="1.0" encoding="utf-8"?>
-<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="52dp"
     android:layout_margin="4dp"
     android:background="@drawable/focus_bg"
-    android:ellipsize="end"
-    android:focusable="true"
-    android:gravity="center"
-    android:maxLines="1"
-    android:textSize="16sp" />
+    android:focusable="true">
+
+    <TextView
+        android:id="@+id/label"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:ellipsize="end"
+        android:gravity="center"
+        android:maxLines="1"
+        android:textSize="16sp" />
+
+    <!-- 看到哪了：底部细进度条，跟网页版一致 -->
+    <ProgressBar
+        android:id="@+id/ep_progress"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="match_parent"
+        android:layout_height="3dp"
+        android:layout_gravity="bottom"
+        android:max="100"
+        android:progressBackgroundTint="#33FFFFFF"
+        android:progressTint="#FF64B5F6"
+        android:visibility="gone" />
+</FrameLayout>
