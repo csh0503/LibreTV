@@ -46,6 +46,7 @@ public class HomeActivity extends Activity {
     private boolean userMoved;
     private RecyclerView list;
     private TextView message;
+    private TextView retry;
     private android.view.View hero;
     private ImageView heroImage;
     private TextView heroTitle;
@@ -88,6 +89,8 @@ public class HomeActivity extends Activity {
         heroTitle = findViewById(R.id.hero_title);
         heroSub = findViewById(R.id.hero_sub);
         skeleton = findViewById(R.id.skeleton);
+        retry = findViewById(R.id.retry);
+        retry.setOnClickListener(v -> retryLoading());
         hero.setOnClickListener(v -> {
             if (heroCard != null) Open.card(this, heroCard);
         });
@@ -345,7 +348,26 @@ public class HomeActivity extends Activity {
             message.setText(friendly(e));
             acceptShelves(from, to, new JSONArray(), true);
             maybeLoadMore();
+            // 全部批次都失败了、首页还是空的：给一个可聚焦的「重试」，否则只能重启 App
+            if (loadedThrough >= SHELF_IDS.length && rows.isEmpty()) showRetry();
         });
+    }
+
+    private void showRetry() {
+        if (retry == null) return;
+        retry.setVisibility(View.VISIBLE);
+        retry.post(() -> {
+            if (!retry.requestFocus()) retry.requestFocusFromTouch();
+        });
+    }
+
+    private void retryLoading() {
+        if (retry != null) retry.setVisibility(View.GONE);
+        loadedThrough = 0;
+        batchBusy = false;
+        for (int i = 0; i < SHELF_IDS.length; i++) shelfDone[i] = false;
+        message.setText("正在准备首页…");
+        requestNextBatch();
     }
 
     private void maybeLoadMore() {

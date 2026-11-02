@@ -69,6 +69,24 @@
         android:textColor="#FFFFCC66"
         android:textSize="16sp" />
 
+    <!-- 首页加载失败时唯一的出路：以前只能重启 App -->
+    <TextView
+        android:id="@+id/retry"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:background="@drawable/focus_bg"
+        android:clickable="true"
+        android:focusable="true"
+        android:paddingStart="26dp"
+        android:paddingTop="12dp"
+        android:paddingEnd="26dp"
+        android:paddingBottom="12dp"
+        android:text="重试"
+        android:textColor="#FFFFFFFF"
+        android:textSize="17sp"
+        android:visibility="gone" />
+
     <!-- 引导图：模糊感的满版背景 + 左侧清晰小海报 + 标题（直式海报直接拉满会裁得很糊） -->
     <FrameLayout
         android:id="@+id/hero"
