@@ -83,6 +83,7 @@ public class PlayerActivity extends AppCompatActivity {
         view.setPlayer(player);
         // 默认静音：这台电视平时开着当背景/在工作，出声很打扰。按 ↑ 或音量键恢复。
         player.setVolume(0f);
+        mutedBadge = findViewById(R.id.muted_badge);
         hud = findViewById(R.id.hud);
         hudPosition = findViewById(R.id.hud_position);
         hudDuration = findViewById(R.id.hud_duration);
@@ -320,6 +321,7 @@ public class PlayerActivity extends AppCompatActivity {
     private int seekBurst = 1;
     /** 每次进播放页都从静音开始 */
     private boolean muted = true;
+    private TextView mutedBadge;
     /** 进页面时要续播的秒数，用来说明「从哪继续」 */
     private int resumeFrom;
     private View hud;
@@ -443,6 +445,7 @@ public class PlayerActivity extends AppCompatActivity {
     private void setMuted(boolean value) {
         muted = value;
         if (player != null) player.setVolume(value ? 0f : 1f);
+        if (mutedBadge != null) mutedBadge.setVisibility(value ? View.VISIBLE : View.GONE);
         show(value ? "已静音 · 按 ↑ 恢复声音" : "已恢复声音");
     }
 

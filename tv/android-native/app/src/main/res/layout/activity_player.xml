@@ -78,6 +78,25 @@
         android:shadowRadius="8"
         android:textSize="18sp" />
 
+    <!-- 静音是默认行为，提示条淡掉以后还得让用户知道「不是没声音，是被我静音了」 -->
+    <TextView
+        android:id="@+id/muted_badge"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|end"
+        android:layout_marginTop="20dp"
+        android:layout_marginEnd="24dp"
+        android:background="#99000000"
+        android:paddingStart="12dp"
+        android:paddingTop="6dp"
+        android:paddingEnd="12dp"
+        android:paddingBottom="6dp"
+        android:shadowColor="#FF000000"
+        android:shadowRadius="6"
+        android:text="🔇 已静音 · 按 ↑ 恢复声音"
+        android:textColor="#FFDDDDDD"
+        android:textSize="13sp" />
+
     <TextView
         android:id="@+id/next"
         android:layout_width="wrap_content"
