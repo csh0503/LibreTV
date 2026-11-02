@@ -49,8 +49,9 @@
                 android:layout_marginEnd="16dp"
                 android:layout_weight="1"
                 android:max="1000"
-                android:progressBackgroundTint="#55FFFFFF"
-                android:progressTint="#FFFFFFFF" />
+                android:progressBackgroundTint="#33FFFFFF"
+                android:progressTint="#FFFFFFFF"
+                android:secondaryProgressTint="#66FFFFFF" />
 
             <TextView
                 android:id="@+id/hud_duration"

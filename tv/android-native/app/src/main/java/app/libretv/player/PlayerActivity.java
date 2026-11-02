@@ -462,8 +462,15 @@ public class PlayerActivity extends AppCompatActivity {
         // 暂停时在时间前面挂个 ❚❚：提示条 2.6 秒就淡掉了，之后靠这个看状态
         boolean playing = player.isPlaying() || player.getPlaybackState() != Player.STATE_READY;
         hudPosition.setText((playing ? "" : "❚❚ ") + clock(Math.max(0, position) / 1000));
-        hudDuration.setText(duration > 0 ? clock(duration / 1000) : "--:--");
+        // 右边显示「还剩多久」比总时长有用；时长未知时退回总时长
+        if (duration > 0 && duration - position > 1000) {
+            hudDuration.setText("-" + clock((duration - position) / 1000));
+        } else {
+            hudDuration.setText(duration > 0 ? clock(duration / 1000) : "--:--");
+        }
         hudBar.setProgress(duration > 0 ? (int) Math.min(1000, Math.max(0, position * 1000 / duration)) : 0);
+        long buffered = player.getBufferedPosition();
+        hudBar.setSecondaryProgress(duration > 0 ? (int) Math.min(1000, Math.max(0, buffered * 1000 / duration)) : 0);
     }
 
     private void seekBy(int direction, int repeat) {
