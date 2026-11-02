@@ -38,6 +38,8 @@ public class TitleActivity extends Activity {
     private TextView message;
     private TextView episodeLabel;
     private String showTitle = "";
+    private TextView favoriteView;
+    private boolean favoriteBusy;
     private String resumeVod = "";
     private String resumeSource = "";
     private int resumeEpisode;
@@ -65,6 +67,8 @@ public class TitleActivity extends Activity {
         message = findViewById(R.id.message);
         episodeLabel = findViewById(R.id.episode_label);
         Images.load(findViewById(R.id.poster), text(IMAGE));
+        favoriteView = findViewById(R.id.favorite);
+        favoriteView.setOnClickListener(v -> toggleFavorite());
         sourceList = findViewById(R.id.sources);
         // 两行网格：一屏看得到 10 个源，不用一路往右推
         sourceList.setLayoutManager(new GridLayoutManager(this, 2, LinearLayoutManager.HORIZONTAL, false));
@@ -136,6 +140,78 @@ public class TitleActivity extends Activity {
         else if (failures > 0) message.setText("片源 " + sources.size() + " 个 · " + failures + " 个源没有回应");
         else message.setText("片源 " + sources.size() + " 个");
         focusSourcesOnce();
+    }
+
+    /**
+     * 加入 / 移出片单。片单跟着设定档 bundle 走（跟网页版同一份数据），
+     * 写回前要把 pinHash 一起带上 —— 少带就会被云端当成「这个档没密码」。
+     */
+    private void toggleFavorite() {
+        if (favoriteBusy || showTitle.isEmpty()) return;
+        String profileId = ProfileActivity.rememberedId(this);
+        if (profileId.isEmpty()) {
+            message.setText("先选一个设定档再加片单");
+            return;
+        }
+        favoriteBusy = true;
+        favoriteView.setText("处理中…");
+        NativeApp.io(this, () -> {
+            Api api = NativeApp.api();
+            String name = "未命名";
+            String pin = "";
+            JSONArray catalog = api.profiles();
+            for (int i = 0; i < catalog.length(); i++) {
+                JSONObject item = catalog.optJSONObject(i);
+                if (item != null && profileId.equals(item.optString("id"))) {
+                    name = item.optString("name", name);
+                    pin = item.optString("pinHash", "");
+                    break;
+                }
+            }
+            JSONObject bundle = api.bundle(profileId);
+            JSONArray favorites = bundle.optJSONArray("favorites");
+            if (favorites == null) favorites = new JSONArray();
+            JSONArray next = new JSONArray();
+            boolean found = false;
+            for (int i = 0; i < favorites.length(); i++) {
+                JSONObject item = favorites.optJSONObject(i);
+                if (item != null && showTitle.equals(item.optString("title"))) {
+                    found = true;
+                    continue;
+                }
+                if (item != null) next.put(item);
+            }
+            if (!found) {
+                JSONObject entry = new JSONObject();
+                entry.put("title", showTitle);
+                entry.put("pic", text(IMAGE));
+                entry.put("addedAt", System.currentTimeMillis());
+                Line line = selected >= 0 && selected < sources.size() ? sources.get(selected) : null;
+                if (line != null) {
+                    entry.put("vodId", line.vodId);
+                    JSONObject source = new JSONObject(line.sourceJson);
+                    entry.put("sourceKey", source.optString("key"));
+                    entry.put("sourceUrl", source.optString("url"));
+                }
+                next.put(entry);
+            }
+            bundle.put("favorites", next);
+            bundle.put("updatedAt", System.currentTimeMillis());
+            api.putProfile(profileId, name, pin, bundle);
+            return !found;
+        }, added -> {
+            favoriteBusy = false;
+            setFavoriteLabel(added);
+            message.setText(added ? "已加入片单" : "已从片单移除");
+        }, e -> {
+            favoriteBusy = false;
+            setFavoriteLabel(false);
+            message.setText(HomeActivity.friendly(e));
+        });
+    }
+
+    private void setFavoriteLabel(boolean added) {
+        favoriteView.setText(added ? "✓ 已在片单" : "＋ 加入片单");
     }
 
     private void select(int index) {

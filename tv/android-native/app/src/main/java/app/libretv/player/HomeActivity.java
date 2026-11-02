@@ -127,6 +127,7 @@ public class HomeActivity extends Activity {
         super.onResume();
         // 不要在这里重置 userMoved：从详情返回时它会放行 focusContinue()，
         // 把列表滚回顶部并抢走焦点（用户刚看完一集回来就找不到刚才那一排）。
+        if (list.findFocus() == null) list.post(this::restoreFocus);
         if (!allowHistoryRefresh) return;
         String profileId = ProfileActivity.rememberedId(this);
         if (profileId.isEmpty()) return;
@@ -227,6 +228,26 @@ public class HomeActivity extends Activity {
             RecyclerView.ViewHolder card = cards.findViewHolderForAdapterPosition(0);
             if (card != null) card.itemView.requestFocus();
             else if (attempt < 4) list.post(() -> focusCard(rowIndex, attempt + 1));
+        });
+    }
+
+    /** 从详情返回时焦点常常丢了（按 DOWN 会跳到顶栏），这里恢复到当前第一排的第一张。 */
+    private void restoreFocus() {
+        if (list.findFocus() != null || rows.isEmpty()) return;
+        int row = 0;
+        RecyclerView.LayoutManager manager = list.getLayoutManager();
+        if (manager instanceof LinearLayoutManager) {
+            int first = ((LinearLayoutManager) manager).findFirstVisibleItemPosition();
+            if (first != RecyclerView.NO_POSITION) row = first;
+        }
+        final int target = Math.min(row, rows.size() - 1);
+        RecyclerView.ViewHolder holder = list.findViewHolderForAdapterPosition(target);
+        if (holder == null) return;
+        RecyclerView cards = holder.itemView.findViewById(R.id.row_cards);
+        if (cards == null) return;
+        cards.post(() -> {
+            RecyclerView.ViewHolder card = cards.findViewHolderForAdapterPosition(0);
+            if (card != null && list.findFocus() == null) card.itemView.requestFocus();
         });
     }
 
