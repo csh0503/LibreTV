@@ -3,6 +3,7 @@ package app.libretv.player;
 import android.app.Activity;
 import android.content.Intent;
 import android.os.Bundle;
+import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
@@ -393,12 +394,17 @@ public class HomeActivity extends Activity {
 
     /** One show occupies the earliest row only, same rule as the website shelves. */
     private void layoutShelves() {
+        // 先定引导图：它上面那一部不该再出现在货架第一排（重复一次很啰嗦）
+        updateChrome();
         Set<String> seen = personalKeys();
+        if (heroCard != null) {
+            String hero = WorkKey.of(heroCard.title);
+            if (!hero.isEmpty()) seen.add(hero);
+        }
         for (int slot = 0; slot < SHELF_IDS.length; slot++) {
             if (!shelfDone[slot]) continue;
             putSlot(slot, rowFromRaw(slot, seen));
         }
-        updateChrome();
     }
 
     /** 首屏引导图 + 骨架屏的显隐。第一排货架里挑评分最高的一部（评分太低就退回第一部有封面的）。 */
