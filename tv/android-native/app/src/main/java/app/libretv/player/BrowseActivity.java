@@ -151,6 +151,8 @@ public class BrowseActivity extends Activity {
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         lp.setMarginEnd(dp(8));
         chip.setLayoutParams(lp);
+        // 跟频道按钮一样：下键直接进网格，别让焦点搜尋跑回上面那排
+        chip.setNextFocusDownId(R.id.grid);
         chip.setOnClickListener(v -> onClick.run());
         filterRow.addView(chip);
     }

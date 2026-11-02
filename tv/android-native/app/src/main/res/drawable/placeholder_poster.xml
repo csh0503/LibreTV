@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 没有封面时的占位：深灰底 + 居中胶片图标，比一块空白好认 -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape>
+            <solid android:color="#FF1A1A1A" />
+        </shape>
+    </item>
+    <item
+        android:width="56dp"
+        android:height="56dp"
+        android:drawable="@drawable/ic_film"
+        android:gravity="center" />
+</layer-list>

@@ -27,18 +27,26 @@ public final class Images {
     public static void load(ImageView view, String url) {
         List<String> chain = candidates(url);
         view.setTag(chain);
+        // 每次重新加载先把背景清回纯色，避免上一张的占位图残留
+        view.setBackgroundColor(0xFF1A1A1A);
         if (chain.isEmpty()) {
             Glide.with(view).clear(view);
-            view.setImageDrawable(null);
+            placeholder(view);
             return;
         }
         into(view, chain, 0);
     }
 
+    /** 所有候选地址都失败：给一张带胶片图标的占位，不要留一块空白。 */
+    private static void placeholder(ImageView view) {
+        view.setImageDrawable(null);
+        view.setBackgroundResource(R.drawable.placeholder_poster);
+    }
+
     private static void into(ImageView view, List<String> chain, int index) {
         if (view.getTag() != chain) return;
         if (index >= chain.size()) {
-            view.setImageDrawable(null);
+            placeholder(view);
             return;
         }
         Glide.with(view)
