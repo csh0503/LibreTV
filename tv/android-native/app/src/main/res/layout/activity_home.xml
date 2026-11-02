@@ -69,7 +69,7 @@
         android:textColor="#FFFFCC66"
         android:textSize="16sp" />
 
-    <!-- 首屏引导图：满版海报 + 底部压黑遮罩，标题叠在左下角 -->
+    <!-- 引导图：模糊感的满版背景 + 左侧清晰小海报 + 标题（直式海报直接拉满会裁得很糊） -->
     <FrameLayout
         android:id="@+id/hero"
         android:layout_width="match_parent"
@@ -83,6 +83,7 @@
             android:id="@+id/hero_image"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
+            android:alpha="0.55"
             android:background="#FF1A1A1A"
             android:contentDescription=""
             android:scaleType="centerCrop" />
@@ -94,46 +95,61 @@
 
         <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_gravity="bottom"
-            android:orientation="vertical"
+            android:layout_height="match_parent"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
             android:paddingStart="28dp"
-            android:paddingEnd="28dp"
-            android:paddingBottom="20dp">
+            android:paddingEnd="28dp">
 
-            <TextView
-                android:id="@+id/hero_title"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:ellipsize="end"
-                android:maxLines="1"
-                android:shadowColor="#CC000000"
-                android:shadowRadius="10"
-                android:textColor="#FFFFFFFF"
-                android:textSize="30sp"
-                android:textStyle="bold" />
+            <ImageView
+                android:id="@+id/hero_poster"
+                android:layout_width="112dp"
+                android:layout_height="168dp"
+                android:background="#FF1A1A1A"
+                android:contentDescription=""
+                android:scaleType="centerCrop" />
 
-            <TextView
-                android:id="@+id/hero_sub"
-                android:layout_width="match_parent"
+            <LinearLayout
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
-                android:ellipsize="end"
-                android:maxLines="1"
-                android:shadowColor="#CC000000"
-                android:shadowRadius="8"
-                android:textColor="#FFDDDDDD"
-                android:textSize="17sp" />
+                android:layout_marginStart="24dp"
+                android:layout_weight="1"
+                android:orientation="vertical">
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="10dp"
-                android:shadowColor="#CC000000"
-                android:shadowRadius="8"
-                android:text="按确定查看片源"
-                android:textColor="#FFFFCC66"
-                android:textSize="15sp" />
+                <TextView
+                    android:id="@+id/hero_title"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:shadowColor="#CC000000"
+                    android:shadowRadius="10"
+                    android:textColor="#FFFFFFFF"
+                    android:textSize="30sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/hero_sub"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:ellipsize="end"
+                    android:maxLines="2"
+                    android:shadowColor="#CC000000"
+                    android:shadowRadius="8"
+                    android:textColor="#FFDDDDDD"
+                    android:textSize="17sp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:shadowColor="#CC000000"
+                    android:shadowRadius="8"
+                    android:text="按确定查看片源"
+                    android:textColor="#FFFFCC66"
+                    android:textSize="15sp" />
+            </LinearLayout>
         </LinearLayout>
     </FrameLayout>
 

@@ -396,28 +396,48 @@ public class HomeActivity extends Activity {
         updateChrome();
     }
 
-    /** 首屏引导图 + 骨架屏的显隐。第一排货架（热门电影）里挑一部有封面的。 */
+    /** 首屏引导图 + 骨架屏的显隐。第一排货架里挑评分最高的一部（评分太低就退回第一部有封面的）。 */
     private void updateChrome() {
         if (skeleton != null && !rows.isEmpty()) skeleton.setVisibility(View.GONE);
         if (heroCard != null || hero == null) return;
         JSONArray items = shelfRaw[0];
         if (items == null) return;
+        JSONObject best = null;
+        JSONObject firstWithCover = null;
+        double bestRating = -1;
         for (int i = 0; i < items.length(); i++) {
             JSONObject item = items.optJSONObject(i);
             if (item == null) continue;
-            String title = item.optString("title");
-            String cover = item.optString("cover");
-            if (title.isEmpty() || cover.isEmpty()) continue;
-            String sub = item.optString("remarks");
-            String rating = item.optString("rating");
-            if (!rating.isEmpty()) sub = "★ " + rating + (sub.isEmpty() ? "" : " · " + sub);
-            heroCard = new Card(title, cover, sub, "", "", 0, 0);
-            heroTitle.setText(title);
-            heroSub.setText(sub);
-            heroSub.setVisibility(sub.isEmpty() ? View.GONE : View.VISIBLE);
-            Images.loadLarge(heroImage, cover);
-            hero.setVisibility(View.VISIBLE);
-            return;
+            if (item.optString("title").isEmpty() || item.optString("cover").isEmpty()) continue;
+            if (firstWithCover == null) firstWithCover = item;
+            double rating = parseRating(item.optString("rating"));
+            if (rating > bestRating) {
+                bestRating = rating;
+                best = item;
+            }
+        }
+        JSONObject pick = bestRating >= 7.0 ? best : firstWithCover;
+        if (pick == null) return;
+        String title = pick.optString("title");
+        String cover = pick.optString("cover");
+        String sub = pick.optString("remarks");
+        String rating = pick.optString("rating");
+        if (!rating.isEmpty()) sub = "★ " + rating + (sub.isEmpty() ? "" : " · " + sub);
+        heroCard = new Card(title, cover, sub, "", "", 0, 0);
+        heroTitle.setText(title);
+        heroSub.setText(sub);
+        heroSub.setVisibility(sub.isEmpty() ? View.GONE : View.VISIBLE);
+        Images.loadLarge(heroImage, cover);
+        Images.load(findViewById(R.id.hero_poster), cover);
+        hero.setVisibility(View.VISIBLE);
+    }
+
+    private static double parseRating(String value) {
+        if (value == null || value.isEmpty()) return -1;
+        try {
+            return Double.parseDouble(value.trim());
+        } catch (NumberFormatException e) {
+            return -1;
         }
     }
 

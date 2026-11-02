@@ -104,7 +104,7 @@ public class SearchActivity extends Activity {
             if (generation != searchGeneration) return;
             remember(text);
             renderRecent();
-            if (results.isEmpty()) message.setText("没有找到");
+            if (results.isEmpty()) message.setText("没有找到「" + text + "」· 换个片名，或只打两个字试试");
             else if (failures > 0) message.setText(results.size() + " 部 · " + failures + " 个源没有回应");
         }, e -> {
             if (generation == searchGeneration) message.setText(HomeActivity.friendly(e));

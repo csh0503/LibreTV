@@ -64,7 +64,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
-            android:text="◀ ▶ 快退快进（连按加速）   ↑ ↓ 音量   确定 暂停   返回 退出"
+            android:text="◀▶ 快退快进（连按加速）   ↑↓ 音量   确定 暂停   返回 退出"
             android:textColor="#FF999999"
             android:textSize="13sp" />
     </LinearLayout>

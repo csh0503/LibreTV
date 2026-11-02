@@ -181,6 +181,7 @@ public class BrowseActivity extends Activity {
         if (loading || end) return;
         loading = true;
         if (items.isEmpty()) message.setText("正在加载…");
+        else message.setText("正在载入更多…");
         final int start = pageStart;
         final String kind = kindOf(channel);
         final String tags = tagsOf(channel);
@@ -200,7 +201,9 @@ public class BrowseActivity extends Activity {
                 items.add(new Card(title, item.optString("cover"), subtitle, "", "", 0, 0));
             }
             grid.getAdapter().notifyDataSetChanged();
-            message.setText(items.isEmpty() ? "这里暂时没有内容" : items.size() + " 部");
+            if (items.isEmpty()) message.setText("这里暂时没有内容");
+            else if (end) message.setText(items.size() + " 部 · 已经到底了");
+            else message.setText(items.size() + " 部");
             if (!items.isEmpty() && grid.findFocus() == null) {
                 grid.post(() -> {
                     RecyclerView.ViewHolder holder = grid.findViewHolderForAdapterPosition(0);
