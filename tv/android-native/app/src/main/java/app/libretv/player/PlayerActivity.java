@@ -200,13 +200,14 @@ public class PlayerActivity extends AppCompatActivity {
 
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
-        if (player != null && event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
+        if (player != null && event.getAction() == KeyEvent.ACTION_DOWN) {
+            int repeat = event.getRepeatCount();
             switch (event.getKeyCode()) {
                 case KeyEvent.KEYCODE_DPAD_LEFT:
-                    seek(-10_000);
+                    seek(-seekStep(repeat));
                     return true;
                 case KeyEvent.KEYCODE_DPAD_RIGHT:
-                    seek(10_000);
+                    seek(seekStep(repeat));
                     return true;
                 case KeyEvent.KEYCODE_DPAD_UP:
                     volume(AudioManager.ADJUST_RAISE);
@@ -216,7 +217,7 @@ public class PlayerActivity extends AppCompatActivity {
                     return true;
                 case KeyEvent.KEYCODE_MENU:
                 case KeyEvent.KEYCODE_INFO:
-                    chooseQuality();
+                    if (repeat == 0) chooseQuality();
                     return true;
                 case KeyEvent.KEYCODE_DPAD_CENTER:
                 case KeyEvent.KEYCODE_ENTER:
@@ -224,10 +225,10 @@ public class PlayerActivity extends AppCompatActivity {
                 case KeyEvent.KEYCODE_MEDIA_PLAY:
                 case KeyEvent.KEYCODE_MEDIA_PAUSE:
                 case KeyEvent.KEYCODE_HEADSETHOOK:
-                    toggle();
+                    if (repeat == 0) toggle();
                     return true;
                 case KeyEvent.KEYCODE_BACK:
-                    if (nextVisible && player.getPlaybackState() != Player.STATE_ENDED) {
+                    if (repeat == 0 && nextVisible && player.getPlaybackState() != Player.STATE_ENDED) {
                         cancelNext = true;
                         hideNext();
                         show("停在这一集");
@@ -239,6 +240,15 @@ public class PlayerActivity extends AppCompatActivity {
             }
         }
         return super.dispatchKeyEvent(event);
+    }
+
+    /**
+     * 按住不放逐步加速：10 → 20 → 30 → 40 → 50 → 60 秒一跳。
+     * 以前只认第一次按（repeatCount == 0），想跳两分钟要按 12 下。
+     */
+    private static long seekStep(int repeat) {
+        int level = 1 + Math.min(5, repeat / 3);
+        return 10_000L * level;
     }
 
     private void chooseQuality() {

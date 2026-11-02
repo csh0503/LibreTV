@@ -45,6 +45,12 @@ public class HomeActivity extends Activity {
     private boolean userMoved;
     private RecyclerView list;
     private TextView message;
+    private android.widget.LinearLayout hero;
+    private ImageView heroImage;
+    private TextView heroTitle;
+    private TextView heroSub;
+    private View skeleton;
+    private Card heroCard;
 
     @Override
     protected void onCreate(Bundle saved) {
@@ -68,6 +74,14 @@ public class HomeActivity extends Activity {
         search.setOnClickListener(v -> startActivity(new Intent(this, SearchActivity.class)));
         Button profile = findViewById(R.id.profile);
         profile.setOnClickListener(v -> startActivity(new Intent(this, ProfileActivity.class)));
+        hero = findViewById(R.id.hero);
+        heroImage = findViewById(R.id.hero_image);
+        heroTitle = findViewById(R.id.hero_title);
+        heroSub = findViewById(R.id.hero_sub);
+        skeleton = findViewById(R.id.skeleton);
+        hero.setOnClickListener(v -> {
+            if (heroCard != null) Open.card(this, heroCard);
+        });
         message.setText("正在准备首页…");
         JSONArray cached = ShelfCache.read(this);
         if (cached != null) acceptShelves(0, SHELF_IDS.length, cached, false);
@@ -76,13 +90,13 @@ public class HomeActivity extends Activity {
         NativeApp.io(this, () -> {
             if (NativeApp.api().sources().length() == 0) NativeApp.api().status();
             return profileId.isEmpty() ? new JSONObject() : NativeApp.api().bundle(profileId);
-        }, this::showBundle, e -> message.setText(e.getMessage()));
+        }, this::showBundle, e -> message.setText(friendly(e)));
     }
 
     private void showBundle(JSONObject bundle) {
         String name = bundle.optString("name", "LibreTV");
         ((Button) findViewById(R.id.profile)).setText(name);
-        addHistory(bundle.optJSONArray("history"));
+        addHistory(historyCards(bundle.optJSONArray("history")));
         addFavorites(bundle.optJSONArray("favorites"));
         historyReady = true;
         allowHistoryRefresh = true;
@@ -93,7 +107,8 @@ public class HomeActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
-        userMoved = false;
+        // 不要在这里重置 userMoved：从详情返回时它会放行 focusContinue()，
+        // 把列表滚回顶部并抢走焦点（用户刚看完一集回来就找不到刚才那一排）。
         if (!allowHistoryRefresh) return;
         String profileId = ProfileActivity.rememberedId(this);
         if (profileId.isEmpty()) return;
@@ -114,19 +129,32 @@ public class HomeActivity extends Activity {
         return super.dispatchKeyEvent(event);
     }
 
+    /**
+     * 刷新「继续观看」时只更新第一行的内容，不再 remove + insert。
+     * 移除再插入会让 RecyclerView 重新定位，滚动位置和焦点都会跳掉。
+     */
     private void replaceHistory(JSONArray history) {
-        if (historyPlaced && !rows.isEmpty()) {
+        List<Card> cards = historyCards(history);
+        if (!historyPlaced || rows.isEmpty() || !"继续观看".equals(rows.get(0).title)) {
+            if (!cards.isEmpty()) addHistory(cards);
+            return;
+        }
+        Row first = rows.get(0);
+        if (cards.isEmpty()) {
             rows.remove(0);
             historyPlaced = false;
             if (list.getAdapter() != null) list.getAdapter().notifyItemRemoved(0);
+            return;
         }
-        addHistory(history);
+        first.cards.clear();
+        first.cards.addAll(cards);
+        if (list.getAdapter() != null) list.getAdapter().notifyItemChanged(0);
     }
 
-    private void addHistory(JSONArray history) {
-        List<JSONObject> items = WorkKey.collapse(HistorySync.merge(history));
-        if (items.isEmpty()) return;
+    private List<Card> historyCards(JSONArray history) {
         List<Card> cards = new ArrayList<>();
+        if (history == null) return cards;
+        List<JSONObject> items = WorkKey.collapse(HistorySync.merge(history));
         int limit = Math.min(items.size(), 18);
         for (int i = 0; i < limit; i++) {
             JSONObject item = items.get(i);
@@ -147,9 +175,14 @@ public class HomeActivity extends Activity {
                     progress
             ));
         }
+        return cards;
+    }
+
+    private void addHistory(List<Card> cards) {
+        if (cards.isEmpty()) return;
         rows.add(0, new Row("继续观看", cards));
         historyPlaced = true;
-        list.getAdapter().notifyItemInserted(0);
+        if (list.getAdapter() != null) list.getAdapter().notifyItemInserted(0);
         focusContinue();
         layoutShelves();
     }
@@ -237,7 +270,7 @@ public class HomeActivity extends Activity {
         }, e -> {
             batchBusy = false;
             loadedThrough = to;
-            message.setText(e.getMessage());
+            message.setText(friendly(e));
             acceptShelves(from, to, new JSONArray(), true);
             maybeLoadMore();
         });
@@ -321,6 +354,42 @@ public class HomeActivity extends Activity {
             if (!shelfDone[slot]) continue;
             putSlot(slot, rowFromRaw(slot, seen));
         }
+        updateChrome();
+    }
+
+    /** 首屏引导图 + 骨架屏的显隐。第一排货架（热门电影）里挑一部有封面的。 */
+    private void updateChrome() {
+        if (skeleton != null && !rows.isEmpty()) skeleton.setVisibility(View.GONE);
+        if (heroCard != null || hero == null) return;
+        JSONArray items = shelfRaw[0];
+        if (items == null) return;
+        for (int i = 0; i < items.length(); i++) {
+            JSONObject item = items.optJSONObject(i);
+            if (item == null) continue;
+            String title = item.optString("title");
+            String cover = item.optString("cover");
+            if (title.isEmpty() || cover.isEmpty()) continue;
+            String sub = item.optString("remarks");
+            String rating = item.optString("rating");
+            if (!rating.isEmpty()) sub = "★ " + rating + (sub.isEmpty() ? "" : " · " + sub);
+            heroCard = new Card(title, cover, sub, "", "", 0, 0);
+            heroTitle.setText(title);
+            heroSub.setText(sub);
+            heroSub.setVisibility(sub.isEmpty() ? View.GONE : View.VISIBLE);
+            Images.load(heroImage, cover);
+            hero.setVisibility(View.VISIBLE);
+            return;
+        }
+    }
+
+    /** 电视上别把异常类名丢给用户看。 */
+    static String friendly(Exception e) {
+        if (e instanceof java.net.SocketTimeoutException) return "网络有点慢，稍后再试";
+        if (e instanceof java.net.UnknownHostException) return "连不上服务器，检查一下网络";
+        if (e instanceof java.net.ConnectException) return "连不上服务器，检查一下网络";
+        String m = e == null ? "" : e.getMessage();
+        if (m == null || m.isEmpty() || m.contains("Exception") || m.startsWith("Failed")) return "出了点问题，按返回再进来试试";
+        return m;
     }
 
     private Set<String> personalKeys() {
@@ -360,7 +429,23 @@ public class HomeActivity extends Activity {
             if (!rating.isEmpty()) subtitle = subtitle.isEmpty() ? "★ " + rating : "★ " + rating + " · " + subtitle;
             cards.add(new Card(item.optString("title"), item.optString("cover"), subtitle, "", "", 0, 0));
         }
-        return cards.isEmpty() ? null : new Row(titleOf(SHELF_IDS[slot]), cards);
+        if (cards.isEmpty()) return null;
+        // 每排最后一张「查看全部」：电视上货架只有 16 部，没有这个入口就只能靠搜索。
+        cards.add(Card.seeAll(browseChannelOf(SHELF_IDS[slot]), "查看全部"));
+        return new Row(titleOf(SHELF_IDS[slot]), cards);
+    }
+
+    /** 货架 → 片库频道。片库只做 6 个频道，题材行归到剧集里。 */
+    private static String browseChannelOf(String shelfId) {
+        switch (shelfId) {
+            case "hot-movies": return "movie";
+            case "anime-airing": return "anime";
+            case "guoman": return "anime";
+            case "variety": return "show";
+            case "doc": return "doc";
+            case "acclaimed": return "top";
+            default: return "tv";
+        }
     }
 
     private void putSlot(int slot, Row fresh) {
@@ -514,9 +599,20 @@ public class HomeActivity extends Activity {
             } else {
                 holder.progress.setVisibility(View.GONE);
             }
-            Images.load(holder.image, card.image);
             FocusMotion.bind(holder.itemView);
-            holder.itemView.setOnClickListener(v -> Open.card(HomeActivity.this, card));
+            if (card.seeAll) {
+                // 结尾的「查看全部」：没有封面，把标题放大居中，一眼能认出来是入口。
+                holder.image.setImageDrawable(null);
+                holder.image.setBackgroundColor(0xFF1C1C1C);
+                holder.title.setTextSize(18);
+                holder.subtitle.setVisibility(View.GONE);
+                holder.itemView.setOnClickListener(v -> BrowseActivity.open(HomeActivity.this, card.channel));
+            } else {
+                holder.title.setTextSize(16);
+                holder.subtitle.setVisibility(View.VISIBLE);
+                Images.load(holder.image, card.image);
+                holder.itemView.setOnClickListener(v -> Open.card(HomeActivity.this, card));
+            }
         }
 
         @Override

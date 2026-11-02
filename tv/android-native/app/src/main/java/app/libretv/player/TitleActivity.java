@@ -69,7 +69,7 @@ public class TitleActivity extends Activity {
         sourceList.setLayoutManager(new LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false));
         sourceList.setAdapter(new SourceAdapter());
         episodeList = findViewById(R.id.episodes);
-        episodeList.setLayoutManager(new GridLayoutManager(this, 8));
+        episodeList.setLayoutManager(new GridLayoutManager(this, 6));
         episodeList.setAdapter(new EpisodeAdapter());
         message.setText("正在查找片源，清晰度和广告会逐个出来");
         if (!resumeVod.isEmpty() && !resumeSource.isEmpty()) {
@@ -83,7 +83,7 @@ public class TitleActivity extends Activity {
             message.setText("没有片名");
             return;
         }
-        NativeApp.streamSearch(this, showTitle, this::consider, this::finishSearch, e -> message.setText(e.getMessage()));
+        NativeApp.streamSearch(this, showTitle, this::consider, this::finishSearch, e -> message.setText(HomeActivity.friendly(e)));
     }
 
     private void consider(JSONObject item) {
@@ -168,7 +168,7 @@ public class TitleActivity extends Activity {
             int focus = sameResume(line) ? resumeEpisode : 0;
             if (focus >= 0 && focus < episodes.length()) episodeList.scrollToPosition(focus);
         }, e -> {
-            if (seq == detailSeq) message.setText(e.getMessage());
+            if (seq == detailSeq) message.setText(HomeActivity.friendly(e));
         });
     }
 
@@ -419,10 +419,15 @@ public class TitleActivity extends Activity {
         public void onBindViewHolder(@NonNull Holder holder, int position) {
             String label = episodeNumber(names.optString(position), position);
             Line line = selected >= 0 && selected < sources.size() ? sources.get(selected) : null;
-            boolean resume = line != null && sameResume(line) && position == resumeEpisode;
+            boolean sameLine = line != null && sameResume(line);
+            boolean resume = sameLine && position == resumeEpisode;
+            // 已经看过的集数压暗并打勾：一屏几十个同款按钮，没有这个标记根本找不到看到哪了
+            boolean watched = sameLine && position < resumeEpisode;
             if (resume && resumePosition > 10) label = label + " · 续播";
+            else if (watched) label = label + " ✓";
             holder.label.setText(label);
             holder.label.setActivated(resume);
+            holder.label.setAlpha(watched ? 0.55f : 1f);
             FocusMotion.bind(holder.label);
             int index = position;
             holder.label.setOnClickListener(v -> play(index));

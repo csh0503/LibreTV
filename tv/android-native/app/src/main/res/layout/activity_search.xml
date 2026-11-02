@@ -3,7 +3,10 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:padding="28dp">
+    android:paddingStart="48dp"
+    android:paddingTop="36dp"
+    android:paddingEnd="48dp"
+    android:paddingBottom="24dp">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -13,11 +16,14 @@
         <EditText
             android:id="@+id/query"
             android:layout_width="0dp"
-            android:layout_height="wrap_content"
+            android:layout_height="52dp"
             android:layout_weight="1"
+            android:background="#22FFFFFF"
             android:hint="片名"
             android:imeOptions="actionSearch"
             android:inputType="text"
+            android:paddingStart="18dp"
+            android:paddingEnd="18dp"
             android:singleLine="true"
             android:textColor="#FFFFFFFF"
             android:textColorHint="#88FFFFFF"
@@ -26,18 +32,37 @@
         <Button
             android:id="@+id/go"
             android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
+            android:layout_height="52dp"
             android:layout_marginStart="12dp"
             android:background="@drawable/focus_bg"
+            android:paddingStart="24dp"
+            android:paddingEnd="24dp"
             android:text="搜索"
-            android:textColor="#FFFFFFFF" />
+            android:textColor="#FFFFFFFF"
+            android:textSize="18sp" />
     </LinearLayout>
+
+    <!-- 最近搜索：电视上打字很痛，先给一排能直接点的 -->
+    <HorizontalScrollView
+        android:id="@+id/recent_scroll"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:scrollbars="none"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:id="@+id/recent"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal" />
+    </HorizontalScrollView>
 
     <TextView
         android:id="@+id/message"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
+        android:layout_marginTop="10dp"
         android:textColor="#FFCCCCCC"
         android:textSize="16sp" />
 

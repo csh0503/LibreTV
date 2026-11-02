@@ -189,6 +189,22 @@ public final class Api {
         return execute(new Request.Builder().url(url).get().build(), true);
     }
 
+    /**
+     * 分类片库（电视端「查看全部」）。kind 是 movie / tv，tags 是豆瓣的中文标签。
+     * 回传的是豆瓣条目：title / cover / year / rating / remarks，没有可播地址，点开要走搜索。
+     */
+    public JSONArray browse(String kind, String tags, int pageStart) throws IOException {
+        HttpUrl url = HttpUrl.parse(BASE + "/api/douban").newBuilder()
+                .addQueryParameter("kind", kind)
+                .addQueryParameter("tags", tags)
+                .addQueryParameter("sort", "U")
+                .addQueryParameter("pageStart", String.valueOf(Math.max(0, pageStart)))
+                .addQueryParameter("pageSize", "30")
+                .build();
+        JSONArray items = execute(new Request.Builder().url(url).get().build(), true).optJSONArray("items");
+        return items == null ? new JSONArray() : items;
+    }
+
     public JSONObject sourceFor(String key, String fallbackUrl) throws IOException {
         JSONArray sources = sources();
         for (int i = 0; i < sources.length(); i++) {
