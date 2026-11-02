@@ -394,7 +394,7 @@ public class HomeActivity extends Activity {
             heroTitle.setText(title);
             heroSub.setText(sub);
             heroSub.setVisibility(sub.isEmpty() ? View.GONE : View.VISIBLE);
-            Images.load(heroImage, cover);
+            Images.loadLarge(heroImage, cover);
             hero.setVisibility(View.VISIBLE);
             return;
         }
