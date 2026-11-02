@@ -372,15 +372,18 @@ public class PlayerActivity extends AppCompatActivity {
         long now = System.currentTimeMillis();
         if (repeat > 0) {
             // 硬體連發：每 3 個 repeat 升一級
-            seekBurst = Math.min(6, 1 + repeat / 3);
-        } else if (direction == lastSeekDir && now - lastSeekAt < 550) {
-            seekBurst = Math.min(6, seekBurst + 1);
+            seekBurst = Math.min(7, 1 + repeat / 3);
+        } else if (direction == lastSeekDir && now - lastSeekAt < 700) {
+            // 700ms：遥控器慢一点也不会把连按断开（550ms 时稍微慢按就回到 10 秒）
+            seekBurst = Math.min(7, seekBurst + 1);
         } else {
             seekBurst = 1;
         }
         lastSeekAt = now;
         lastSeekDir = direction;
-        seek(direction * 10_000L * seekBurst);
+        // 第 7 级 = 2 分钟，长片按十几次就能到头
+        long step = seekBurst >= 7 ? 120_000L : 10_000L * seekBurst;
+        seek(direction * step);
     }
 
     private void chooseQuality() {
