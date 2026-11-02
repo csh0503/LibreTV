@@ -146,7 +146,7 @@ public class PlayerActivity extends AppCompatActivity {
 
     private void showNext(int seconds) {
         String label = episodeLabel(watch.optInt("episodeIndex") + 1);
-        nextCard.setText("即将播放 " + label + "  ·  " + Math.max(seconds, 1) + " 秒\n返回留在这一集");
+        nextCard.setText("即将播放 " + label + "  ·  " + Math.max(seconds, 1) + " 秒\n确定 立即播放 · 返回 留在这一集");
         if (!nextVisible) {
             nextCard.setAlpha(0f);
             nextCard.setVisibility(View.VISIBLE);
@@ -276,7 +276,16 @@ public class PlayerActivity extends AppCompatActivity {
                 case KeyEvent.KEYCODE_MEDIA_PLAY:
                 case KeyEvent.KEYCODE_MEDIA_PAUSE:
                 case KeyEvent.KEYCODE_HEADSETHOOK:
-                    if (repeat == 0) toggle();
+                    if (repeat == 0) {
+                        // 片尾「即将播放下一集」的卡片正显示时，确定键应该是「马上播」，
+                        // 而不是暂停一集马上就要结束的视频。
+                        if (nextVisible && hasNext()) {
+                            cancelNext = false;
+                            playNext();
+                        } else {
+                            toggle();
+                        }
+                    }
                     return true;
                 case KeyEvent.KEYCODE_MEDIA_NEXT:
                 case KeyEvent.KEYCODE_MEDIA_SKIP_FORWARD:
