@@ -194,14 +194,22 @@ public final class Api {
      * 回传的是豆瓣条目：title / cover / year / rating / remarks，没有可播地址，点开要走搜索。
      */
     public JSONArray browse(String kind, String tags, int pageStart) throws IOException {
-        HttpUrl url = HttpUrl.parse(BASE + "/api/douban").newBuilder()
+        return browse(kind, tags, pageStart, "U", "");
+    }
+
+    /**
+     * @param sort   U 近期热门 / R 高分优先 / S 最新
+     * @param status airing 连载中 / ended 已完结 / 空 全部
+     */
+    public JSONArray browse(String kind, String tags, int pageStart, String sort, String status) throws IOException {
+        HttpUrl.Builder builder = HttpUrl.parse(BASE + "/api/douban").newBuilder()
                 .addQueryParameter("kind", kind)
                 .addQueryParameter("tags", tags)
-                .addQueryParameter("sort", "U")
+                .addQueryParameter("sort", sort == null || sort.isEmpty() ? "U" : sort)
                 .addQueryParameter("pageStart", String.valueOf(Math.max(0, pageStart)))
-                .addQueryParameter("pageSize", "30")
-                .build();
-        JSONArray items = execute(new Request.Builder().url(url).get().build(), true).optJSONArray("items");
+                .addQueryParameter("pageSize", "30");
+        if (status != null && !status.isEmpty()) builder.addQueryParameter("status", status);
+        JSONArray items = execute(new Request.Builder().url(builder.build()).get().build(), true).optJSONArray("items");
         return items == null ? new JSONArray() : items;
     }
 

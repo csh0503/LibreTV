@@ -57,33 +57,37 @@
         android:textColor="#FFFFCC66"
         android:textSize="16sp" />
 
-    <!-- 首屏引导图：第一排货架里挑一部有封面的，点开就是搜同一部片 -->
-    <LinearLayout
+    <!-- 首屏引导图：满版海报 + 底部压黑遮罩，标题叠在左下角 -->
+    <FrameLayout
         android:id="@+id/hero"
         android:layout_width="match_parent"
-        android:layout_height="170dp"
+        android:layout_height="210dp"
         android:layout_marginTop="12dp"
         android:background="@drawable/focus_bg"
         android:focusable="true"
-        android:orientation="horizontal"
         android:visibility="gone">
 
         <ImageView
             android:id="@+id/hero_image"
-            android:layout_width="112dp"
+            android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:background="#FF1A1A1A"
             android:contentDescription=""
             android:scaleType="centerCrop" />
 
-        <LinearLayout
-            android:layout_width="0dp"
+        <View
+            android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:layout_weight="1"
-            android:gravity="center_vertical"
+            android:background="@drawable/hero_scrim" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom"
             android:orientation="vertical"
-            android:paddingStart="24dp"
-            android:paddingEnd="24dp">
+            android:paddingStart="28dp"
+            android:paddingEnd="28dp"
+            android:paddingBottom="20dp">
 
             <TextView
                 android:id="@+id/hero_title"
@@ -91,28 +95,35 @@
                 android:layout_height="wrap_content"
                 android:ellipsize="end"
                 android:maxLines="1"
-                android:textSize="26sp"
+                android:shadowColor="#CC000000"
+                android:shadowRadius="10"
+                android:textColor="#FFFFFFFF"
+                android:textSize="30sp"
                 android:textStyle="bold" />
 
             <TextView
                 android:id="@+id/hero_sub"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
+                android:layout_marginTop="6dp"
                 android:ellipsize="end"
-                android:maxLines="2"
-                android:textColor="#FFAAAAAA"
+                android:maxLines="1"
+                android:shadowColor="#CC000000"
+                android:shadowRadius="8"
+                android:textColor="#FFDDDDDD"
                 android:textSize="17sp" />
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="14dp"
+                android:layout_marginTop="10dp"
+                android:shadowColor="#CC000000"
+                android:shadowRadius="8"
                 android:text="按确定查看片源"
                 android:textColor="#FFFFCC66"
-                android:textSize="16sp" />
+                android:textSize="15sp" />
         </LinearLayout>
-    </LinearLayout>
+    </FrameLayout>
 
     <!-- 骨架屏：第一排回来之前先把版面占住，避免内容一批批插进来往下推 -->
     <LinearLayout

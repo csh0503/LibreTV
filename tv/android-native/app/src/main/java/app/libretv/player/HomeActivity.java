@@ -45,7 +45,7 @@ public class HomeActivity extends Activity {
     private boolean userMoved;
     private RecyclerView list;
     private TextView message;
-    private android.widget.LinearLayout hero;
+    private android.view.View hero;
     private ImageView heroImage;
     private TextView heroTitle;
     private TextView heroSub;
@@ -102,6 +102,22 @@ public class HomeActivity extends Activity {
         allowHistoryRefresh = true;
         if (!historyPlaced) focusFirstPlayable();
         if (message.getText().toString().startsWith("正在准备")) message.setText("");
+    }
+
+    /**
+     * 返回键先回到顶部，再按一次才退出。
+     * 十四排货架滚到下面以后，想回第一排要按很多次上。
+     */
+    @Override
+    public void onBackPressed() {
+        RecyclerView.LayoutManager manager = list.getLayoutManager();
+        if (manager instanceof LinearLayoutManager) {
+            if (((LinearLayoutManager) manager).findFirstVisibleItemPosition() > 0) {
+                list.smoothScrollToPosition(0);
+                return;
+            }
+        }
+        super.onBackPressed();
     }
 
     @Override

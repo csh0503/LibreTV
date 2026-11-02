@@ -33,6 +33,11 @@ public class BrowseActivity extends Activity {
     private RecyclerView grid;
     private TextView message;
     private String channel = "movie";
+    /** 豆瓣排序：U 近期热门 / R 高分 / S 最新 */
+    private String sort = "U";
+    /** 空 = 全部，airing = 连载中，ended = 已完结 */
+    private String status = "";
+    private LinearLayout filterRow;
     private int pageStart;
     private boolean loading;
     private boolean end;
@@ -64,6 +69,7 @@ public class BrowseActivity extends Activity {
         String preset = getIntent().getStringExtra(CHANNEL);
         if (preset != null && indexOf(preset) >= 0) channel = preset;
         buildTabs();
+        buildFilters();
         loadMore();
     }
 
@@ -115,6 +121,60 @@ public class BrowseActivity extends Activity {
         }
     }
 
+    /** 排序三档 + 状态三档，跟频道按钮同一套视觉（白框焦点、蓝框选中）。 */
+    private void buildFilters() {
+        filterRow = findViewById(R.id.filters);
+        filterRow.removeAllViews();
+        addChip("s:U", "热门", () -> { sort = "U"; reload(); });
+        addChip("s:R", "高分", () -> { sort = "R"; reload(); });
+        addChip("s:S", "最新", () -> { sort = "S"; reload(); });
+        addChip("t:", "全部", () -> { status = ""; reload(); });
+        addChip("t:airing", "连载中", () -> { status = "airing"; reload(); });
+        addChip("t:ended", "已完结", () -> { status = "ended"; reload(); });
+        refreshFilters();
+    }
+
+    private void addChip(String tag, String label, Runnable onClick) {
+        LinearLayout chip = new LinearLayout(this);
+        chip.setOrientation(LinearLayout.HORIZONTAL);
+        chip.setBackgroundResource(R.drawable.focus_bg);
+        chip.setFocusable(true);
+        chip.setClickable(true);
+        chip.setTag(tag);
+        chip.setPadding(dp(16), dp(8), dp(16), dp(8));
+        TextView text = new TextView(this);
+        text.setText(label);
+        text.setTextSize(15);
+        text.setTextColor(0xFFFFFFFF);
+        chip.addView(text);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.setMarginEnd(dp(8));
+        chip.setLayoutParams(lp);
+        chip.setOnClickListener(v -> onClick.run());
+        filterRow.addView(chip);
+    }
+
+    private void refreshFilters() {
+        if (filterRow == null) return;
+        for (int i = 0; i < filterRow.getChildCount(); i++) {
+            View chip = filterRow.getChildAt(i);
+            String tag = String.valueOf(chip.getTag());
+            String value = tag.length() > 2 ? tag.substring(2) : "";
+            chip.setActivated(tag.startsWith("s:") ? value.equals(sort) : value.equals(status));
+        }
+    }
+
+    private void reload() {
+        pageStart = 0;
+        end = false;
+        items.clear();
+        if (grid.getAdapter() != null) grid.getAdapter().notifyDataSetChanged();
+        grid.scrollToPosition(0);
+        refreshFilters();
+        loadMore();
+    }
+
     private void loadMore() {
         if (loading || end) return;
         loading = true;
@@ -122,7 +182,7 @@ public class BrowseActivity extends Activity {
         final int start = pageStart;
         final String kind = kindOf(channel);
         final String tags = tagsOf(channel);
-        NativeApp.io(this, () -> NativeApp.api().browse(kind, tags, start), list -> {
+        NativeApp.io(this, () -> NativeApp.api().browse(kind, tags, start, sort, status), list -> {
             loading = false;
             pageStart = start + list.length();
             if (list.length() == 0) end = true;
