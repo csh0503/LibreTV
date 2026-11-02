@@ -1,9 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 集数方格里的「已看进度」：由左往右填充，level 0-10000 -->
+<!-- 集数方格里的「已看进度」：由左往右填充，level 0-10000。
+     圆角跟格子一致（10dp 减掉 3dp 边框余量），否则填色会盖住边框、露出直角。 -->
 <clip xmlns:android="http://schemas.android.com/apk/res/android"
     android:clipOrientation="horizontal"
     android:gravity="left">
     <shape android:shape="rectangle">
         <solid android:color="#B33AAE5C" />
+        <corners android:radius="8dp" />
     </shape>
 </clip>

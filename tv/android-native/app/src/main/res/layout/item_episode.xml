@@ -6,11 +6,13 @@
     android:background="@drawable/focus_bg"
     android:focusable="true">
 
-    <!-- 已看进度：整格由左往右填色，比一条 3dp 细线明显得多 -->
+    <!-- 已看进度：整格由左往右填色，比一条 3dp 细线明显得多。
+         留 3dp 外边距，别把格子的聚焦描边盖掉。 -->
     <View
         android:id="@+id/ep_fill"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
+        android:layout_margin="3dp"
         android:background="@drawable/episode_fill"
         android:visibility="invisible" />
 
