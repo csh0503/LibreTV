@@ -72,6 +72,9 @@ public class TitleActivity extends Activity {
         Images.load(findViewById(R.id.poster), text(IMAGE));
         favoriteView = findViewById(R.id.favorite);
         favoriteView.setOnClickListener(v -> toggleFavorite());
+        // 片源还没回来之前先不让它吃焦点：以前一进详情页按 OK 会直接把片子加入/移出片单
+        favoriteView.setFocusable(false);
+        favoriteView.setAlpha(0.6f);
         sourceList = findViewById(R.id.sources);
         // 两行网格：一屏看得到 10 个源，不用一路往右推
         sourceList.setLayoutManager(new GridLayoutManager(this, 2, LinearLayoutManager.HORIZONTAL, false));
@@ -143,6 +146,8 @@ public class TitleActivity extends Activity {
         else if (failures > 0) message.setText("片源 " + sources.size() + " 个 · " + failures + " 个源没有回应");
         else message.setText("片源 " + sources.size() + " 个");
         focusSourcesOnce();
+        // 没片源也要能加片单
+        enableFavorite();
     }
 
     /**
@@ -426,7 +431,16 @@ public class TitleActivity extends Activity {
             RecyclerView.ViewHolder holder = sourceList.findViewHolderForAdapterPosition(Math.max(selected, 0));
             if (holder != null) holder.itemView.requestFocus();
             else sourceList.requestFocus();
+            enableFavorite();
         });
+    }
+
+    /** 片源出来以后才把收藏按钮放回焦点链。 */
+    private void enableFavorite() {
+        if (favoriteView == null || favoriteView.isFocusable()) return;
+        favoriteView.setFocusable(true);
+        favoriteView.setAlpha(1f);
+        favoriteView.refreshDrawableState();
     }
 
     private static String remarks(JSONObject item) {
