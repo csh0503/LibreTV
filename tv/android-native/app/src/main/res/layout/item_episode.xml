@@ -6,6 +6,14 @@
     android:background="@drawable/focus_bg"
     android:focusable="true">
 
+    <!-- 已看进度：整格由左往右填色，比一条 3dp 细线明显得多 -->
+    <View
+        android:id="@+id/ep_fill"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@drawable/episode_fill"
+        android:visibility="invisible" />
+
     <TextView
         android:id="@+id/label"
         android:layout_width="match_parent"
@@ -14,16 +22,4 @@
         android:gravity="center"
         android:maxLines="1"
         android:textSize="16sp" />
-
-    <!-- 看到哪了：底部细进度条，跟网页版一致 -->
-    <ProgressBar
-        android:id="@+id/ep_progress"
-        style="?android:attr/progressBarStyleHorizontal"
-        android:layout_width="match_parent"
-        android:layout_height="3dp"
-        android:layout_gravity="bottom"
-        android:max="100"
-        android:progressBackgroundTint="#33FFFFFF"
-        android:progressTint="#FF64B5F6"
-        android:visibility="gone" />
 </FrameLayout>

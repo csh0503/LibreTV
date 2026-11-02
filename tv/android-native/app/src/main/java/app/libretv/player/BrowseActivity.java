@@ -197,6 +197,10 @@ public class BrowseActivity extends Activity {
                 String subtitle = item.optString("year");
                 String rating = item.optString("rating");
                 if (!rating.isEmpty()) subtitle = "★ " + rating + (subtitle.isEmpty() ? "" : " · " + subtitle);
+                String remarks = item.optString("remarks");
+                if (!remarks.isEmpty() && remarks.length() <= 12) {
+                    subtitle = subtitle.isEmpty() ? remarks : subtitle + " · " + remarks;
+                }
                 // 豆瓣条目没有可播地址，点开走「按片名找源」那条路
                 items.add(new Card(title, item.optString("cover"), subtitle, "", "", 0, 0));
             }

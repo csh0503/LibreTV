@@ -182,6 +182,8 @@ public class HomeActivity extends Activity {
             int duration = item.optInt("duration");
             String subtitle = "第 " + (episode + 1) + " 集";
             if (position > 10) subtitle += " · " + format(position);
+            // 还剩多久比「看到第几分钟」更有用
+            if (duration > position + 60) subtitle += " · 剩 " + format(duration - position);
             int progress = duration > 30 && position > 0 ? Math.min(100, position * 100 / duration) : 0;
             cards.add(new Card(
                     item.optString("title"),

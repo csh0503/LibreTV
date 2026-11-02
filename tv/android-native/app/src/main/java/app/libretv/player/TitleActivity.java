@@ -263,18 +263,12 @@ public class TitleActivity extends Activity {
             episodeProgress.clear();
             return;
         }
-        String key;
-        try {
-            key = new JSONObject(line.sourceJson).optString("key");
-        } catch (org.json.JSONException e) {
-            key = "";
-        }
-        final String prefix = key + "_" + line.vodId + "_";
-        if (prefix.equals(progressPrefix)) return;
-        progressPrefix = prefix;
+        final String marker = "_" + line.vodId + "_";
+        if (marker.equals(progressPrefix)) return;
+        progressPrefix = marker;
         episodeProgress.clear();
         NativeApp.io(this, () -> NativeApp.api().bundle(profileId), bundle -> {
-            if (!prefix.equals(progressPrefix)) return;
+            if (!marker.equals(progressPrefix)) return;
             episodeProgress.clear();
             JSONArray progress = bundle.optJSONArray("progress");
             if (progress != null) {
@@ -282,10 +276,12 @@ public class TitleActivity extends Activity {
                     JSONObject item = progress.optJSONObject(i);
                     if (item == null) continue;
                     String local = item.optString("localKey");
-                    if (!local.startsWith(prefix)) continue;
+                    // 只认影片 id：不同源的 sourceKey 可能对不上（「上次看到的源」那条尤其）
+                    int at = local.lastIndexOf(marker);
+                    if (at < 0) continue;
                     int index;
                     try {
-                        index = Integer.parseInt(local.substring(prefix.length()));
+                        index = Integer.parseInt(local.substring(at + marker.length()));
                     } catch (NumberFormatException e) {
                         continue;
                     }
@@ -555,12 +551,14 @@ public class TitleActivity extends Activity {
             holder.itemView.setActivated(resume);
             holder.label.setAlpha(watched ? 0.55f : 1f);
             Integer percent = episodeProgress.get(position);
-            if (percent != null && percent > 0 && percent < 100) {
-                holder.progress.setVisibility(View.VISIBLE);
-                holder.progress.setProgress(percent);
-            } else {
-                holder.progress.setVisibility(View.GONE);
+            int value = percent == null ? 0 : percent;
+            // 看了一点点也要看得出来：给个 6% 的最小可见宽度
+            int level = value <= 0 ? 0 : Math.max(6, Math.min(100, value));
+            android.graphics.drawable.Drawable fill = holder.fill.getBackground();
+            if (fill != null) {
+                fill.mutate().setLevel(level * 100);
             }
+            holder.fill.setVisibility(value > 0 ? View.VISIBLE : View.INVISIBLE);
             FocusMotion.bind(holder.itemView);
             int index = position;
             holder.itemView.setOnClickListener(v -> play(index));
@@ -573,12 +571,12 @@ public class TitleActivity extends Activity {
 
         final class Holder extends RecyclerView.ViewHolder {
             final TextView label;
-            final android.widget.ProgressBar progress;
+            final View fill;
 
             Holder(View view) {
                 super(view);
                 label = view.findViewById(R.id.label);
-                progress = view.findViewById(R.id.ep_progress);
+                fill = view.findViewById(R.id.ep_fill);
             }
         }
     }
