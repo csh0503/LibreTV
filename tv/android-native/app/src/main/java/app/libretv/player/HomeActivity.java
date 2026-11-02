@@ -249,7 +249,10 @@ public class HomeActivity extends Activity {
         if (cards == null) return;
         cards.post(() -> {
             RecyclerView.ViewHolder card = cards.findViewHolderForAdapterPosition(0);
-            if (card != null && list.findFocus() == null) card.itemView.requestFocus();
+            if (card != null && list.findFocus() == null) {
+                // 点过屏幕后窗口处于 touch mode，普通 requestFocus 会静默失败
+                if (!card.itemView.requestFocus()) card.itemView.requestFocusFromTouch();
+            }
         });
     }
 

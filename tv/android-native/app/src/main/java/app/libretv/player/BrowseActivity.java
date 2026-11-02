@@ -41,6 +41,10 @@ public class BrowseActivity extends Activity {
     private int pageStart;
     private boolean loading;
     private boolean end;
+    /** 一次取回多少条（跟 Api.browse 里的 pageSize 一致） */
+    private static final int PAGE_SIZE = 30;
+    /** 已出现过的条目，翻页去重 */
+    private final java.util.HashSet<String> seen = new java.util.HashSet<>();
 
     public static void open(Activity from, String channel) {
         Intent intent = new Intent(from, BrowseActivity.class);
@@ -171,6 +175,7 @@ public class BrowseActivity extends Activity {
         pageStart = 0;
         end = false;
         items.clear();
+        seen.clear();
         if (grid.getAdapter() != null) grid.getAdapter().notifyDataSetChanged();
         grid.scrollToPosition(0);
         refreshFilters();
@@ -187,13 +192,18 @@ public class BrowseActivity extends Activity {
         final String tags = tagsOf(channel);
         NativeApp.io(this, () -> NativeApp.api().browse(kind, tags, start, sort, status), list -> {
             loading = false;
-            pageStart = start + list.length();
+            // 固定步进一页 30 条：用「返回条数」推进会因为过滤掉的条目而重叠，翻页翻出重复卡片
+            pageStart = start + PAGE_SIZE;
+            // 服务端会滤掉一部分条目，返回条数少于 30 不代表到底，只有空页才算
             if (list.length() == 0) end = true;
+            int added = 0;
             for (int i = 0; i < list.length(); i++) {
                 JSONObject item = list.optJSONObject(i);
                 if (item == null) continue;
                 String title = item.optString("title");
                 if (title.isEmpty()) continue;
+                String key = title + "|" + item.optString("year");
+                if (!seen.add(key)) continue;
                 String subtitle = item.optString("year");
                 String rating = item.optString("rating");
                 if (!rating.isEmpty()) subtitle = "★ " + rating + (subtitle.isEmpty() ? "" : " · " + subtitle);
@@ -203,21 +213,31 @@ public class BrowseActivity extends Activity {
                 }
                 // 豆瓣条目没有可播地址，点开走「按片名找源」那条路
                 items.add(new Card(title, item.optString("cover"), subtitle, "", "", 0, 0));
+                added++;
             }
-            grid.getAdapter().notifyDataSetChanged();
+            // 只通知新增区间：notifyDataSetChanged 会让 RecyclerView 重新布局，
+            // 翻页时把用户当前所在的行和焦点都甩回顶部。
+            if (added > 0) grid.getAdapter().notifyItemRangeInserted(items.size() - added, added);
+            boolean firstPage = items.size() == added;
             if (items.isEmpty()) message.setText("这里暂时没有内容");
             else if (end) message.setText(items.size() + " 部 · 已经到底了");
             else message.setText(items.size() + " 部");
-            if (!items.isEmpty() && grid.findFocus() == null) {
+            // 只有第一页才抢焦点；后续翻页抢焦点会把正在往下翻的用户拽回顶部
+            if (firstPage && !items.isEmpty() && grid.findFocus() == null) {
                 grid.post(() -> {
                     RecyclerView.ViewHolder holder = grid.findViewHolderForAdapterPosition(0);
-                    if (holder != null) holder.itemView.requestFocus();
+                    if (holder != null) focusInTouchMode(holder.itemView);
                 });
             }
         }, e -> {
             loading = false;
             message.setText(HomeActivity.friendly(e));
         });
+    }
+
+    /** 点过屏幕以后窗口在 touch mode，普通 requestFocus() 会静默失败。 */
+    private static void focusInTouchMode(View view) {
+        if (!view.requestFocus()) view.requestFocusFromTouch();
     }
 
     private static String kindOf(String channel) {
