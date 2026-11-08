@@ -19,7 +19,6 @@ import {
 import { favoriteIdOf } from '@/lib/db';
 import { aggregateResults, DoubanCard, type AggregatedGroup } from '@/components/video-card';
 import { useAppStore, isInDisabledSubscription, isSourceDisabled } from '@/lib/store';
-import { sourceIsAdult } from '@/lib/adult-sources';
 import { useLoadMore } from '@/components/use-load-more';
 import { useAliasFallback, useSourceSearch } from '@/components/use-source-search';
 import type { SearchResultItem, TitlePick } from '@/lib/types';
@@ -86,7 +85,6 @@ function HomeContent() {
   const customAPIs = useAppStore((s) => s.customAPIs);
   const envSources = useAppStore((s) => s.envSources);
   const selectedKeys = useAppStore((s) => s.selectedKeys);
-  const yellowFilter = useAppStore((s) => s.yellowFilter);
   const sourceHealth = useAppStore((s) => s.sourceHealth);
   const subscriptions = useAppStore((s) => s.subscriptions);
   const [input, setInput] = useState(urlQuery);
@@ -101,11 +99,6 @@ function HomeContent() {
   useEffect(() => {
     if (urlQuery) setInput(urlQuery);
   }, [urlQuery]);
-
-  const adultSourceCount = useMemo(
-    () => [...customAPIs, ...envSources].filter((s) => sourceIsAdult(s)).length,
-    [customAPIs, envSources]
-  );
 
   const { searchQuery, selectedSources, streamedOutcomes, isSearching, settled: searchSettled, list, failures, sourceName } =
     useSourceSearch(urlQuery);
@@ -303,37 +296,6 @@ function HomeContent() {
             )}
           </div>
 
-          {/* 成人内容开关：关 = 过滤（默认），开 = 启用成人源并允许成人分类 */}
-          <div className="flex items-center gap-2 mt-3 text-xs">
-            <button
-              type="button"
-              onClick={() => {
-                const hide = !yellowFilter;
-                useAppStore.getState().updateSettings({ yellowFilter: hide });
-                if (hide) {
-                  toast(adultSourceCount > 0 ? `已隐藏成人内容，并停用 ${adultSourceCount} 个成人源` : '已隐藏成人内容', 'info');
-                } else {
-                  toast(
-                    adultSourceCount > 0 ? `已解锁，并启用 ${adultSourceCount} 个成人源` : '已解锁。当前没有标记为成人的点播源',
-                    'warning'
-                  );
-                }
-              }}
-              className={cn(
-                'flex items-center gap-1.5 px-3 py-1 rounded-full border transition-all text-xs font-medium',
-                yellowFilter
-                  ? 'border-transparent text-faint hover:text-content'
-                  : 'border-danger/40 text-danger bg-danger/10'
-              )}
-              title={yellowFilter ? '解锁成人源、成人片名和成人分类' : '重新隐藏成人内容'}
-              aria-pressed={!yellowFilter}
-            >
-              <span>{yellowFilter ? '成人内容 · 关' : '成人内容 · 开'}</span>
-              {!yellowFilter && adultSourceCount > 0 && (
-                <span className="text-[10px] opacity-80">{adultSourceCount} 个源</span>
-              )}
-            </button>
-          </div>
         </section>
 
         {/* 搜索结果 */}
