@@ -1,6 +1,11 @@
 # 交接说明（给接手的会话）
 
-> **部署规则（用户要求）**：每次改完、测试通过并推送分支后，**直接部署**，不要让用户自己去 Vercel 按 Redeploy。做法：把 main 快进到工作分支（`git push origin HEAD:main`，main 是线性历史，只快进、不强推），Vercel 会自动部署 Production；页脚的提交短哈希可确认线上版本。用户不要 Preview：`vercel.json` 里 `git.deploymentEnabled` 关掉了 `claude/*` 分支的部署，推分支不会再生成 Preview，只有 main 部署。出问题可在 Vercel 的 Deployments 里 Promote 上一个版本回滚。
+> **部署规则（2026-11-08 起，正式站在家用伺服器）**：
+> - **正式站**：https://qingran-libretv.duckdns.org ，跑在家里的 homeserver（Debian 13，`ssh qingran@192.168.31.76`，外面用 Tailscale `100.95.85.48`）。Docker Compose 在 `/opt/libretv`，映像 `libretv-local:main` 是在伺服器上用 GitHub `main` **自己 build** 的，**推送后不会自动更新**。改完、测试通过、`main` 快进之后，要在伺服器上执行：`cd /opt/libretv/src && git pull && docker build -t libretv-local:main . && cd .. && docker compose up -d`。这一步会让正式站换版本，先问用户再做。
+> - **Vercel**（https://libre-tv-dusky-delta.vercel.app）只当备份：推 `main` 仍会自动部署（`git push origin HEAD:main`，main 线性历史，只快进、不强推）；`claude/*` 分支不部署 Preview。两边的设定档**不同步**（家里存在 `/opt/libretv/data/`，Vercel 用自己的 Upstash）。
+> - **伺服器很弱**：i5-7200U 2 核 4 线程、12 GB、只有 2.4G Wi-Fi（约 72 Mbps）。不要把视频流经伺服器转发或转码；重活放浏览器。没有 Vercel 的函数时长 / 常驻连接限制，WebSocket 等常驻服务可以跑，但要算上这台机器的上行和 CPU。
+> - **电视 App 还连着 Vercel**，要改成正式站网址并重新打包（伺服器说明的待办）。
+> - 伺服器的完整说明（网络、证书、秘密放哪、常用操作）在用户 Google Drive「homeserver 家用伺服器 / 00 README - homeserver 伺服器說明.md」。秘密只在伺服器的 `.env`，不要写进仓库。
 >
 > 先读完这份再动手。用户用中文（繁体/简体混用）沟通；`PASSWORD` 环境变量未设置时所有 `/api/*` 返回 503，本地调试需要自建 `.env.local`（已被 git 忽略）。
 
