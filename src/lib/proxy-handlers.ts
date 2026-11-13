@@ -127,7 +127,7 @@ export async function handleProxyRequest(req: Request, targetUrl: string): Promi
   const contentType = response.headers.get('content-type') || '';
   const isM3u8 =
     contentType.includes('mpegurl') || contentType.includes('x-mpegurl') ||
-    targetUrl.toLowerCase().endsWith('.m3u8');
+    targetUrl.toLowerCase().split('?')[0].endsWith('.m3u8');
 
   // m3u8 文本：重写为代理地址（以重定向后的最终 URL 为 base 解析相对地址）
   if (isM3u8) {

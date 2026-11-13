@@ -24,12 +24,12 @@ function toIPv4(ip: string): string | null {
 export function isPrivateIP(ip: string): boolean {
   let v = stripBrackets(ip.trim());
   v = toIPv4(v) ?? v;
-  if (/^(127\.|0\.0\.0\.0$|::1$|::$|fe80:|fc|fd)/i.test(v)) return true;
+  if (/^(127\.|0\.|::1$|::$|fe80:|fc|fd)/i.test(v)) return true;
   if (v.startsWith('10.')) return true;
   if (v.startsWith('192.168.')) return true;
   if (/^172\.(1[6-9]|2\d|3[01])\./.test(v)) return true;
   if (v.startsWith('169.254.')) return true; // 链路本地（含云元数据 169.254.169.254）
-  if (v.startsWith('100.64.')) return true; // CGNAT
+  if (/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(v)) return true; // CGNAT 100.64.0.0/10（含 Tailscale）
   if (v.startsWith('192.0.0.')) return true; // 协议分配块
   return false;
 }

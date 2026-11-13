@@ -39,6 +39,8 @@
 | `default-sources.json` | 写在 `.env` 的 `DEFAULT_SOURCES`（压成一行） | 26 个预设点播源（2026-11-09 删掉了 8 个成人源） |
 | `scripts/duckdns-update.sh` | `/opt/libretv/duckdns-update.sh` | 每 5 分钟把 DuckDNS 域名指向家里当前公网 IP |
 | `scripts/libretv-duckdns.cron` | `/etc/cron.d/libretv-duckdns` | 上面那个的 cron |
+| `scripts/backup-data.sh` | `/opt/libretv/backup-data.sh` | 每日自动备份设定档（保留最近 14 天） |
+| `scripts/libretv-backup.cron` | `/etc/cron.d/libretv-backup` | 上面那个的 cron（每天 03:40） |
 | `scripts/set-password.sh` 等 `set-*.sh` | `/opt/libretv/` | 隐藏输入改秘密（站点密码、DuckDNS token、TMDB key、VPN 页面密码） |
 | `scripts/import-profiles.sh` | `/opt/libretv/` | 一次性：从 Vercel 的 Upstash（只读 token）把设定档搬到本机（2026-11-08 已用过） |
 
@@ -69,7 +71,7 @@ sudo tar czf ~/libretv-data-$(date +%F).tar.gz -C /opt/libretv data
 3. `cd /opt/libretv/src && docker build -t libretv-local:main .`
 4. 建 `.env`（`umask 077`）：`PROXY_SECRET=$(openssl rand -hex 32)`；`DEFAULT_SOURCES=` 填 `default-sources.json` 压成一行（`jq -c . default-sources.json`）；`SEARCH_SOURCE_TIMEOUT_MS=5000`；其余用 `set-*.sh` 让用户自己输入。
 5. `mkdir -p data && sudo chown 100:101 data`（容器里 `nextjs` 用户是 uid 100），恢复设定档备份到 `data/`。
-6. 安装 cron：`sudo install -m 644 scripts/libretv-duckdns.cron /etc/cron.d/libretv-duckdns`。
+6. 安装 cron：`sudo install -m 644 scripts/libretv-duckdns.cron /etc/cron.d/libretv-duckdns`、`sudo install -m 644 scripts/libretv-backup.cron /etc/cron.d/libretv-backup`。
 7. 路由器：DHCP 静态 IP、端口转发 TCP 443 → 伺服器。`docker compose up -d`，等 Caddy 日志出现 `certificate obtained successfully`。
 
 ## 6. 踩过的坑

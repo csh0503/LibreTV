@@ -1,0 +1,2 @@
+# Back up LibreTV profiles and watch data daily at 03:40
+40 3 * * * root /opt/libretv/backup-data.sh >> /opt/libretv/backup.log 2>&1

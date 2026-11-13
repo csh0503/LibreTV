@@ -11,6 +11,11 @@ services:
       - ./data:/app/.data   # profiles ("who's watching") are stored here, on this server only
     ports:
       - "8080:8080"   # LAN only (plain http; profiles need https, so use the duckdns address normally)
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   caddy:
     build: ./caddy
@@ -28,5 +33,10 @@ services:
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./caddy-data:/data   # certificates are kept here across restarts
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     depends_on:
       - libretv
