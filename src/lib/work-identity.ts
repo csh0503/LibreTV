@@ -133,6 +133,18 @@ export function workKeys(primary: string, item: DoubanItem): string[] {
 interface Work<T> {
   members: DoubanItem[];
   value: T;
+  /** 第几个建的（按建立顺序找，结果和逐个比一样） */
+  seq: number;
+}
+
+/**
+ * 「译名不同的同一部」只可能发生在可靠年份相同、电影 / 剧集相同的条目之间（见 similarTitles），
+ * 按这个分桶，兜底比对只看同一桶里的作品（片库上万部时不用两两比）。
+ */
+function similarBucket(item: DoubanItem): string | undefined {
+  const y = firmYear(item);
+  if (!y || item.isTv === undefined) return undefined;
+  return `${y}|${item.isTv ? 1 : 0}`;
 }
 
 /**
@@ -176,7 +188,20 @@ export class WorkGroups<T> {
   private readonly index = new Map<string, Work<T>[]>();
   /** 按第一次出现的顺序 */
   readonly order: T[] = [];
-  private readonly works: Work<T>[] = [];
+  private readonly buckets = new Map<string, Work<T>[]>();
+  private seq = 0;
+
+  private addToBucket(work: Work<T>, item: DoubanItem) {
+    const b = similarBucket(item);
+    if (!b) return;
+    const list = this.buckets.get(b) ?? [];
+    if (list.includes(work)) return;
+    // 按建立顺序插入：兜底比对时先比先建的那部（和逐个比的顺序一样）
+    let at = list.length;
+    while (at > 0 && list[at - 1].seq > work.seq) at--;
+    list.splice(at, 0, work);
+    this.buckets.set(b, list);
+  }
 
   constructor(private readonly opts: { acrossSeasons?: boolean; nowYear?: number } = {}) {}
 
@@ -196,15 +221,18 @@ export class WorkGroups<T> {
       if (hit) {
         hit.members.push(item);
         this.register(hit, list);
+        this.addToBucket(hit, item);
         return hit.value;
       }
     }
-    // 键都对不上：最后看是不是译名不同的同一部（见 similarTitles）
-    if (!this.opts.acrossSeasons) {
-      for (const work of this.works) {
+    // 键都对不上：最后看是不是译名不同的同一部（见 similarTitles；只比同一年份、同一类型那一桶）
+    const bucket = this.opts.acrossSeasons ? undefined : similarBucket(item);
+    if (bucket) {
+      for (const work of this.buckets.get(bucket) ?? []) {
         if (work.members.some((m) => similarTitles(m, item)) && work.members.every((m) => sameWork(m, item, this.opts))) {
           work.members.push(item);
           this.register(work, list);
+          this.addToBucket(work, item);
           return work.value;
         }
       }
@@ -213,9 +241,9 @@ export class WorkGroups<T> {
   }
 
   add(keys: string | string[], item: DoubanItem, value: T): void {
-    const work: Work<T> = { members: [item], value };
-    this.works.push(work);
+    const work: Work<T> = { members: [item], value, seq: this.seq++ };
     this.register(work, typeof keys === 'string' ? [keys] : keys);
+    this.addToBucket(work, item);
     this.order.push(value);
   }
 }

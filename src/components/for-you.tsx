@@ -17,7 +17,8 @@ import type { DoubanItem, TitlePick } from '@/lib/types';
 import { useProfile } from '@/lib/use-profile';
 import { isNotInterested, useNotInterested } from '@/lib/not-interested';
 import { ShelfRow } from './home-rows';
-import { DoubanCard } from './video-card';
+import { DoubanCard, SHELF_CARD_W } from './video-card';
+import { cn } from '@/lib/utils';
 import { statusBadgeOf } from '@/lib/catalog-meta';
 
 /** 首页口味排：「为你推荐」与「因为你看过《某某》」。 */
@@ -193,7 +194,7 @@ export function ForYouRows({ onPick }: { onPick: (title: string, pick?: TitlePic
         <div className="h-5 w-40 rounded bg-chip animate-pulse" />
         <div className="flex gap-3 overflow-hidden">
           {Array.from({ length: 8 }).map((_, index) => (
-            <div key={index} className="w-[7.25rem] sm:w-32 shrink-0">
+            <div key={index} className={cn(SHELF_CARD_W, 'shrink-0')}>
               <div className="aspect-[2/3] rounded-xl bg-chip animate-pulse" />
               <div className="mt-2 h-3 w-3/4 rounded bg-chip animate-pulse" />
             </div>
@@ -335,7 +336,7 @@ function TasteRow({
   return (
     <ShelfRow title={title}>
       {items.map((item) => (
-        <div key={`${item.id}_${item.title}`} className="w-[7.25rem] sm:w-32 shrink-0">
+        <div key={`${item.id}_${item.title}`} className={cn(SHELF_CARD_W, 'shrink-0')}>
           <DoubanCard
             item={{
               title: item.title,

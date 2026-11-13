@@ -789,20 +789,37 @@ function assertArray<T>(value: unknown, what: string): T[] {
   return value as T[];
 }
 
+/**
+ * 60s API 熔断：某个地址回 429（限流）就 30 分钟内不再打它，其他错误 / 超时 10 分钟。
+ * 伺服器实测 60s.viki.moe 一直回 429，以前每次算热榜都要白等它一轮。
+ */
+const sixtyBreaker = new Map<string, number>();
+const SIXTY_BREAK_429_MS = 30 * 60_000;
+const SIXTY_BREAK_MS = 10 * 60_000;
+
+export function sixtyBaseOpen(base: string, now = Date.now()): boolean {
+  return (sixtyBreaker.get(base) ?? 0) <= now;
+}
+
 async function fetchSixtyJson(path: string): Promise<unknown> {
   const primary = apiBase();
-  const bases = primary === FALLBACK_BASE ? [primary] : [primary, FALLBACK_BASE];
+  const bases = (primary === FALLBACK_BASE ? [primary] : [primary, FALLBACK_BASE]).filter((b) => sixtyBaseOpen(b));
+  if (bases.length === 0) throw new Error('60s API 暂时熔断（最近限流 / 出错）');
 
   let lastError: unknown;
   for (const base of bases) {
     try {
       const res = await fetchUpstream(`${base}${path}`, {
-        timeoutMs: 8000,
+        timeoutMs: 6000,
         headers: { 'User-Agent': UA, Accept: 'application/json' },
       });
-      if (!res.ok) throw new Error(`60s API 响应异常 (${res.status})`);
+      if (!res.ok) {
+        sixtyBreaker.set(base, Date.now() + (res.status === 429 ? SIXTY_BREAK_429_MS : SIXTY_BREAK_MS));
+        throw new Error(`60s API 响应异常 (${res.status})`);
+      }
       return await res.json();
     } catch (err) {
+      if (!sixtyBreaker.has(base) || sixtyBaseOpen(base)) sixtyBreaker.set(base, Date.now() + SIXTY_BREAK_MS);
       lastError = err;
     }
   }

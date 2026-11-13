@@ -312,3 +312,23 @@ html.player-web-fullscreen body {
   }
 }
 
+
+/*
+ * 播放页（非全屏）：播放器随窗口放大，但高度不超过「窗口高 − 顶栏 − 操作栏」（约 8rem），
+ * 宽度按 16:9 跟着收，控制栏不会被顶出屏幕。老浏览器（没有 dvh）用 vh。
+ */
+.player-fit {
+  max-width: calc((100vh - 8rem) * 16 / 9);
+}
+/* 剧场 / 宽屏模式：整条黑底铺满窗口宽，画面在里面按比例放大（像 YouTube 的剧场模式） */
+.player-theater {
+  height: min(56.25vw, calc(100vh - 7.5rem));
+}
+@supports (height: 100dvh) {
+  .player-fit {
+    max-width: calc((100dvh - 8rem) * 16 / 9);
+  }
+  .player-theater {
+    height: min(56.25vw, calc(100dvh - 7.5rem));
+  }
+}

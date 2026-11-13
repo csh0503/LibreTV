@@ -141,13 +141,26 @@ export function expandSearchTerms(wd: string): string[] {
 }
 
 /** 同一作品的不同译名收成同一个键。没有别名时就是去掉标点后的原名。 */
+/** 规范化后的别名 → 规范化后的通行名（同一个别名出现在几组里时，前面那组优先，和逐组比对的结果一样） */
+let aliasIndex: Map<string, string> | null = null;
+function aliasLookup(): Map<string, string> {
+  if (aliasIndex) return aliasIndex;
+  const map = new Map<string, string>();
+  for (const group of ALIAS_GROUPS) {
+    const main = normalizeTitle(group[0]);
+    for (const alias of group) {
+      const key = normalizeTitle(alias);
+      if (key && !map.has(key)) map.set(key, main);
+    }
+  }
+  aliasIndex = map;
+  return map;
+}
+
 export function canonicalTitle(title: string): string {
   const normalized = normalizeTitle(title.trim());
   if (!normalized) return '';
-  for (const group of ALIAS_GROUPS) {
-    if (group.some((alias) => normalizeTitle(alias) === normalized)) return normalizeTitle(group[0]);
-  }
-  return normalized;
+  return aliasLookup().get(normalized) ?? normalized;
 }
 
 const FIRST_SEASON = /\s*(?:第一[季部]|第1[季部]|season\s*1)\s*$/i;

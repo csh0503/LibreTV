@@ -13,7 +13,8 @@ import { canonicalTitle } from './title-aliases';
 export const HALL_PAGE_SIZE = 20;
 
 export type HallChannel = 'anime' | 'movie' | 'tv' | 'show' | 'doc' | 'adult';
-export type HallSortKey = 'hot' | 'rate' | 'date' | 'title';
+/** hot = 总热门（累计人气）、recent = 近期热播、date = 最新上线、rate = 最高评分；title 只给成人片库用 */
+export type HallSortKey = 'hot' | 'recent' | 'rate' | 'date' | 'title';
 export type HallSortDir = 'asc' | 'desc';
 export type HallScore = 'all' | '9' | '8' | '7';
 export type HallStatus = 'all' | 'airing' | 'ended';
@@ -31,7 +32,8 @@ export interface HallSelection {
 export interface DoubanRequest {
   kind: 'movie' | 'tv';
   tags: string[];
-  sort: 'U' | 'S' | 'R';
+  /** T 标记最多（累计人气）/ U 近期热门 / S 高分 / R 最新 */
+  sort: 'T' | 'U' | 'S' | 'R';
   score: string;
   yearRange: [number, number] | null;
   minScore: number | null;
@@ -61,10 +63,11 @@ export function yearSelection(year: string): { tag: string | null; range: [numbe
   return { tag: null, range: null };
 }
 
-export function doubanSortCode(sort: HallSortKey): 'U' | 'S' | 'R' {
+export function doubanSortCode(sort: HallSortKey): 'T' | 'U' | 'S' | 'R' {
   if (sort === 'rate') return 'S';
   if (sort === 'date') return 'R';
-  return 'U';
+  if (sort === 'recent') return 'U';
+  return 'T';
 }
 
 export function scoreRange(score: HallScore): { param: string; min: number | null } {
@@ -272,7 +275,7 @@ export function sortHallItems<T extends { title?: string; name?: string; rating?
     .map((item, index) => ({ item, index }))
     .sort((a, b) => {
       // 热度没有独立分数，降序就是接口原来的顺序
-      if (key === 'hot') return (a.index - b.index) * -sign;
+      if (key === 'hot' || key === 'recent') return (a.index - b.index) * -sign;
       if (key === 'title') {
         const cmp = (a.item.title || a.item.name || '').localeCompare(b.item.title || b.item.name || '', 'zh');
         return cmp === 0 ? a.index - b.index : cmp * sign;

@@ -91,7 +91,10 @@ export type TitlePick = Pick<DoubanItem, 'title'> &
       | 'subtitle'
       | 'sourceLabel'
     >
-  >;
+  > & {
+    /** 卡片上点了「播放」：详情弹窗打开后自动续播 / 挑最好的源直接开播 */
+    autoplay?: boolean;
+  };
 
 export type RatingSource = 'douban' | 'bangumi' | 'tmdb' | 'bili';
 

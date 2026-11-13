@@ -12,7 +12,7 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const kind = url.searchParams.get('kind') === 'tv' ? 'tv' : 'movie';
   const sortParam = url.searchParams.get('sort');
-  const sort = sortParam === 'S' || sortParam === 'R' || sortParam === 'U' ? sortParam : 'U';
+  const sort = sortParam === 'S' || sortParam === 'R' || sortParam === 'U' || sortParam === 'T' ? sortParam : 'U';
   const score = url.searchParams.get('score') || '0,10';
   if (!/^(?:[0-9]|10),(?:[0-9]|10)$/.test(score)) {
     return NextResponse.json({ error: '评分范围无效' }, { status: 400 });

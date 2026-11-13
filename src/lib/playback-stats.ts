@@ -12,6 +12,8 @@ export interface PlaybackStat {
   startMs?: number;
   /** 看到的最高画面高度 */
   height?: number;
+  /** 播放时实测的分片码率（kbps，指数平滑；只算最高一档的正片分片） */
+  kbps?: number;
   /** 卡顿次数（指数平滑，单位：次 / 次播放） */
   stalls: number;
   /** 播不了（触发自动换源）的次数，成功播一次减一 */
@@ -66,6 +68,16 @@ export function recordPlaybackStart(sourceKey: string, startMs: number, height: 
     height: height > 0 ? Math.max(p.height ?? 0, height) : p.height,
     stalls: smooth(p.stalls, 0),
     fails: Math.max(0, p.fails - 1),
+  }));
+}
+
+/** 播放时实测的码率和真实画面高度（每集一次，见 player-shell 的 FRAG_LOADED） */
+export function recordPlaybackBitrate(sourceKey: string, kbps: number, height: number) {
+  if (!(kbps > 0 && kbps < 100_000)) return;
+  update(sourceKey, (p) => ({
+    ...p,
+    kbps: Math.round(smooth(p.kbps, kbps)),
+    height: height > 0 ? Math.max(p.height ?? 0, height) : p.height,
   }));
 }
 

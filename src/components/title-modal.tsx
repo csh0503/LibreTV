@@ -133,12 +133,14 @@ function TitleModalBody({
   );
   // 看过同一部（按标准片名）→ 主按钮变成「继续播放」
   // 看过的可能是用别名找到的那一版（大师计划 → 偷天父子兵），两个名字都算
-  const history = useLiveQuery(async () => {
-    if (!profileId || !workKeyOf(pick.title)) return undefined;
+  // 包一层：undefined = 还在读，{ row } = 读完了（自动播放要分清「没看过」和「还没读到」）
+  const historyBox = useLiveQuery(async () => {
+    if (!profileId || !workKeyOf(pick.title)) return { row: undefined };
     const rows = await db.history.where('profileId').equals(profileId).toArray();
     const alias = recallAlias(pick.title);
-    return latestSameWork(rows, pick.title) ?? (alias ? latestSameWork(rows, alias) : undefined);
+    return { row: latestSameWork(rows, pick.title) ?? (alias ? latestSameWork(rows, alias) : undefined) };
   }, [profileId, pick.title]);
+  const history = historyBox?.row;
   const resumeView = history ? describeContinueWatching(history, undefined, formatTime) : undefined;
 
   useFocusTrap(true, panelRef);
@@ -231,6 +233,36 @@ function TitleModalBody({
     );
   };
 
+  // —— 卡片上点「播放」进来的：看过的直接续播；没看过的等搜到片源（全部搜完，或 2.5 秒后已有 2 个以上的源）就用排第一的开播 ——
+  const [autoplay, setAutoplay] = useState(Boolean(pick.autoplay));
+  const autoplayStart = useRef(Date.now());
+  const [autoTick, setAutoTick] = useState(0);
+  useEffect(() => {
+    if (!autoplay) return;
+    const timer = setInterval(() => setAutoTick((n) => n + 1), 500);
+    return () => clearInterval(timer);
+  }, [autoplay]);
+  const resumeRef = useRef(resume);
+  resumeRef.current = resume;
+  useEffect(() => {
+    if (!autoplay || historyBox === undefined) return;
+    if (history && resumeView) {
+      setAutoplay(false);
+      resumeRef.current();
+      return;
+    }
+    const firstGroup = ranked[0]?.items ?? [];
+    const waitedEnough = Date.now() - autoplayStart.current > 2500 && firstGroup.length >= 2;
+    if (best && (searchDone || waitedEnough)) {
+      setAutoplay(false);
+      addSearchHistory(best.name).catch(() => {});
+      router.push(buildWatchUrl({ sourceKey: best.sourceKey, vodId: best.vodId, index: 0, title: best.name, sourceUrl: best.sourceUrl }));
+      return;
+    }
+    // 搜完了也没有：停下来，弹窗照常显示「暂无片源」
+    if ((settled && !lookingUpAliases && shown.length === 0) || nothingFound || noSourcesConfigured) setAutoplay(false);
+  }, [autoplay, autoTick, historyBox, history, resumeView, ranked, best, searchDone, settled, lookingUpAliases, shown.length, nothingFound, noSourcesConfigured, router]);
+
   const primary = (() => {
     if (history && resumeView) return { label: `继续播放 · ${resumeView.posterLabel}`, onClick: resume };
     if (best) {
@@ -282,6 +314,16 @@ function TitleModalBody({
         >
           <Icon name="close" className="w-5 h-5" />
         </button>
+
+        {autoplay && (
+          <div className="absolute top-3 left-3 right-14 z-20 flex items-center gap-2 rounded-full bg-black/60 backdrop-blur-xl border border-white/15 px-3 py-1.5 text-xs text-white">
+            <Spinner size="sm" />
+            <span className="truncate">{history ? '正在接着上次播放…' : '正在挑最好的片源，马上开播…'}</span>
+            <button type="button" className="ml-auto shrink-0 text-white/80 hover:text-white underline" onClick={() => setAutoplay(false)}>
+              取消
+            </button>
+          </div>
+        )}
 
         {/* 大图：有横图用横图，没有就用海报虚化铺底 */}
         <div className="relative h-56 sm:h-72 bg-chip overflow-hidden">

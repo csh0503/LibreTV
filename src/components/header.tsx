@@ -57,7 +57,7 @@ export function Header({ showSearch = false }: { showSearch?: boolean }) {
   return (
     <>
       <header className="sticky top-0 z-40 glass !border-x-0 !border-t-0">
-        <div className="max-w-6xl mx-auto px-4 h-14 flex items-center gap-3">
+        <div className="max-w-[1680px] mx-auto px-4 sm:px-6 lg:px-8 h-14 flex items-center gap-3">
           <Link href="/" aria-label="LibreTV 首页" className="flex items-center shrink-0">
             {/* 文字品牌（Apple TV 式），不再用彩色图标 */}
             <span className="text-[17px] font-semibold tracking-[-0.02em] text-content">

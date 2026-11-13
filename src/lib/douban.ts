@@ -47,6 +47,7 @@ function fallbackProxies(): string[] {
 }
 
 const LEGACY_SORT: Record<DoubanRequest['sort'], string> = {
+  T: 'recommend',
   U: 'recommend',
   S: 'rank',
   R: 'time',
@@ -117,7 +118,8 @@ async function fetchBiliSeasonIndex(query: DoubanFetchQuery): Promise<DoubanItem
   // 「连载中」按热度排时前面多是挂着「连载」标记的老番，改按最近更新排，当季在更新的才会在前面
   // 「热度」要的是现在热：B站片库的「播放量」是历来总播放（《三国演义》《全职猎人》排最前），
   // 剧集类改按最近更新取（当季在更新的在前），再交给融合时的时效系数排；电影没有「更新」，仍按播放量、靠时效系数压后
-  const order = query.sort === 'S' ? 4 : query.sort === 'R' || query.status === 'airing' || (query.sort === 'U' && query.kind === 'tv') ? 0 : 2;
+  // 总热门（T）要的就是历来总播放；近期热门（U）的剧集类才按最近更新取
+  const order = query.sort === 'S' ? 4 : query.sort === 'T' ? 2 : query.sort === 'R' || query.status === 'airing' || (query.sort === 'U' && query.kind === 'tv') ? 0 : 2;
   const yearTag = tags.find((t) => /^\d{4}$/.test(t));
   const yearParam = yearTag ? `&year=${encodeURIComponent(`[${yearTag},${Number(yearTag) + 1})`)}` : '';
 
@@ -231,7 +233,9 @@ async function fetchTmdbDiscoverCatalog(query: DoubanFetchQuery): Promise<Douban
   }
 
   const sortBy =
-    query.sort === 'S'
+    query.sort === 'T'
+      ? 'vote_count.desc'
+      : query.sort === 'S'
       ? 'vote_average.desc'
       : query.sort === 'R'
         ? isTv
@@ -332,7 +336,7 @@ async function fetchTmdbDiscoverCatalog(query: DoubanFetchQuery): Promise<Douban
  */
 /** 片库融合的排序方式：U 现在热门 / S 高分 / R 最新 */
 export interface CatalogRank {
-  sort: 'U' | 'S' | 'R';
+  sort: 'T' | 'U' | 'S' | 'R';
   /** 每份列表的权重，和 lists 一一对应（缺省 1） */
   weights?: number[];
   /** 「历来热门」的来源（B站片库、Bangumi）：热度排序、没选年份时，一年多没新集 / 不是近一年的作品不放 */
@@ -446,6 +450,8 @@ export function fuseCatalogItems(lists: DoubanItem[][], limit: number, rank?: Ca
       const year = slot.item.yearSoft ? NaN : parseInt(slot.item.year ?? '', 10);
       return (Number.isFinite(date) ? 1970 + date : Number.isFinite(year) ? year + 0.5 : 0) * 10 + slot.score;
     }
+    // 总热门：只看各来源名次融合，不乘时效系数（老剧不扣分）
+    if (rank.sort === 'T') return slot.score;
     const r = parseFloat(slot.item.rating ?? '');
     const ratingNudge = Number.isFinite(r) && r > 0 ? 1 + 0.06 * Math.max(-1, Math.min(1, (ratingOf(slot.item) - 7) / 2)) : 1;
     return slot.score * freshnessFactor(slot.item, now) * ratingNudge;

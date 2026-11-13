@@ -16,6 +16,7 @@
 | 部署目录 | `/opt/libretv`（Docker Compose：`libretv` + `libretv-caddy`） |
 | 代码 | `/opt/libretv/src` = GitHub `csh0503/LibreTV` 的 `main`，**在伺服器上自己 build**，推送后**不会**自动更新 |
 | 设定档数据 | `/opt/libretv/data/`（挂到容器 `/app/.data`，`syncStorage` = `file`） |
+| 本地片库 | `/opt/libretv/data/catalog/catalog.db`（SQLite，Node 22 自带的 `node:sqlite`）。容器启动后在背景自己抓：片库空的时候先全量（约 40~60 分钟，期间片库页先用现场抓取，B站 / 豆瓣抓完就能用），之后每小时增量、每 7 天全量。首页快照（`/api/home`）也存在这里。删掉这个目录 = 重新抓一遍，不影响设定档；每日备份不包含它 |
 
 ## 2. 请求怎么走
 
@@ -73,6 +74,17 @@ sudo tar czf ~/libretv-data-$(date +%F).tar.gz -C /opt/libretv data
 5. `mkdir -p data && sudo chown 100:101 data`（容器里 `nextjs` 用户是 uid 100），恢复设定档备份到 `data/`。
 6. 安装 cron：`sudo install -m 644 scripts/libretv-duckdns.cron /etc/cron.d/libretv-duckdns`、`sudo install -m 644 scripts/libretv-backup.cron /etc/cron.d/libretv-backup`。
 7. 路由器：DHCP 静态 IP、端口转发 TCP 443 → 伺服器。`docker compose up -d`，等 Caddy 日志出现 `certificate obtained successfully`。
+
+### 本地片库 / 首页快照的开关（`.env`，一般不用设）
+
+| 变量 | 作用 |
+|---|---|
+| `CATALOG_DISABLED=1` | 不用本地片库（片库页回到现场抓取，首页快照也不存盘） |
+| `CATALOG_SYNC=0` | 用已有的库，但不再背景同步 |
+| `HOME_SNAPSHOT=0` | 不在背景重算首页快照（`/api/home` 第一次被请求时才算） |
+| `CATALOG_DB=/路径` | 换库文件位置（默认 `/app/.data/catalog/catalog.db`） |
+
+看同步进度：登录网站后打开 `https://qingran-libretv.duckdns.org/api/catalog?sync=1`（各频道作品数、上次全量 / 增量时间、出错信息），或 `docker logs libretv | grep catalog`。
 
 ## 6. 踩过的坑
 

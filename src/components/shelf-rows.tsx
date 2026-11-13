@@ -12,7 +12,8 @@ import { useProfile } from '@/lib/use-profile';
 import { rememberDoubanItem } from '@/lib/taste-store';
 import type { DoubanItem, TitlePick } from '@/lib/types';
 import { ShelfRow } from './home-rows';
-import { DoubanCard } from './video-card';
+import { DoubanCard, SHELF_CARD_W } from './video-card';
+import { cn } from '@/lib/utils';
 import { statusBadgeOf } from '@/lib/catalog-meta';
 import { emptySubscribe, readHotList, readShelfBatch, rememberHotList, rememberShelf } from '@/lib/view-cache';
 
@@ -170,7 +171,7 @@ export function ShelfRows({
           return (
             <ShelfRow key={def.id} title={def.title}>
               {Array.from({ length: 7 }).map((_, i) => (
-                <div key={i} className="w-[7.25rem] sm:w-32 shrink-0 aspect-[2/3] rounded-xl bg-chip animate-pulse" />
+                <div key={i} className={cn(SHELF_CARD_W, 'shrink-0 aspect-[2/3] rounded-xl bg-chip animate-pulse')} />
               ))}
             </ShelfRow>
           );
@@ -179,7 +180,7 @@ export function ShelfRows({
         return (
           <ShelfRow key={def.id} title={def.title}>
             {items.map((item) => (
-              <div key={`${item.id}_${item.title}`} className="w-[7.25rem] sm:w-32 shrink-0">
+              <div key={`${item.id}_${item.title}`} className={cn(SHELF_CARD_W, 'shrink-0')}>
                 <DoubanCard
                   item={{
                     title: item.title,
@@ -193,11 +194,19 @@ export function ShelfRows({
                       year: item.year,
                     },
                     badge: statusBadgeOf(item),
+                    genres: item.genres,
+                    remarks: item.status === 'airing' ? undefined : item.remarks,
+                    subtitle: item.subtitle,
                   }}
                   onClick={() => {
                     void rememberDoubanItem(item, def.channel);
                     onPick(item.title, item);
                   }}
+                  onPlay={() => {
+                    void rememberDoubanItem(item, def.channel);
+                    onPick(item.title, { ...item, autoplay: true });
+                  }}
+                  notInterestable
                   onFavorite={() => {
                     void rememberDoubanItem(item, def.channel);
                   }}
@@ -207,7 +216,7 @@ export function ShelfRows({
             <button
               type="button"
               onClick={() => onBrowse(def.channel)}
-              className="w-[7.25rem] sm:w-32 shrink-0 aspect-[2/3] rounded-xl border border-dashed border-line bg-surface/60 text-muted hover:text-content hover:bg-hover hover:border-accent/50 transition-colors flex flex-col items-center justify-center gap-2 cursor-pointer"
+              className={cn(SHELF_CARD_W, 'shrink-0 aspect-[2/3] rounded-xl border border-dashed border-line bg-surface/60 text-muted hover:text-content hover:bg-hover hover:border-accent/50 transition-colors flex flex-col items-center justify-center gap-2 cursor-pointer')}
             >
               <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />

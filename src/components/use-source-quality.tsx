@@ -7,7 +7,7 @@ import { PROXY_BASE, unproxyM3u8 } from '@/lib/m3u8';
 import { probeEpisode } from '@/lib/quality-probe';
 import { qualityKey, rankSources } from '@/lib/source-rank';
 import { resolveSource, useAppStore } from '@/lib/store';
-import { qualityLabel, type SourceQuality } from '@/lib/stream-quality';
+import { bitrateNote, qualityLabel, type SourceQuality } from '@/lib/stream-quality';
 import type { SearchResultItem, SourceConfig } from '@/lib/types';
 
 /**
@@ -21,7 +21,8 @@ import type { SearchResultItem, SourceConfig } from '@/lib/types';
 const MAX_PROBE = 60;
 const CONCURRENCY = 8;
 const TTL = 6 * 3600_000;
-const STORE_KEY = 'libretv:quality:v1';
+// v2：码率改成抽 2~3 片取中位数、伺服器帮忙量（v1 大多没有码率）
+const STORE_KEY = 'libretv:quality:v2';
 const MAX_STORED = 600;
 
 type Stored = Record<string, { q: SourceQuality; at: number }>;
@@ -95,14 +96,31 @@ async function readText(url: string, signal?: AbortSignal): Promise<string> {
   }
 }
 
-/** 跨域时只读得到 Content-Length：HEAD 一下，读不到就算了（只是少了码率估算） */
-async function readSize(url: string, signal?: AbortSignal): Promise<number> {
+/** 浏览器直连 HEAD 读 Content-Length（CDN 给跨域头时才读得到） */
+async function readSizeDirect(url: string, signal?: AbortSignal): Promise<number> {
   try {
     const res = await fetch(url, { method: 'HEAD', signal: timeoutSignal(signal, 4000) });
     const len = parseInt(res.headers.get('content-length') ?? '', 10);
     return res.ok && Number.isFinite(len) && len > 1 ? len : 0;
   } catch {
     return 0;
+  }
+}
+
+/**
+ * 抽样分片的大小：先浏览器直连 HEAD；读不到的（多数 CDN 不给跨域头）交给伺服器量
+ * （HEAD 或 Range: bytes=0-0，只读响应头不下载内容）。都读不到就是 0（只是少了码率）。
+ */
+async function readSizes(urls: string[], signal?: AbortSignal): Promise<number[]> {
+  const direct = await Promise.all(urls.map((u) => readSizeDirect(u, signal)));
+  const missing = urls.filter((_, i) => !direct[i]);
+  if (missing.length === 0 || signal?.aborted) return direct;
+  try {
+    const { sizes } = await api.segmentSize(missing.slice(0, 3), timeoutSignal(signal, 8000));
+    let k = 0;
+    return direct.map((d) => d || (sizes[k++]?.bytes ?? 0));
+  } catch {
+    return direct;
   }
 }
 
@@ -121,7 +139,7 @@ async function probeLocal(c: Candidate, signal?: AbortSignal): Promise<SourceQua
     if (!first) return { key: c.key, ok: false, error: '没有播放地址' };
     const result = await probeEpisode(first, {
       text: (url) => readText(url, signal),
-      segmentBytes: (url) => readSize(url, signal),
+      segmentBytes: (urls) => readSizes(urls, signal),
     });
     return { key: c.key, ...result };
   } catch (err) {
@@ -185,19 +203,21 @@ export function useSourceQuality(groups: SearchResultItem[][], enabled: boolean)
   return { qualityMap, isFetching };
 }
 
-/** 源按钮上的质检小标签：「1080P」「约720P」「广告15秒·已跳过」「无插入广告」 */
+/** 源按钮上的质检小标签：「720P · 2.6Mbps 高码率」「1080P · 0.7Mbps 偏糊」「已去广告 15 秒」「无插入广告」 */
 export function QualityTag({ q }: { q?: SourceQuality }) {
   // 测不了的不显示（原因只对排查有用）；「疑似广告」是还在观察的规则，也不给用户看
   if (!q || !q.ok) return null;
   const label = q.height ? `${q.estimated ? '约' : ''}${qualityLabel(q.height)}` : '';
+  // 码率只在分辨率是写明的时候单独标（估出来的分辨率本来就是按码率猜的）
+  const rate = q.kbps && !q.estimated ? bitrateNote(q.height ?? 0, q.kbps) : '';
   const ads = q.adSeconds && q.adSeconds > 0 ? `已去广告 ${q.adSeconds} 秒` : q.height || q.kbps || q.adSeconds === 0 ? '无插入广告' : '';
   if (!label && !ads) return null;
   return (
     <span
       className="ml-1 text-faint"
-      title={[q.kbps ? `约 ${(q.kbps / 1000).toFixed(1)} Mbps` : '', q.minutes ? `第 1 集 ${q.minutes} 分钟` : ''].filter(Boolean).join(' · ') || undefined}
+      title={[q.kbps ? `实测约 ${(q.kbps / 1000).toFixed(1)} Mbps` : '', q.minutes ? `第 1 集 ${q.minutes} 分钟` : ''].filter(Boolean).join(' · ') || undefined}
     >
-      · {[label, ads].filter(Boolean).join(' · ')}
+      · {[label, rate, ads].filter(Boolean).join(' · ')}
     </span>
   );
 }

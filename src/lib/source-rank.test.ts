@@ -60,3 +60,28 @@ describe('rankSources：你真的播过的表现', () => {
     expect(ranked.map((r) => r.sourceKey)).toEqual(['e', 'b', 'a', 'c', 'd']);
   });
 });
+
+describe('rankSources：真实码率，虚标 1080P 不再排在真 720P 前面', () => {
+  it('600 kbps 的「1080P」排在 2500 kbps 的 720P 后面；码率够的 1080P 仍在最前', () => {
+    const quality = {
+      fake_fake: { key: 'fake_fake', ok: true, height: 1080, kbps: 600 },
+      real720_real720: { key: 'real720_real720', ok: true, height: 720, kbps: 2500 },
+      hd_hd: { key: 'hd_hd', ok: true, height: 1080, kbps: 3200 },
+      low720_low720: { key: 'low720_low720', ok: true, height: 720, kbps: 1000 },
+    };
+    const ranked = rankSources([item('fake'), item('low720'), item('real720'), item('hd')], {}, quality, {});
+    expect(ranked.map((r) => r.sourceKey)).toEqual(['hd', 'real720', 'low720', 'fake']);
+  });
+
+  it('质检量不到码率时，用播放时实测的码率识破虚标', () => {
+    const quality = {
+      a_a: { key: 'a_a', ok: true, height: 1080 },
+      b_b: { key: 'b_b', ok: true, height: 720 },
+    };
+    const playback = {
+      a: { plays: 2, stalls: 0, fails: 0, at: 0, kbps: 700 },
+      b: { plays: 2, stalls: 0, fails: 0, at: 0, kbps: 2200 },
+    };
+    expect(rankSources([item('a'), item('b')], {}, quality, playback).map((r) => r.sourceKey)).toEqual(['b', 'a']);
+  });
+});

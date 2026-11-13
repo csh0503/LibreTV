@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { FP_RATE, decodeTemplate, encodeTemplate, findCommonSegment, fingerprint } from './audio-fingerprint';
-import { detectIntro, detectOutro } from './audio-skip';
+import { detectAcrossEpisodes, detectIntro, detectOutro } from './audio-skip';
 import { loadSegments, parseMediaSegments, type HlsAudioDeps } from './hls-audio';
 import { concat, music, scaleWithNoise, speech, wrapTs } from './test-utils/synth-audio';
 
@@ -128,4 +128,106 @@ describe('detectIntro / detectOutro：从 HLS 片源里取音频比对', () => {
     expect(parseMediaSegments('#EXTM3U\n#EXT-X-MAP:URI="init.mp4"\n#EXTINF:5,\na.m4s', 'https://x/', false)).toBeNull();
     expect(parseMediaSegments('#EXTM3U\n#EXT-X-KEY:METHOD=SAMPLE-AES,URI="k"\n#EXTINF:5,\na.ts', 'https://x/', false)).toBeNull();
   });
+});
+
+/** 一组假片源：files 里放好每集的播放列表和分片 */
+async function episodesOf(eps: Record<string, Float32Array>) {
+  const files = new Map<string, Uint8Array>();
+  for (const [name, pcm] of Object.entries(eps)) for (const [k, v] of await makeEpisode(name, pcm)) files.set(k, v);
+  const deps: HlsAudioDeps = {
+    fetchText: async (url) => ({ text: new TextDecoder().decode(files.get(url)!), url }),
+    fetchBytes: async (url) => files.get(url)!,
+    decode: async (data) => new Float32Array(data.slice().buffer),
+  };
+  const load = async (name: string) => (await loadSegments(`https://cdn.test/${name}/index.m3u8`, false, deps))!;
+  return { deps, load };
+}
+
+describe('片头曲中间插了独白 / 音效：不从中间切断', () => {
+  it('90 秒片头曲中间有 8 秒每集不同的独白：两集比对给出完整 90 秒（以前只给后半段 42 秒，跳到片头中间）', async () => {
+    const first = music(40, 51);
+    const second = music(42, 52);
+    const opWith = (seed: number) => concat(first, speech(8, seed), second);
+    const ep1 = concat(speech(30, 53), opWith(54), speech(400, 55));
+    const ep2 = scaleWithNoise(concat(speech(70, 56), opWith(57), speech(380, 58)), 0.8, 59);
+    const { deps, load } = await episodesOf({ g1: ep1, g2: ep2 });
+    const intro = await detectIntro({ current: await load('g1'), other: await load('g2'), deps });
+    expect(Math.abs(intro.seg!.start - 30)).toBeLessThan(1);
+    expect(Math.abs(intro.seg!.end - 120)).toBeLessThan(1.5);
+  }, 60_000);
+
+  it('厂牌片头 + 长短不一的冷开场 + 片头曲：只认片头曲，不把冷开场一起跳掉', async () => {
+    const logo = music(6, 61);
+    const op = music(90, 62);
+    const ep1 = concat(logo, speech(20, 63), op, speech(300, 64));
+    const ep2 = concat(logo, speech(45, 65), op, speech(300, 66));
+    const { deps, load } = await episodesOf({ h1: ep1, h2: ep2 });
+    const intro = await detectIntro({ current: await load('h1'), other: await load('h2'), deps });
+    expect(Math.abs(intro.seg!.start - 26)).toBeLessThan(1);
+    expect(Math.abs(intro.seg!.end - 116)).toBeLessThan(1.5);
+  }, 60_000);
+});
+
+describe('尾段模板不对上前面那遍副歌', () => {
+  it('片头曲第一遍副歌和最后一遍一样：结束点仍在片头真正的结尾', async () => {
+    const chorus = music(20, 71);
+    const op = concat(music(25, 72), chorus, music(25, 73), chorus);
+    const ep1 = concat(speech(30, 74), op, speech(300, 75));
+    const ep2 = concat(speech(60, 76), op, speech(300, 77));
+    const ep3 = concat(speech(45, 78), op, speech(300, 79));
+    const { deps, load } = await episodesOf({ c1: ep1, c2: ep2, c3: ep3 });
+    const first = await detectIntro({ current: await load('c1'), other: await load('c2'), deps });
+    expect(first.template?.tail).toBeDefined();
+    const third = await detectIntro({ current: await load('c3'), template: first.template, deps });
+    expect(Math.abs(third.seg!.start - 45)).toBeLessThan(1);
+    expect(Math.abs(third.seg!.end - 135)).toBeLessThan(1);
+  }, 60_000);
+});
+
+describe('detectAcrossEpisodes：短结果要两集确认才存模板', () => {
+  it('够长的直接存', async () => {
+    const op = music(80, 81);
+    const { deps, load } = await episodesOf({
+      a1: concat(speech(20, 82), op, speech(200, 83)),
+      a2: concat(speech(35, 84), op, speech(200, 85)),
+    });
+    const r = await detectAcrossEpisodes({ kind: 'intro', current: await load('a1'), others: [() => load('a2')], deps });
+    expect(r.save).toBe(true);
+    expect(Math.abs(r.seg!.end - r.seg!.start - 80)).toBeLessThan(1.5);
+  }, 60_000);
+
+  it('只有 35 秒、只比了一集：这集照用，但不存模板', async () => {
+    const op = music(35, 86);
+    const { deps, load } = await episodesOf({
+      b1: concat(speech(20, 87), op, speech(200, 88)),
+      b2: concat(speech(35, 89), op, speech(200, 90)),
+    });
+    const r = await detectAcrossEpisodes({ kind: 'intro', current: await load('b1'), others: [() => load('b2')], deps });
+    expect(r.seg).toBeDefined();
+    expect(r.save).toBe(false);
+  }, 60_000);
+
+  it('真的只有 35 秒的短片头：两集都比出一样的就存', async () => {
+    const op = music(35, 91);
+    const { deps, load } = await episodesOf({
+      s1: concat(speech(20, 92), op, speech(200, 93)),
+      s2: concat(speech(35, 94), op, speech(200, 95)),
+      s3: concat(speech(50, 96), op, speech(200, 97)),
+    });
+    const r = await detectAcrossEpisodes({
+      kind: 'intro',
+      current: await load('s1'),
+      others: [() => load('s2'), () => load('s3')],
+      deps,
+    });
+    expect(r.save).toBe(true);
+    expect(Math.abs(r.seg!.start - 20)).toBeLessThan(1);
+  }, 60_000);
+
+  it('都比不出来：记成这集没有', async () => {
+    const { deps, load } = await episodesOf({ n1: speech(240, 98), n2: speech(240, 99) });
+    const r = await detectAcrossEpisodes({ kind: 'intro', current: await load('n1'), others: [() => load('n2')], deps });
+    expect(r.seg).toBeUndefined();
+    expect(r.missed).toBe(true);
+  }, 60_000);
 });

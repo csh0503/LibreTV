@@ -1,14 +1,14 @@
 import { makeAbsolute } from './m3u8';
-import { analyzeMediaPlaylist, bestVariant, heightFromKbps, parseMasterPlaylist, type SourceQuality } from './stream-quality';
+import { analyzeMediaPlaylist, bestVariant, heightFromKbps, medianKbps, parseMasterPlaylist, type SourceQuality } from './stream-quality';
 
 /**
  * 拿到第 1 集的播放地址之后的质检步骤（在浏览器里跑，取数据的方式由调用方给）：
- * 读播放列表 → 主播放列表就挑最高一档 → 数广告 → 量一个分片估码率。
+ * 读播放列表 → 主播放列表就挑最高一档 → 数广告 → 量正片中段 2~3 个分片的大小，取中位数算真实码率。
  */
 export interface ProbeFetchers {
   text: (url: string) => Promise<string>;
-  /** 分片字节数；量不到返回 0 */
-  segmentBytes: (url: string) => Promise<number>;
+  /** 一批分片的字节数（同顺序）；量不到的给 0 */
+  segmentBytes: (urls: string[]) => Promise<number[]>;
 }
 
 export async function probeEpisode(firstUrl: string, f: ProbeFetchers): Promise<Omit<SourceQuality, 'key'>> {
@@ -28,9 +28,9 @@ export async function probeEpisode(firstUrl: string, f: ProbeFetchers): Promise<
   }
   const info = analyzeMediaPlaylist(content, playlistUrl);
   let kbps = 0;
-  if (info.sampleSegment) {
-    const bytes = await f.segmentBytes(makeAbsolute(info.sampleSegment.uri, playlistUrl));
-    if (bytes > 0) kbps = Math.round((bytes * 8) / info.sampleSegment.seconds / 1000);
+  if (info.sampleSegments.length > 0) {
+    const sizes = await f.segmentBytes(info.sampleSegments.map((x) => makeAbsolute(x.uri, playlistUrl))).catch(() => []);
+    kbps = medianKbps(info.sampleSegments.map((x, i) => ({ bytes: sizes[i] ?? 0, seconds: x.seconds })));
   }
   return {
     ok: true,

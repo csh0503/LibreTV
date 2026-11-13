@@ -98,6 +98,32 @@ async function consumeNdjson<T>(res: Response, onEvent: (event: T) => void): Pro
   consume(buffer);
 }
 
+/**
+ * 首页公共内容快照（/api/home）：大图、TOP 10 各榜、即将播出、所有货架一个请求拿齐。
+ * 各行照旧调用 hotList / shelves / upcoming，先看快照里有没有，没有才各自请求。
+ * 同一页里共用一个请求，10 分钟后再取会重新拉。
+ */
+interface HomeSnapshotPayload {
+  ready: boolean;
+  at?: number;
+  hotLists?: Record<string, { items: DoubanItem[]; meta?: unknown }>;
+  shelves: Record<string, DoubanItem[]>;
+  upcoming?: import('./upcoming').UpcomingItem[];
+  calendar?: { weekday: number; items: DoubanItem[] }[];
+}
+let homeSnapshotPromise: Promise<HomeSnapshotPayload | null> | null = null;
+let homeSnapshotFetchedAt = 0;
+function homeSnapshot(): Promise<HomeSnapshotPayload | null> {
+  if (typeof window === 'undefined') return Promise.resolve(null);
+  if (!homeSnapshotPromise || Date.now() - homeSnapshotFetchedAt > 10 * 60_000) {
+    homeSnapshotFetchedAt = Date.now();
+    homeSnapshotPromise = request<HomeSnapshotPayload>('/api/home')
+      .then((s) => (s?.ready ? { ...s, shelves: s.shelves ?? {} } : null))
+      .catch(() => null);
+  }
+  return homeSnapshotPromise;
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
@@ -210,7 +236,11 @@ export const api = {
   },
 
   /** Bangumi 每日放送（免 key），首页推荐的另一数据源 */
-  bangumiCalendar: (signal?: AbortSignal) => request<BangumiCalendarResponse>('/api/bangumi/calendar', { signal }),
+  bangumiCalendar: async (signal?: AbortSignal) => {
+    const days = (await homeSnapshot())?.calendar;
+    if (days?.length) return { days } as BangumiCalendarResponse;
+    return request<BangumiCalendarResponse>('/api/bangumi/calendar', { signal });
+  },
 
   /** 数据源体检：现场请求每个上游一次 */
   diagnostics: (signal?: AbortSignal) =>
@@ -220,7 +250,10 @@ export const api = {
       results: { group: string; name: string; ok: boolean; count: number; ms: number; error?: string; sample: string[] }[];
     }>('/api/diagnostics', { signal }),
 
-  hotList: (id: string, signal?: AbortSignal) => {
+  hotList: async (id: string, signal?: AbortSignal) => {
+    // 首页快照里有就直接用（大图、TOP 10 各页、排行页共用一个请求）
+    const hit = (await homeSnapshot())?.hotLists?.[id];
+    if (hit?.items?.length) return hit as DoubanResponse;
     const sp = new URLSearchParams({ id });
     return request<DoubanResponse>(`/api/hot-list?${sp.toString()}`, { signal });
   },
@@ -232,7 +265,11 @@ export const api = {
   },
 
   /** 首页货架，一次最多三行。某一行失败时带 error，其他行照常返回。 */
-  shelves: (ids: string[], signal?: AbortSignal) => {
+  shelves: async (ids: string[], signal?: AbortSignal) => {
+    const snap = await homeSnapshot();
+    if (snap && ids.every((id) => snap.shelves?.[id]?.length)) {
+      return { shelves: ids.map((id) => ({ id, items: snap.shelves[id], error: undefined as string | undefined })) };
+    }
     const sp = new URLSearchParams({ ids: ids.join(',') });
     return request<{ shelves: { id: string; items: DoubanItem[]; error?: string }[] }>(`/api/shelves?${sp.toString()}`, { signal });
   },
@@ -272,8 +309,65 @@ export const api = {
     return request<{ malId: number | null } & import('./skip-times').SkipTimes>(`/api/skip-times?${sp.toString()}`, { signal });
   },
 
-  upcoming: (signal?: AbortSignal) =>
-    request<{ items: import('./upcoming').UpcomingItem[] }>('/api/upcoming', { signal }),
+  upcoming: async (signal?: AbortSignal) => {
+    const snap = await homeSnapshot();
+    if (snap?.upcoming?.length) return { items: snap.upcoming };
+    return request<{ items: import('./upcoming').UpcomingItem[] }>('/api/upcoming', { signal });
+  },
+
+  /** 片单「上线了」：查伺服器本地片库记下的点播源最近更新（不整站搜） */
+  availability: (titles: string[], signal?: AbortSignal) =>
+    request<{ ready: boolean; results: Record<string, { sources: number; remarks?: string }> }>('/api/availability', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ titles }),
+      signal,
+    }),
+
+  /**
+   * 本地片库（伺服器 SQLite）：四种排序 + 游标翻页。ready=false 表示这个部署没有本地片库 / 还没建好，
+   * 调用方退回 /api/douban 现场抓取。
+   */
+  catalog: (
+    query: {
+      channel: string;
+      sort: string;
+      dir?: 'asc' | 'desc';
+      genre?: string;
+      area?: string;
+      year?: string;
+      status?: string;
+      score?: number | null;
+      cursor?: string | null;
+      limit?: number;
+    },
+    signal?: AbortSignal,
+  ) => {
+    const sp = new URLSearchParams({ channel: query.channel, sort: query.sort });
+    if (query.dir === 'asc') sp.set('dir', 'asc');
+    if (query.genre && query.genre !== '全部') sp.set('genre', query.genre);
+    if (query.area && query.area !== '全部') sp.set('area', query.area);
+    if (query.year && query.year !== '全部') sp.set('year', query.year);
+    if (query.status && query.status !== 'all') sp.set('status', query.status);
+    if (query.score) sp.set('score', String(query.score));
+    if (query.cursor) sp.set('cursor', query.cursor);
+    if (query.limit) sp.set('limit', String(query.limit));
+    return request<{
+      ready: boolean;
+      items?: (DoubanItem & { workId: string; available?: number })[];
+      nextCursor?: string | null;
+      total?: number;
+    }>(`/api/catalog?${sp.toString()}`, { signal });
+  },
+
+  /** 伺服器量分片大小（浏览器直连读不到 Content-Length 时，片源质检算码率用；最多 3 个） */
+  segmentSize: (urls: string[], signal?: AbortSignal) =>
+    request<{ sizes: { bytes: number; ms: number }[] }>('/api/segment-size', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ urls }),
+      signal,
+    }),
 
   /** 换源：按标题跨源搜索并取详情，附带接口耗时（测速）；支持 signal 以便关闭弹窗时中止在途请求 */
   detailSpeed: async (id: string, source: SourceConfig, signal?: AbortSignal) => {

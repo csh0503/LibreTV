@@ -15,7 +15,7 @@ import { loadCacheSettings } from '@/lib/video-cache';
 import { cn, formatTime } from '@/lib/utils';
 import type { SkipSegment } from '@/lib/skip-segment';
 import { PLAYBACK_RATES, SEEK_STEPS, loadPlayerPrefs, savePlayerPrefs } from '@/lib/player-prefs';
-import { recordPlaybackFail, recordPlaybackStart, recordStall } from '@/lib/playback-stats';
+import { recordPlaybackBitrate, recordPlaybackFail, recordPlaybackStart, recordStall } from '@/lib/playback-stats';
 import { SeekPreview } from '@/lib/seek-preview';
 
 /**
@@ -102,7 +102,12 @@ interface PlayerShellProps {
   positionRef?: React.MutableRefObject<{ time: number; duration: number }>;
   /** 「下一集」预览卡上的文字，如「第 5 集」 */
   nextTitle?: string;
+  /** 跳过之后点了「跳错了」：已退回跳过前的位置，父级丢掉这段的声音模板、重新比对 */
+  onSkipWrong?: (kind: 'intro' | 'outro') => void;
 }
+
+/** 跳过片头 / 片尾后，「跳错了？」留多久 */
+const SKIP_WRONG_MS = 8000;
 
 export function PlayerShell({
   url,
@@ -124,6 +129,7 @@ export function PlayerShell({
   onNextEpisode,
   positionRef,
   nextTitle,
+  onSkipWrong,
 }: PlayerShellProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [overlayHost, setOverlayHost] = useState<HTMLDivElement | null>(null);
@@ -140,12 +146,12 @@ export function PlayerShell({
   const propsRef = useRef({
     url, title, adFilter, autoplayNext, episodeKey, nextUrl, nextEpisodeKey,
     getRestorePosition, onTimeUpdate, onEnded, onPause, onRequestSwitchSource, onNextPrefetchState,
-    skip, onNextEpisode, positionRef, adSkips, overlay,
+    skip, onNextEpisode, positionRef, adSkips, overlay, onSkipWrong,
   });
   propsRef.current = {
     url, title, adFilter, autoplayNext, episodeKey, nextUrl, nextEpisodeKey,
     getRestorePosition, onTimeUpdate, onEnded, onPause, onRequestSwitchSource, onNextPrefetchState,
-    skip, onNextEpisode, positionRef, adSkips, overlay,
+    skip, onNextEpisode, positionRef, adSkips, overlay, onSkipWrong,
   };
 
   // 跨集共享、每次换集重置的播放链路状态
@@ -176,6 +182,11 @@ export function PlayerShell({
   // 自动跳过的倒数：进入片头 / 片尾后先倒数几秒（按播放时间），到了才跳
   const autoPendingRef = useRef<{ kind: 'intro' | 'outro'; at: number } | null>(null);
   const [autoLeft, setAutoLeft] = useState<number | null>(null);
+  // 刚跳过一段：短时间里显示「跳错了？」（退回跳过前的位置、让父级重测）
+  const [justSkipped, setJustSkipped] = useState<{ kind: 'intro' | 'outro'; from: number } | null>(null);
+  // 这一集播放时实测的分片码率（kbps），攒够就写回播放表现
+  const fragKbpsRef = useRef<{ samples: number[]; done: boolean }>({ samples: [], done: false });
+  const justSkippedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 长按加速中
   const [holdFast, setHoldFast] = useState(false);
   // 触屏：点一下画面出控制栏，中间放一个大的播放 / 暂停键（暂停时一直在）
@@ -325,8 +336,26 @@ export function PlayerShell({
       }
       return;
     }
+    const from = art.currentTime || seg.start;
     seekTo(seg.end);
     showHint(`${auto ? '已自动跳过' : '已跳过'}${kind === 'intro' ? '片头' : '片尾'}`);
+    if (propsRef.current.onSkipWrong) {
+      if (justSkippedTimerRef.current) clearTimeout(justSkippedTimerRef.current);
+      setJustSkipped({ kind, from });
+      justSkippedTimerRef.current = setTimeout(() => setJustSkipped(null), SKIP_WRONG_MS);
+    }
+  };
+
+  /** 「跳错了」：退回跳过前的位置，这段这一集不再自动跳，交给父级重测 */
+  const undoSkip = () => {
+    const js = justSkipped;
+    if (!js) return;
+    if (justSkippedTimerRef.current) clearTimeout(justSkippedTimerRef.current);
+    setJustSkipped(null);
+    skippedRef.current.add(js.kind);
+    seekTo(Math.max(0, js.from - 1));
+    showHint(`已退回，正在重新识别${js.kind === 'intro' ? '片头' : '片尾'}`);
+    propsRef.current.onSkipWrong?.(js.kind);
   };
 
   /** 这个源播不了：交给父级换源；父级没接就显示错误遮罩 */
@@ -484,7 +513,22 @@ export function PlayerShell({
       video.play().catch(() => {});
     });
     // 播放链路恢复（FRAG_LOADED / MANIFEST_PARSED）：静默窗外清零连续失败计数
-    hls.on(Hls.Events.FRAG_LOADED, () => recoveryRef.current?.markHealthy());
+    hls.on(Hls.Events.FRAG_LOADED, (_evt, data) => {
+      recoveryRef.current?.markHealthy();
+      // 实测码率：最高一档的正片分片（≥2 秒）攒 6 片取中位数，每集写回一次播放表现（选源排序用）
+      const acc = fragKbpsRef.current;
+      if (acc.done) return;
+      const bytes = (data.payload as ArrayBuffer | undefined)?.byteLength ?? 0;
+      const seconds = data.frag.duration;
+      const topLevel = hls.levels.length <= 1 || data.frag.level === hls.levels.length - 1;
+      if (!topLevel || typeof data.frag.sn !== 'number' || seconds < 2 || bytes < 1000) return;
+      acc.samples.push((bytes * 8) / seconds / 1000);
+      if (acc.samples.length >= 6) {
+        acc.done = true;
+        const sorted = [...acc.samples].sort((a, b) => a - b);
+        recordPlaybackBitrate(currentSourceKey(), (sorted[2] + sorted[3]) / 2, video.videoHeight);
+      }
+    });
     // 分片真正进入 MSE buffer 才算媒体恢复：此时视频轨可渲染，错误态可解除
     hls.on(Hls.Events.FRAG_BUFFERED, () => {
       mediaHealthyRef.current = true;
@@ -555,6 +599,8 @@ export function PlayerShell({
     autoPendingRef.current = null;
     setAutoLeft(null);
     setActiveSkip(null);
+    setJustSkipped(null);
+    fragKbpsRef.current = { samples: [], done: false };
     clearWatchdogs();
     armStartWatchdog();
     // 换集时清掉上一集的预取窗口，避免带宽被旧集占用
@@ -1427,6 +1473,19 @@ export function PlayerShell({
               setActiveSkip(null);
             }}
           />,
+          overlayHost,
+        )}
+      {justSkipped && !activeSkip && !upNext && !error && !overlay && overlayHost &&
+        createPortal(
+          <div className="pointer-events-auto absolute right-4 bottom-16 sm:bottom-20 flex items-center gap-2 animate-fade-in">
+            <button
+              type="button"
+              onClick={undoSkip}
+              className="px-3 py-2 rounded-xl border border-white/25 bg-black/55 text-white/90 text-xs backdrop-blur-sm hover:bg-black/75 cursor-pointer"
+            >
+              跳错了？退回并重测
+            </button>
+          </div>,
           overlayHost,
         )}
       {overlay && (overlayHost ? createPortal(overlay, overlayHost) : overlay)}

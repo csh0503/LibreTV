@@ -17,7 +17,7 @@ import {
   UpcomingRow,
 } from '@/components/home-rows';
 import { favoriteIdOf } from '@/lib/db';
-import { aggregateResults, DoubanCard, type AggregatedGroup } from '@/components/video-card';
+import { aggregateResults, DoubanCard, POSTER_GRID, type AggregatedGroup } from '@/components/video-card';
 import { useAppStore, isInDisabledSubscription, isSourceDisabled } from '@/lib/store';
 import { useLoadMore } from '@/components/use-load-more';
 import { useAliasFallback, useSourceSearch } from '@/components/use-source-search';
@@ -142,9 +142,10 @@ function HomeContent() {
   };
 
   /** 搜索结果卡片点开：同一个详情弹窗，片源直接用这张卡聚合到的，不再搜一遍 */
-  const openGroup = (group: AggregatedGroup) => {
+  const openGroup = (group: AggregatedGroup, opts?: { autoplay?: boolean }) => {
     setPresetItems(group.items);
     setTitlePick({
+      autoplay: opts?.autoplay,
       title: group.name,
       cover: group.pic,
       year: group.year,
@@ -209,7 +210,7 @@ function HomeContent() {
     <div className="min-h-screen flex flex-col">
       <Header />
 
-      <main className="relative flex-1 max-w-6xl w-full mx-auto px-4 py-6">
+      <main className="relative flex-1 max-w-[1680px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
         {/* 搜索区 */}
         {/* 首页不再放大号品牌字（Apple TV / Netflix 都是内容先行）：顶栏有品牌，这里只留一条搜索 */}
         <section className={cn('flex flex-col items-center', urlQuery ? 'mb-6' : 'mt-2 mb-7')}>
@@ -622,9 +623,19 @@ function SearchFilterBar({
   );
 }
 
-function SearchPosterGrid({ groups, onOpen }: { groups: AggregatedGroup[]; onOpen: (group: AggregatedGroup) => void }) {
+/**
+ * 搜索结果：和首页一样的海报卡（一部一张），不再把片源按钮原地展开撑乱网格。
+ * 卡片写「N 个片源」；悬停「播放」直接用最好的源开播，点卡片打开同一个详情弹窗选源选集。
+ */
+function SearchPosterGrid({
+  groups,
+  onOpen,
+}: {
+  groups: AggregatedGroup[];
+  onOpen: (group: AggregatedGroup, opts?: { autoplay?: boolean }) => void;
+}) {
   return (
-    <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 gap-3">
+    <div className={POSTER_GRID}>
       {groups.map((group) => {
         const sources = new Set(group.items.map((i) => i.sourceKey)).size;
         const remarks = group.remarks?.trim();
@@ -634,11 +645,14 @@ function SearchPosterGrid({ groups, onOpen }: { groups: AggregatedGroup[]; onOpe
             item={{
               title: group.name,
               cover: group.pic ?? '',
-              meta: [group.year, group.typeName, `${sources} 个源`].filter(Boolean).join(' · '),
+              meta: [group.year, group.typeName, `${sources} 个片源`].filter(Boolean).join(' · '),
               badge: remarks && remarks.length <= 12 ? { text: remarks, tone: 'ok' } : undefined,
+              remarks: remarks && remarks.length > 12 ? remarks : undefined,
+              genres: group.typeName,
               favorite: { localId: favoriteIdOf({ title: group.name }), title: group.name, pic: group.pic, year: group.year },
             }}
             onClick={() => onOpen(group)}
+            onPlay={() => onOpen(group, { autoplay: true })}
           />
         );
       })}

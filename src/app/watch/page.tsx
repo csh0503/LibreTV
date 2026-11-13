@@ -57,6 +57,10 @@ import { cn, formatTime } from '@/lib/utils';
  * 状态全部由 URL 驱动：/watch?source=xx&id=..&index=..&title=..
  * 集数列表由服务端详情接口获取；进度与历史走 IndexedDB。
  */
+/** 播放页内容宽度：跟着窗口变宽（不再锁死 1280px），超宽屏也留一点边 */
+const WATCH_WIDTH = 'w-full max-w-[1920px] 2xl:max-w-[2400px] mx-auto px-3 sm:px-6 lg:px-8';
+const THEATER_KEY = 'libretv:watch-theater';
+
 export default function WatchPage() {
   return (
     <Suspense>
@@ -334,6 +338,37 @@ function WatchContent() {
     });
   }, [store.autoplayNext, currentIndex, episodes.length, sourceKey, vodId]);
 
+  // 剧场 / 宽屏模式：右边剧集栏挪到下面，画面横向铺满窗口（记住偏好；快捷键 T）
+  const [theater, setTheater] = useState(false);
+  useEffect(() => {
+    try {
+      setTheater(localStorage.getItem(THEATER_KEY) === '1');
+    } catch {
+      // 读不到就用默认
+    }
+  }, []);
+  const toggleTheater = useCallback(() => {
+    setTheater((v) => {
+      try {
+        localStorage.setItem(THEATER_KEY, v ? '0' : '1');
+      } catch {
+        // 存不了就只这次有效
+      }
+      return !v;
+    });
+  }, []);
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.altKey || e.ctrlKey || e.metaKey || (e.key !== 't' && e.key !== 'T')) return;
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+      e.preventDefault();
+      toggleTheater();
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [toggleTheater]);
+
   // Alt+←/→ 集数切换快捷键
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -378,7 +413,7 @@ function WatchContent() {
   return (
     <div className="min-h-screen flex flex-col">
       <header className="sticky top-0 z-40 bg-surface/90 backdrop-blur border-b border-line">
-        <div className="max-w-7xl mx-auto px-4 h-14 flex items-center gap-3">
+        <div className={cn(WATCH_WIDTH, 'h-14 flex items-center gap-3')}>
           <BackButton />
           <HomeButton />
           <div className="min-w-0">
@@ -423,10 +458,21 @@ function WatchContent() {
         </div>
       </header>
 
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 py-4">
-        <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-4">
-          <div>
-            <div className="aspect-video bg-black rounded-xl overflow-hidden">
+      <main className={cn('flex-1', theater ? 'w-full py-0 sm:py-3' : cn(WATCH_WIDTH, 'py-4'))}>
+        <div
+          className={cn(
+            'grid grid-cols-1 gap-4',
+            !theater && 'lg:grid-cols-[minmax(0,1fr)_320px] xl:grid-cols-[minmax(0,1fr)_360px] 2xl:grid-cols-[minmax(0,1fr)_400px]',
+          )}
+        >
+          {/* 播放器：随窗口变大；高度不超过「窗口高 − 顶栏和操作栏」，大屏放大时控制栏不会被顶出屏幕 */}
+          <div className={cn('min-w-0', theater && 'bg-black')}>
+            <div
+              className={cn(
+                'bg-black overflow-hidden mx-auto w-full',
+                theater ? 'player-theater' : 'player-fit aspect-video rounded-xl',
+              )}
+            >
               {currentUrl ? (
                 <PlayerShell
                   url={currentUrl}
@@ -442,6 +488,7 @@ function WatchContent() {
                   onEnded={handleEnded}
                   onRequestSwitchSource={vodId ? failover.requestSwitch : undefined}
                   skip={episodeSkip}
+                  onSkipWrong={audioSkip.retest}
                   adSkips={adMarks}
                   onNextEpisode={
                     currentIndex + 1 < episodes.length
@@ -511,9 +558,67 @@ function WatchContent() {
                 </div>
               )}
             </div>
+          </div>
 
-            {/* 操作栏 */}
-            <div className="flex flex-wrap items-center gap-2 mt-3">
+          {/* 剧集侧栏：宽屏时在播放器右边、和播放器一样高（列表自己滚动）；剧场模式 / 手机在操作栏下面 */}
+          <aside className={cn('order-3', theater ? cn(WATCH_WIDTH, 'w-full') : 'lg:order-none lg:col-start-2 lg:row-start-1 lg:relative')}>
+            <div className={cn('bg-surface-raised rounded-xl p-3 flex flex-col', !theater && 'lg:absolute lg:inset-0')}>
+              <div className="flex items-center justify-between gap-2 mb-2.5 shrink-0">
+                <h2 className="text-sm font-semibold text-content">
+                  剧集列表{episodes.length > 0 && `（${episodes.length}）`}
+                </h2>
+                {/* 排列开关紧贴它所作用的列表：放在这里才看得出它管的是这一栏的顺序 */}
+                {episodes.length > 1 && (
+                  <button
+                    className="btn-ghost btn-sm shrink-0"
+                    onClick={() => setReversed((v) => !v)}
+                    aria-label={reversed ? '切换为正序排列' : '切换为倒序排列'}
+                    title="调整剧集列表的排列顺序"
+                  >
+                    <Icon
+                      name="arrowDown"
+                      className={cn('w-3.5 h-3.5 transition-transform', reversed && 'rotate-180')}
+                    />
+                    {reversed ? '正序排列' : '倒序排列'}
+                  </button>
+                )}
+              </div>
+              {episodes.length === 0 ? (
+                detailQuery.isLoading ? (
+                  <LoadingState />
+                ) : (
+                  <EmptyState variant="plain" title={detailQuery.isError ? '获取剧集失败' : '暂无剧集信息'} />
+                )
+              ) : (
+                <div
+                  className={cn(
+                    'grid gap-1.5 overflow-y-auto scrollbar-thin pr-1 content-start',
+                    theater
+                      ? 'grid-cols-5 sm:grid-cols-8 md:grid-cols-10 xl:grid-cols-12 max-h-[40vh]'
+                      : 'grid-cols-5 lg:grid-cols-4 2xl:grid-cols-5 max-h-[65vh] lg:max-h-none lg:flex-1 lg:min-h-0',
+                  )}
+                >
+                  {orderedEpisodes.map((realIndex) => (
+                    <EpisodeButton
+                      key={realIndex}
+                      label={labelOf(realIndex)}
+                      hint={episodeNames?.[realIndex]}
+                      progress={episodeProgress.get(realIndex)}
+                      active={realIndex === currentIndex}
+                      onClick={() => goEpisode(realIndex)}
+                    />
+                  ))}
+                </div>
+              )}
+              <p className="hidden md:block shrink-0 text-[10px] text-faint mt-3 leading-relaxed">
+                快捷键：空格 播放/暂停 · ←/→ 快退/快进 {prefs.seekStep} 秒 · {'<'} / {'>'} 调速 · ↑/↓ 音量 · F 全屏 · T 宽屏模式 · Alt+←/→ 切换集数
+              </p>
+            </div>
+          </aside>
+
+          {/* 操作栏（宽屏时在播放器下面一行） */}
+          <div className={cn('order-2 min-w-0', theater ? WATCH_WIDTH : 'lg:order-none')}>
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 className="btn-ghost btn-sm"
                 disabled={currentIndex <= 0}
@@ -530,6 +635,14 @@ function WatchContent() {
               </button>
               <button className="btn-ghost btn-sm" onClick={() => setAdPanelOpen((v) => !v)}>
                 广告详情
+              </button>
+              <button
+                className={cn('btn-ghost btn-sm hidden md:inline-flex', theater && 'text-content')}
+                onClick={toggleTheater}
+                aria-pressed={theater}
+                title="宽屏模式（快捷键 T）：剧集列表挪到下面，画面铺满窗口"
+              >
+                {theater ? '退出宽屏' : '宽屏模式'}
               </button>
               <label className="ml-auto flex items-center gap-1.5 text-xs text-muted cursor-pointer">
                 <input
@@ -555,53 +668,6 @@ function WatchContent() {
               />
             )}
           </div>
-
-          {/* 剧集侧栏 */}
-          <aside className="bg-surface-raised rounded-xl p-3 h-fit">
-            <div className="flex items-center justify-between gap-2 mb-2.5">
-              <h2 className="text-sm font-semibold text-content">
-                剧集列表{episodes.length > 0 && `（${episodes.length}）`}
-              </h2>
-              {/* 排列开关紧贴它所作用的列表：放在这里才看得出它管的是这一栏的顺序 */}
-              {episodes.length > 1 && (
-                <button
-                  className="btn-ghost btn-sm shrink-0"
-                  onClick={() => setReversed((v) => !v)}
-                  aria-label={reversed ? '切换为正序排列' : '切换为倒序排列'}
-                  title="调整剧集列表的排列顺序"
-                >
-                  <Icon
-                    name="arrowDown"
-                    className={cn('w-3.5 h-3.5 transition-transform', reversed && 'rotate-180')}
-                  />
-                  {reversed ? '正序排列' : '倒序排列'}
-                </button>
-              )}
-            </div>
-            {episodes.length === 0 ? (
-              detailQuery.isLoading ? (
-                <LoadingState />
-              ) : (
-                <EmptyState variant="plain" title={detailQuery.isError ? '获取剧集失败' : '暂无剧集信息'} />
-              )
-            ) : (
-              <div className="grid grid-cols-5 lg:grid-cols-4 gap-1.5 max-h-[65vh] overflow-y-auto scrollbar-thin pr-1">
-                {orderedEpisodes.map((realIndex) => (
-                  <EpisodeButton
-                    key={realIndex}
-                    label={labelOf(realIndex)}
-                    hint={episodeNames?.[realIndex]}
-                    progress={episodeProgress.get(realIndex)}
-                    active={realIndex === currentIndex}
-                    onClick={() => goEpisode(realIndex)}
-                  />
-                ))}
-              </div>
-            )}
-            <p className="hidden md:block text-[10px] text-faint mt-3 leading-relaxed">
-              快捷键：空格 播放/暂停 · ←/→ 快退/快进 {prefs.seekStep} 秒 · {'<'} / {'>'} 调速 · ↑/↓ 音量 · F 全屏 · Alt+←/→ 切换集数
-            </p>
-          </aside>
         </div>
       </main>
 

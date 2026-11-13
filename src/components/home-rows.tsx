@@ -23,7 +23,6 @@ import type { HotListId } from '@/lib/douban-weekly';
 import type { UpcomingItem, UpcomingKind } from '@/lib/upcoming';
 import { resolveSource, useAppStore } from '@/lib/store';
 import { rememberDoubanItem } from '@/lib/taste-store';
-import { aggregateResults, hasTitleMatch } from '@/lib/title-aliases';
 import {
   acknowledgeListUpdate,
   listUpdateBadge,
@@ -40,7 +39,7 @@ import { buildWatchUrl, cn, formatTime } from '@/lib/utils';
 import { Icon } from './icon';
 import { SmartImage } from './smart-image';
 import { useToast } from './toast';
-import { DoubanCard } from './video-card';
+import { DoubanCard, SHELF_CARD_W } from './video-card';
 import { useIdleReady } from './use-idle-ready';
 import { statusBadgeOf } from '@/lib/catalog-meta';
 
@@ -861,31 +860,29 @@ export function MyListRow({
       retry: 0,
     })),
   });
-  // 整站搜索比较重：最多 4 部，6 小时内搜过的不再搜（结果记在本机）
+  // 没绑片源的（从「暂无片源」加的）上线了没有：问伺服器本地片库（它每小时扫一遍 26 个源的更新），
+  // 首页不再对每部收藏整站搜 26 个源。没有本地片库的部署就不自动查（点进去时再搜）。6 小时内查过的不再查
   const searchTargets = useMemo(
     () =>
       visible
         .filter((row) => !(row.sourceKey && row.vodId))
         .filter((row) => needsListSearch(loadListUpdates(profileId)[row.localId]))
-        .slice(0, 4),
-    // updates 变了（搜完记下了）就重新算，搜过的会掉出去
+        .slice(0, 20),
+    // updates 变了（查完记下了）就重新算，查过的会掉出去
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [visible, profileId, updates],
   );
-  const searchQueries = useQueries({
-    queries: searchTargets.map((row) => ({
-      queryKey: ['list-availability', row.title, selectedSources.map((src) => src.key).join(',')],
-      queryFn: async ({ signal }: { signal: AbortSignal }) => {
-        const res = await api.search(row.title, selectedSources, yellowFilter, { signal });
-        // 一个源都没回应时说不准，不记
-        if (res.list.length === 0 && res.failures.length >= selectedSources.length) return null;
-        return hasTitleMatch(aggregateResults(res.list, row.title), row.title);
-      },
-      // 整站搜索最重：再晚一点
-      enabled: idleLate && selectedSources.length > 0,
-      staleTime: 30 * 60_000,
-      retry: 0,
-    })),
+  const availabilityQuery = useQuery({
+    queryKey: ['list-availability-local', searchTargets.map((row) => row.title).join('|')],
+    queryFn: ({ signal }) => api.availability(searchTargets.map((row) => row.title), signal),
+    enabled: idleLate && searchTargets.length > 0 && selectedSources.length > 0,
+    staleTime: 30 * 60_000,
+    retry: 0,
+  });
+  const searchQueries = searchTargets.map((row) => {
+    const res = availabilityQuery.data;
+    if (!res?.ready) return { data: null as boolean | null };
+    return { data: (res.results[row.title]?.sources ?? 0) > 0 };
   });
   const boundCounts = boundQueries.map((q) => q.data?.episodes?.length).join(',');
   const searchResults = searchQueries.map((q) => String(q.data)).join(',');
@@ -978,7 +975,7 @@ export function MyListRow({
     <ShelfRow title="我的片单">
       {/* 有更新的排前面 */}
       {[...visible].sort((a, b) => Number(Boolean(badgeOf(b))) - Number(Boolean(badgeOf(a)))).map((row) => (
-        <div key={row.id} className="w-[7.25rem] sm:w-32 shrink-0">
+        <div key={row.id} className={cn(SHELF_CARD_W, 'shrink-0')}>
           <DoubanCard
             item={{
               title: row.title,
@@ -1205,7 +1202,7 @@ function TopTenCard({
         </svg>
       </div>
 
-      <div className="relative z-10 w-[7.25rem] sm:w-32">
+      <div className={cn(SHELF_CARD_W, 'relative z-10')}>
         {(item.rankNew || (item.rankDelta ?? 0) >= 2) && (
           <span
             className="absolute top-9 right-1.5 z-20 px-1.5 py-0.5 rounded-full text-[10px] font-semibold text-white bg-black/60 ring-1 ring-white/15 pointer-events-none"
@@ -1417,10 +1414,10 @@ export function UpcomingRow({ onPick }: { onPick: (title: string, pick?: TitlePi
     >
       {query.isLoading && all.length === 0
         ? Array.from({ length: 7 }).map((_, idx) => (
-            <div key={idx} className="w-[7.25rem] sm:w-32 shrink-0 aspect-[2/3] rounded-xl bg-chip animate-pulse" />
+            <div key={idx} className={cn(SHELF_CARD_W, 'shrink-0 aspect-[2/3] rounded-xl bg-chip animate-pulse')} />
           ))
         : visible.map((item) => (
-            <div key={item.id} className="w-[7.25rem] sm:w-32 shrink-0">
+            <div key={item.id} className={cn(SHELF_CARD_W, 'shrink-0')}>
               <DoubanCard
                 item={{
                   title: item.title,
@@ -1511,7 +1508,7 @@ export function ScheduleRow({ onPick }: { onPick: (title: string, pick?: TitlePi
       {entries.map((e) => {
         const label = scheduleLabel(e.date, e.weekday);
         return (
-          <div key={e.title} className="w-[7.25rem] sm:w-32 shrink-0">
+          <div key={e.title} className={cn(SHELF_CARD_W, 'shrink-0')}>
             <DoubanCard
               item={{
                 title: e.title,

@@ -19,7 +19,8 @@ export function rememberPick(title: string, pick?: TitlePick & { yearSoft?: bool
   // 按筛选条件填上去的年份（B站片库按年份筛）不是这部的真实年份：拿它去认作品会认错（「航海王」+ 2026 → 乐高特别篇）
   const { yearSoft, ...rest } = pick ?? {};
   const full: TitlePick = { ...rest, title, ...(yearSoft ? { year: undefined } : {}) };
-  pickedTitles.set(title.trim().slice(0, 100), full);
+  // 「播放」只对这一次点击有效，记下来的那份不带
+  pickedTitles.set(title.trim().slice(0, 100), { ...full, autoplay: undefined });
   return full;
 }
 

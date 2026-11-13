@@ -27,7 +27,7 @@ function BrowseContent() {
   return (
     <div className="min-h-screen flex flex-col">
       <Header />
-      <main className="flex-1 max-w-6xl w-full mx-auto px-4 py-6">
+      <main className="flex-1 max-w-[1680px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
         <h1 className="sr-only">片库</h1>
         <RecommendSection key={channel} initialChannel={channel} onPick={pickTitle} onOpen={openSource} />
       </main>

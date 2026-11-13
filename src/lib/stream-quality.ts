@@ -43,6 +43,11 @@ export interface MediaPlaylistInfo {
   suspectSeconds: number;
   /** 拿来量码率的分片（取中间的，避开片头片尾） */
   sampleSegment?: { uri: string; seconds: number };
+  /**
+   * 量码率抽样的 2~3 个分片：正片（已剔除广告）30% / 50% / 70% 处、时长 ≥2 秒的。
+   * 只抽一片容易抽到黑场 / 静止画面（码率特别低），取中位数。
+   */
+  sampleSegments: { uri: string; seconds: number }[];
 }
 
 function sumDuration(content: string): { seconds: number; segments: { uri: string; seconds: number }[] } {
@@ -76,7 +81,31 @@ export function analyzeMediaPlaylist(content: string, baseUrl?: string): MediaPl
     // 在已经剔除过的列表上再跑新规则：只数现有规则漏掉的
     suspectSeconds: suspectAdSeconds(cleanedContent, baseUrl),
     sampleSegment: mid && mid.seconds > 0 ? mid : undefined,
+    sampleSegments: pickSamples(segs),
   };
+}
+
+/** 正片 30% / 50% / 70% 处各取一片（太短的分片往后找一个够长的） */
+function pickSamples(segs: { uri: string; seconds: number }[]): { uri: string; seconds: number }[] {
+  if (segs.length === 0) return [];
+  const out: { uri: string; seconds: number }[] = [];
+  for (const frac of [0.3, 0.5, 0.7]) {
+    const from = Math.min(segs.length - 1, Math.floor(segs.length * frac));
+    const hit = segs.slice(from, from + 5).find((x) => x.seconds >= 2) ?? (segs[from].seconds > 0 ? segs[from] : undefined);
+    if (hit && !out.includes(hit)) out.push(hit);
+  }
+  return out;
+}
+
+/** 各抽样分片的码率（kbps）取中位数；都量不到返回 0 */
+export function medianKbps(samples: { bytes: number; seconds: number }[]): number {
+  const list = samples
+    .filter((x) => x.bytes > 1 && x.seconds > 0)
+    .map((x) => (x.bytes * 8) / x.seconds / 1000)
+    .sort((a, b) => a - b);
+  if (list.length === 0) return 0;
+  const m = list.length >> 1;
+  return Math.round(list.length % 2 ? list[m] : (list[m - 1] + list[m]) / 2);
 }
 
 /** 「0001.ts」→「0000.ts」、「a8f3c2.ts」→「a0a0a0.ts」：只看文件名的样子，不看具体数字 */
@@ -189,12 +218,46 @@ export interface SourceQuality {
   via?: 'browser';
 }
 
-/** 排序用的清晰度档位：3=1080P 及以上，2=720P，1=更低或测不出，0=质检失败 */
+/** 标称 1080P 但码率低于这个（kbps）：多半是低码率片硬拉上去的「虚标」，画面糊 */
+export const FAKE_HD_KBPS = 1200;
+/** 720P 码率到这个（kbps）算「高码率」，排在虚标 1080P 前面 */
+export const HIGH_KBPS = 1500;
+/** 标称 720P 但码率低于这个：也是虚标 */
+const FAKE_720_KBPS = 600;
+
+/**
+ * 真实有效画质档位（排序用）：分辨率 + 码率合起来看，不只看标称分辨率。
+ * - 3 = 1080P 及以上且码率够（或量不到码率）；
+ * - 2.5 = 720P 且码率 ≥1.5 Mbps（真高清）；
+ * - 2 = 720P；
+ * - 1.5 = 「1080P」但码率 <1.2 Mbps（虚标，排在真 720P 后面）；
+ * - 1.2 = 「720P」但码率 <0.6 Mbps；
+ * - 1 = 更低或测不出；0 = 质检失败。
+ */
+export function effectiveTier(height: number, kbps: number): number {
+  const h = height || heightFromKbps(kbps);
+  if (!h) return 1;
+  if (h >= 1000) return kbps > 0 && kbps < FAKE_HD_KBPS ? 1.5 : 3;
+  if (h >= 700) {
+    if (kbps > 0 && kbps < FAKE_720_KBPS) return 1.2;
+    return kbps >= HIGH_KBPS ? 2.5 : 2;
+  }
+  return 1;
+}
+
+/** 排序用的清晰度档位（见 effectiveTier）；没测 = 1，质检失败 = 0 */
 export function qualityTier(q?: SourceQuality): number {
   if (!q) return 1;
   if (!q.ok) return 0;
-  const h = q.height ?? 0;
-  if (h >= 1000) return 3;
-  if (h >= 700) return 2;
-  return 1;
+  return effectiveTier(q.height ?? 0, q.kbps ?? 0);
+}
+
+/** 码率说明：「2.6Mbps 高码率」「0.7Mbps 偏糊」；量不到返回空 */
+export function bitrateNote(height: number, kbps: number): string {
+  if (!kbps) return '';
+  const mbps = `${(kbps / 1000).toFixed(1)}Mbps`;
+  const tier = effectiveTier(height, kbps);
+  if (tier === 1.5 || tier === 1.2) return `${mbps} 偏糊`;
+  if (tier === 2.5 || (tier === 3 && kbps >= 2500)) return `${mbps} 高码率`;
+  return mbps;
 }

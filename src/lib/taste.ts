@@ -223,7 +223,7 @@ export function planKey(selection: HallSelection): string {
  * 召回用的片库条件：按「近期热门」排（以前按「评分最高」，召回来的全是《隐秘的角落》这种历年经典，
  * 多半看过或太旧）；高分的另外再要一页，见 tasteJobs。
  */
-function selectionOf(channel: TasteChannel, genre: string, area: string, sort: HallSelection['sort'] = 'hot'): HallSelection {
+function selectionOf(channel: TasteChannel, genre: string, area: string, sort: HallSelection['sort'] = 'recent'): HallSelection {
   return { channel, genre, area, year: '全部', sort, score: 'all', status: 'all' };
 }
 

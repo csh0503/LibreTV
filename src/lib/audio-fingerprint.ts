@@ -140,6 +140,17 @@ export interface MatchOptions {
   threshold?: number;
   /** 中间允许多长「不像」（台词压在片头曲上、转场静音）还算同一段 */
   maxGapSeconds?: number;
+  /**
+   * 跨空隙合并：同一个偏移量上，前后两段像的中间隔着不超过 gapSeconds 秒的「不像」
+   * （片头曲中间插了 3~8 秒角色独白、标题音效、转场），合起来总长落在 [min, max] 秒里，
+   * 就当成同一段（取最早起点到最晚终点），不从中间切断。合并的每一块至少 3 秒、
+   * 像的部分至少占合并后总长的六成（零星一两秒碰巧像的不算）。
+   */
+  bridge?: { gapSeconds: number; min: number; max: number };
+  /** 有几段可选时，长度落在这个区间（秒）的优先（比如 55~150 秒的主片头曲优先于短的厂牌片头） */
+  prefer?: { min: number; max: number };
+  /** longest（默认）= 最长的；latest = 在 b 里结束得最晚的（尾段模板：避免对上前面一遍副歌） */
+  pick?: 'longest' | 'latest';
 }
 
 type Best = { ai: number; bj: number; len: number; score: number } | null;
@@ -149,27 +160,56 @@ interface ScanParams {
   threshold: number;
   maxGap: number;
   smooth: number;
+  bridgeGap: number;
+  bridgeMin: number;
+  bridgeMax: number;
+  bridgePiece: number;
+  preferMin: number;
+  preferMax: number;
+  pick: 'longest' | 'latest';
 }
 
+/** 跨空隙合并时每一块至少多长（秒） */
+const BRIDGE_PIECE_SECONDS = 3;
+/** 跨空隙合并后，像的部分至少占总长多少 */
+const BRIDGE_FILL = 0.6;
+
 function scanParams(opts: MatchOptions): ScanParams {
+  const frames = (sec: number) => Math.round(sec / FP_HOP_SECONDS);
   return {
-    minFrames: Math.round((opts.minSeconds ?? 20) / FP_HOP_SECONDS),
+    minFrames: frames(opts.minSeconds ?? 20),
     threshold: opts.threshold ?? 0.8,
-    maxGap: Math.round((opts.maxGapSeconds ?? 2) / FP_HOP_SECONDS),
+    maxGap: frames(opts.maxGapSeconds ?? 2),
     smooth: Math.max(1, Math.round(1 / FP_HOP_SECONDS)),
+    bridgeGap: opts.bridge ? frames(opts.bridge.gapSeconds) : 0,
+    bridgeMin: opts.bridge ? frames(opts.bridge.min) : 0,
+    bridgeMax: opts.bridge ? frames(opts.bridge.max) : 0,
+    bridgePiece: frames(BRIDGE_PIECE_SECONDS),
+    preferMin: opts.prefer ? frames(opts.prefer.min) : 0,
+    preferMax: opts.prefer ? frames(opts.prefer.max) : Number.POSITIVE_INFINITY,
+    pick: opts.pick ?? 'longest',
   };
+}
+
+interface Run {
+  start: number;
+  end: number;
+  acc: number;
+  accN: number;
 }
 
 /** 偏移量 d = j - i（b 里的位置减 a 里的位置），扫 [dFrom, dTo] 这些偏移量 */
 function scanOffsets(a: Float32Array, b: Float32Array, dFrom: number, dTo: number, p: ScanParams, best: Best, sims: Float32Array): Best {
   const na = frameCount(a);
   const nb = frameCount(b);
+  const runs: Run[] = [];
   for (let d = dFrom; d <= dTo; d++) {
     const i0 = Math.max(0, -d);
     const i1 = Math.min(na, nb - d);
     const len = i1 - i0;
     if (len < p.minFrames) continue;
     for (let k = 0; k < len; k++) sims[k] = similarity(a, i0 + k, b, i0 + k + d);
+    runs.length = 0;
     let runStart = -1;
     let lastGood = -1;
     let sum = 0;
@@ -181,7 +221,7 @@ function scanOffsets(a: Float32Array, b: Float32Array, dFrom: number, dTo: numbe
       const avg = sum / Math.min(k + 1, p.smooth);
       if (avg < p.threshold) continue;
       if (runStart < 0 || k - lastGood > p.maxGap) {
-        if (runStart >= 0) best = pickBetter(best, i0 + runStart, i0 + runStart + d, lastGood - runStart + 1, acc / accN, p.minFrames);
+        if (runStart >= 0) runs.push({ start: runStart, end: lastGood, acc, accN });
         runStart = k;
         acc = 0;
         accN = 0;
@@ -190,7 +230,39 @@ function scanOffsets(a: Float32Array, b: Float32Array, dFrom: number, dTo: numbe
       acc += avg;
       accN += 1;
     }
-    if (runStart >= 0) best = pickBetter(best, i0 + runStart, i0 + runStart + d, lastGood - runStart + 1, acc / accN, p.minFrames);
+    if (runStart >= 0) runs.push({ start: runStart, end: lastGood, acc, accN });
+    for (const r of runs) best = pickBetter(best, i0 + r.start, i0 + r.start + d, r.end - r.start + 1, r.acc / r.accN, p);
+    if (p.bridgeGap > 0) best = bridgeRuns(runs, i0, d, p, best);
+  }
+  return best;
+}
+
+/**
+ * 同一个偏移量上的几段「像」，中间空隙不长、合起来像一首完整的曲子：合成一段。
+ * 偏移量相同 = 两集里这几块之间隔的时间完全一样，正是「同一首片头曲中间插了一段台词」；
+ * 「厂牌片头 + 长短不一的冷开场 + 片头曲」两集偏移量不同，不会被合起来。
+ */
+function bridgeRuns(runs: Run[], i0: number, d: number, p: ScanParams, best: Best): Best {
+  for (let x = 0; x < runs.length; x++) {
+    if (runs[x].end - runs[x].start + 1 < p.bridgePiece) continue;
+    let acc = runs[x].acc;
+    let accN = runs[x].accN;
+    let covered = runs[x].end - runs[x].start + 1;
+    let prev = x;
+    for (let y = x + 1; y < runs.length; y++) {
+      const piece = runs[y].end - runs[y].start + 1;
+      if (piece < p.bridgePiece) continue;
+      if (runs[y].start - runs[prev].end - 1 > p.bridgeGap) break;
+      const span = runs[y].end - runs[x].start + 1;
+      if (span > p.bridgeMax) break;
+      acc += runs[y].acc;
+      accN += runs[y].accN;
+      covered += piece;
+      prev = y;
+      if (span >= p.bridgeMin && covered >= span * BRIDGE_FILL) {
+        best = pickBetter(best, i0 + runs[x].start, i0 + runs[x].start + d, span, acc / accN, p);
+      }
+    }
   }
   return best;
 }
@@ -324,17 +396,21 @@ export async function findCommonSegmentAsync(
   return toSegment(best, p, a, b);
 }
 
-function pickBetter(
-  best: Best,
-  ai: number,
-  bj: number,
-  len: number,
-  score: number,
-  minFrames: number,
-) {
-  if (len < minFrames) return best;
-  if (!best || len > best.len) return { ai, bj, len, score };
-  return best;
+function pickBetter(best: Best, ai: number, bj: number, len: number, score: number, p: ScanParams): Best {
+  if (len < p.minFrames) return best;
+  if (!best) return { ai, bj, len, score };
+  if (p.pick === 'latest') {
+    const end = bj + len;
+    const bestEnd = best.bj + best.len;
+    // 结束得更晚的优先；差不多同时结束（相邻偏移量）时取更长的
+    if (end > bestEnd + p.smooth || (Math.abs(end - bestEnd) <= p.smooth && len > best.len)) return { ai, bj, len, score };
+    return best;
+  }
+  const inPrefer = (n: number) => n >= p.preferMin && n <= p.preferMax;
+  const ci = inPrefer(len);
+  const bi = inPrefer(best.len);
+  if (ci !== bi) return ci ? { ai, bj, len, score } : best;
+  return len > best.len ? { ai, bj, len, score } : best;
 }
 
 const round1 = (n: number) => Math.round(n * 10) / 10;

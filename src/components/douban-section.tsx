@@ -10,6 +10,7 @@ import { isAdultContent } from '@/lib/cms-parser';
 import {
   HALL_PAGE_SIZE,
   buildDoubanRequest,
+  scoreRange,
   filterHallItems,
   mergeAiringCalendar,
   reconcileStatusWithCalendar,
@@ -20,8 +21,9 @@ import {
   type HallSortKey,
   type HallStatus,
 } from '@/lib/recommend';
-import { SortArrows } from './sort-arrows';
-import { DoubanCard } from './video-card';
+import { DoubanCard, POSTER_GRID } from './video-card';
+import { isNotInterested, useNotInterested } from '@/lib/not-interested';
+import { useProfile } from '@/lib/use-profile';
 import { favoriteIdOf } from '@/lib/db';
 import { dedupeSeasons } from '@/lib/shelf-defs';
 import { mergeSameWorks } from '@/lib/work-identity';
@@ -67,6 +69,23 @@ const AREAS = ['全部', '华语', '中国大陆', '中国香港', '中国台湾
 const YEARS = ['全部', '2026', '2025', '2024', '2023', '2022', '2021', '2020', '2019', '2015-2018', '2010-2014', '2000年代', '90年代', '更早'];
 const WEEKDAYS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
+/**
+ * 四种排序，各管各的：
+ * - 总热门：全网累计人气（老作品不扣分、不删，海贼王 / 银魂 / 柯南这种自然在前）；
+ * - 近期热播：当季正在火的；
+ * - 最新上线：按首播日 / 最新一集日期；
+ * - 最高评分：各站评分校正合成 + 评价人数门槛。
+ */
+const SORT_OPTIONS: { id: Exclude<HallSortKey, 'title'>; label: string }[] = [
+  { id: 'hot', label: '总热门' },
+  { id: 'recent', label: '近期热播' },
+  { id: 'date', label: '最新上线' },
+  { id: 'rate', label: '最高评分' },
+];
+
+/** 本地片库每页几部（伺服器 SQLite 查，毫秒级） */
+const CATALOG_PAGE_SIZE = 36;
+
 export function RecommendSection({
   ref,
   initialChannel = 'anime',
@@ -107,6 +126,40 @@ export function RecommendSection({
     [channel, genre, area, year, sortKey, score, status]
   );
 
+  // —— 本地片库（伺服器 SQLite）：游标翻页、只往后接；这个部署没有本地片库时退回下面的现场抓取 ——
+  const [catalogMode, setCatalogMode] = useState<'unknown' | 'local' | 'live'>('unknown');
+  const catalogQuery = useInfiniteQuery({
+    queryKey: ['catalog', channel, genre, area, year, showStatus ? status : 'all', score, sortKey, sortDir],
+    queryFn: ({ pageParam, signal }) =>
+      api.catalog(
+        {
+          channel,
+          sort: sortKey === 'title' ? 'hot' : sortKey,
+          dir: sortDir,
+          genre,
+          area,
+          year,
+          status: showStatus ? status : 'all',
+          score: scoreRange(score).min,
+          cursor: pageParam,
+          limit: CATALOG_PAGE_SIZE,
+        },
+        signal,
+      ),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last) => (last.ready && last.nextCursor ? last.nextCursor : undefined),
+    enabled: doubanEnabled && channel !== 'adult' && !weekdayMode && catalogMode !== 'live',
+    placeholderData: keepPreviousData,
+    staleTime: 5 * 60_000,
+    retry: 1,
+  });
+  const firstCatalogPage = catalogQuery.data?.pages[0];
+  useEffect(() => {
+    if (catalogQuery.isError) setCatalogMode('live');
+    else if (firstCatalogPage) setCatalogMode(firstCatalogPage.ready ? 'local' : 'live');
+  }, [firstCatalogPage, catalogQuery.isError]);
+  const localMode = catalogMode === 'local';
+
   const doubanQuery = useInfiniteQuery({
     queryKey: ['douban-hall', request?.kind, request?.tags.join(','), request?.sort, request?.score, request?.status],
     queryFn: ({ pageParam, signal }) =>
@@ -123,19 +176,15 @@ export function RecommendSection({
       if (last.items.length < HALL_PAGE_SIZE) return undefined;
       return nextStart;
     },
-    enabled: doubanEnabled && request !== null && !weekdayMode,
+    enabled: doubanEnabled && request !== null && !weekdayMode && catalogMode === 'live',
     placeholderData: keepPreviousData,
     retry: 1,
   });
-  const {
-    data: doubanData,
-    hasNextPage,
-    isFetching,
-    isFetchingNextPage,
-    isLoading,
-    isError,
-    fetchNextPage,
-  } = doubanQuery;
+  const active = localMode || catalogMode === 'unknown' ? catalogQuery : doubanQuery;
+  const { hasNextPage, isFetching, isFetchingNextPage, fetchNextPage } = active;
+  const isLoading = active.isLoading || (catalogMode === 'unknown' && !weekdayMode && !catalogQuery.isError);
+  const isError = catalogMode === 'live' ? doubanQuery.isError : false;
+  const doubanData = doubanQuery.data;
 
   const bangumiQuery = useQuery({
     queryKey: ['bangumi-calendar'],
@@ -155,6 +204,11 @@ export function RecommendSection({
       ));
     }
     if (!request) return [];
+    if (localMode) {
+      // 本地片库：一页一页往后接；同一系列只留第一次出现的那季（只删后面的，不动前面的顺序）
+      const flat = (catalogQuery.data?.pages ?? []).flatMap((page) => page.items ?? []);
+      return dedupeSeasons(flat.filter((item) => !yellowFilter || !isAdultContent(item.title)));
+    }
     // 各来源分页不一样，同一部常落在不同页（还可能换了译名）：按作品合并，不只按编号
     const doubanItems = mergeSameWorks((doubanData?.pages ?? []).flatMap((page) => page.items));
     const allCalendar = channel === 'anime' ? bangumiQuery.data?.days.flatMap((d) => d.items) ?? [] : [];
@@ -169,7 +223,9 @@ export function RecommendSection({
       return true;
     });
 
+    // 当周新番表只在「近期热播」里混进来（总热门不硬塞新番）
     const mergeCalendar =
+      sortKey === 'recent' &&
       channel === 'anime' &&
       status !== 'ended' &&
       genre === '全部' &&
@@ -184,7 +240,8 @@ export function RecommendSection({
       : [];
     const merged = mergeAiringCalendar(playableDouban, popularCalendar, nowYear);
     const lane = catalogLane(request.tags, request.kind);
-    const hideArchive = sortKey === 'hot' && year === '全部' && status !== 'ended';
+    // 只有「近期热播」才只看现在的；总热门不删老作品
+    const hideArchive = sortKey === 'recent' && year === '全部' && status !== 'ended';
     const current = hideArchive ? merged.filter((item) => isCurrentCatalogItem(item, lane)) : merged;
     const filtered = filterHallItems(current, {
       genre,
@@ -213,14 +270,20 @@ export function RecommendSection({
     showStatus,
     sortKey,
     sortDir,
+    localMode,
+    catalogQuery.data,
   ]);
+
+  // 标了「不感兴趣」的：只拿掉，不动其他卡片的位置
+  const notInterested = useNotInterested(useProfile().id);
+  const shownItems = useMemo(() => items.filter((item) => !isNotInterested(notInterested, item.title)), [items, notInterested]);
 
   const loadMore = useCallback(() => {
     if (hasNextPage && !isFetching) void fetchNextPage();
   }, [hasNextPage, isFetching, fetchNextPage]);
-  const sentinel = useLoadMore(!weekdayMode && !!hasNextPage && !isFetching, doubanData?.pages.length ?? 0, loadMore);
-
-  const loadedPages = doubanData?.pages.length ?? 0;
+  const loadedPages = active.data?.pages.length ?? 0;
+  const sentinel = useLoadMore(!weekdayMode && !!hasNextPage && !isFetching, loadedPages, loadMore);
+  const total = localMode ? firstCatalogPage?.total : undefined;
   useEffect(() => {
     if (channel === 'adult' || items.length === 0) return;
     const handle = window.setTimeout(() => {
@@ -231,10 +294,10 @@ export function RecommendSection({
   useEffect(() => {
     // 年份区间会裁掉一整页。最多再补 2 页，避免某个标签把 500 条全部翻完、骨架一直不消失。
     // 旧作被拿掉以后这一页可能变薄：再要一两页，把「现在能看的」补满，而不是停在半屏
-    if (weekdayMode || items.length >= 8 || isError) return;
+    if (localMode || weekdayMode || items.length >= 8 || isError) return;
     if (!hasNextPage || isFetching || loadedPages >= 4) return;
     void fetchNextPage();
-  }, [weekdayMode, items.length, hasNextPage, isFetching, isError, loadedPages, fetchNextPage]);
+  }, [localMode, weekdayMode, items.length, hasNextPage, isFetching, isError, loadedPages, fetchNextPage]);
 
   if (!doubanEnabled) return null;
 
@@ -371,20 +434,27 @@ export function RecommendSection({
                 <FilterChip active={score === '7'} onClick={() => setScore('7')}>7 分以上</FilterChip>
               </FilterRow>
               <FilterRow label="排序">
-                <SortArrows
-                  sortKey={sortKey}
-                  sortDir={sortDir}
-                  onChange={(key, dir) => {
-                    setSortKey(key);
-                    setSortDir(dir);
-                  }}
-                />
+                {SORT_OPTIONS.map((opt) => (
+                  <FilterChip
+                    key={opt.id}
+                    active={sortKey === opt.id}
+                    onClick={() => {
+                      setSortKey(opt.id);
+                      setSortDir('desc');
+                    }}
+                  >
+                    {opt.label}
+                  </FilterChip>
+                ))}
               </FilterRow>
             </div>
           )}
 
           {weekdayMode && (
             <p className="text-xs text-faint">这一行是 Bangumi 本周放送。题材、地区、年份和评分留到「全部」放送时再生效。</p>
+          )}
+          {!weekdayMode && total !== undefined && total > 0 && (
+            <p className="text-xs text-faint tabular-nums">共 {total.toLocaleString('zh-CN')} 部</p>
           )}
 
           {isError && !weekdayMode ? (
@@ -400,8 +470,8 @@ export function RecommendSection({
             </div>
           ) : (
             <>
-              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2.5 sm:gap-3">
-                {items.map((item) => (
+              <div className={POSTER_GRID}>
+                {shownItems.map((item) => (
                   <DoubanCard
                     key={`${item.id}_${item.title}`}
                     item={toCard(item)}
@@ -409,6 +479,11 @@ export function RecommendSection({
                       void rememberDoubanItem(item, channel, genre === '全部' ? undefined : genre);
                       onPick(item.title, item);
                     }}
+                    onPlay={() => {
+                      void rememberDoubanItem(item, channel, genre === '全部' ? undefined : genre);
+                      onPick(item.title, { ...item, autoplay: true });
+                    }}
+                    notInterestable
                     onFavorite={() => {
                       void rememberDoubanItem(item, channel, genre === '全部' ? undefined : genre);
                     }}
@@ -428,13 +503,17 @@ export function RecommendSection({
   );
 }
 
-function toCard(item: DoubanItem) {
+function toCard(item: DoubanItem & { available?: number }) {
   const meta = [item.year, item.area].filter(Boolean).join(' · ');
   return {
     title: item.title,
     cover: item.cover,
     rating: item.rating,
     meta: meta || undefined,
+    genres: item.genres,
+    remarks: item.status === 'airing' ? undefined : item.remarks,
+    subtitle: item.subtitle,
+    available: item.available,
     favorite: {
       localId: favoriteIdOf({ title: item.title }),
       title: item.title,
@@ -492,7 +571,7 @@ function FilterChip({ active, onClick, children }: { active: boolean; onClick: (
 
 function GridSkeleton() {
   return (
-    <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2.5">
+    <div className={POSTER_GRID}>
       {Array.from({ length: 16 }).map((_, i) => (
         <div key={i} className="animate-pulse">
           <div className="aspect-[2/3] rounded-xl bg-chip" />

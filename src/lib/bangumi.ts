@@ -158,7 +158,7 @@ const BANGUMI_GENRE_MAP: Record<string, string> = {
  */
 export async function fetchBangumiCatalog(opts: {
   tags: string[];
-  sort: 'U' | 'S' | 'R';
+  sort: 'T' | 'U' | 'S' | 'R';
   score: string;
   pageStart: number;
   pageSize: number;

@@ -28,6 +28,18 @@
 | `dc95feb` | Bangumi 放送表按 `air_date` 剔除未开播定档作品（《边缘行者 2》曾因客户端 `mergeAiringCalendar` 混进片库「连载」） |
 | `7b64a9b` | Netflix 式货架：`/api/shelf?id=`（`src/lib/shelves.ts` + `shelf-defs.ts`）、客户端 `src/components/shelf-rows.tsx`、首页接入；筛选墙收进「浏览全部」按钮 |
 
+- **2026-11-14 全面升级（用户贴来的规格书，6 大项）**：
+  - **本地片库（`node:sqlite`，不加原生依赖）**：`src/lib/catalog-db.ts`（表：`works` 每部一行 + 四种排序分数和索引、`raw_items` 各来源原始条目、`source_index` 点播源最近更新、`kv` 同步进度 / 首页快照），文件在 `.data/catalog/catalog.db`（伺服器 `/opt/libretv/data/catalog/`，每日备份已排除）。Vercel 或没有 `node:sqlite` 时 `openCatalogDb()` 返回 null，片库退回原来的 `/api/douban` 现场抓取。
+    - 同步（`catalog-sync.ts`，`instrumentation.ts` → `instrumentation-node.ts` 在伺服器进程里启动；本机 dev 默认不跑，`CATALOG_SYNC=1` 才跑；`CATALOG_DISABLED=1` 整个关掉）：片库空 / 7 天一次全量（可中断续跑）：B站 PGC 片库整份（按总播放）、豆瓣各频道 / 地区 / 年代的「标记最多 T」「高分 S」「近期热门 U」（每页停 1.2 秒，最慢，约 25 分钟）、TMDB 按年份 1970 至今（只收有中文译名的）、Bangumi 按年份、26 个点播源近 72 小时更新；之后每小时增量（豆瓣 U、B站最近更新、TMDB 在播剧最新一集、Bangumi 放送表、综合热榜、点播源近几小时）。抓完用 `catalog-build.ts` 融合（同一部的判断沿用 `work-identity` / `title-aliases`，资料合并沿用 `catalog-meta`），整个频道一次换掉。
+    - 四种排序（`catalog-rank.ts`）：**总热门** = 豆瓣评分人数 / Bangumi 收藏 / B站总播放 / TMDB 票数取对数加权平均，资料少的往 0 收缩（只在 B站有几十亿播放的儿童动画不会压过柯南），不看年份；**近期热播** = 热榜 / 豆瓣近期热门 / B站最近更新名次（3 天内抓的才算）+ TMDB 当下热度 × 最近有没有新集；**最新上线** = 首播 / 最新一集 `YYYY-MM-DD`，只有年份的记 `YYYY-00-00` 排在同年有日期的后面；**最高评分** = 各站校正合成分 + 评价人数贝叶斯收缩。
+    - `/api/catalog`（`catalog-query.ts`）：按（排序值, 编号）游标翻页，查询 2 ms 左右；前端 `douban-section.tsx` 只往后接、同一系列只删后面的不动前面的。「总热门」不再删老作品、不硬塞当周新番（新番表只在「近期热播」里混入）；退回现场抓取时「总热门」用豆瓣 `sort=T`、B站 `order=2`、TMDB `vote_count.desc`。
+  - **首页快照 `/api/home`**（`home-snapshot.ts`）：大图 / TOP 10 各榜 / 即将播出 / 全部货架 / Bangumi 放送表一次算好，伺服器每 10 分钟背景重算并存进 kv（重启后马上读到上一份），接口直接返回序列化好的 JSON。前端 `client-api` 的 `hotList / shelves / upcoming / bangumiCalendar` 先看这份快照，没有才各自请求（各行组件不用改）。60s API 加熔断（429 后 30 分钟不打）。「我的片单」不再在首页对收藏整站搜 26 个源，改问 `/api/availability`（本地片库的点播源索引）。
+  - **卡片**（`video-card.tsx`）：`SHELF_CARD_W` / `POSTER_GRID` 全站一套尺寸（手机约 106~125px 三列、平板约 150~170px、桌面 175~210px），片名两行；桌面悬停浮层：类型 / 集数 / 简介 +「播放 / 片单 / 更多信息 / 不感兴趣」。「播放」= 详情弹窗的 `autoplay`：看过的直接续播，没看过的搜完（或 2.5 秒后已有 2 个以上源）用排第一的源直接进播放页，弹窗上有「取消」。搜索结果也是同一种卡（「N 个片源」、悬停播放）。没在用的 `AggregatedCard` / `VideoCard` 删了。首页 / 片库 / 顶栏内容宽度放到 1680px。
+  - **声纹片头**：同一偏移量上空隙 ≤18 秒、合起来 55~150 秒的几段合成一首（片头曲中间有独白不再从中间切断）；55~150 秒的优先；尾段模板只在预期位置前 20 / 后 30 秒找、取最后一个对上的（不再对上第一遍副歌）；两集比出 <50 秒的不直接存模板，要第三集比出一样的才存；模板键升到 `libretv:audio-skip:v2`（v1 的半截模板作废）；`pickEpisodeSkip` 发现声纹比官方（B站 / AniSkip / TheIntroDB）短 20 秒以上时，起点或终点对得上就按官方长度补齐，都对不上用官方的；跳过后 8 秒内播放器右下角「跳错了？退回并重测」（退回原位置、清这部的模板、这集不再用那个结果）。
+  - **画质选源**：质检抽正片 30% / 50% / 70% 三片取码率中位数；浏览器直连 HEAD 读不到大小（跨域）就交给伺服器 `/api/segment-size`（HEAD 或 `Range: bytes=0-0` 只读响应头，每一跳过 SSRF 检查）；`effectiveTier`：码率 <1.2 Mbps 的「1080P」排在 ≥1.5 Mbps 的 720P 后面，标签显示「1080P · 0.7Mbps 偏糊」「720P · 2.6Mbps 高码率」；播放时 hls.js 最高一档的 6 片中位码率和真实画面高度写回 `playback-stats`，质检量不到时用它。质检缓存升到 `libretv:quality:v2`。
+  - **播放页**：去掉 `max-w-7xl`，宽度跟窗口走（最大 1920 / 2400px），播放器高度不超过「窗口高 − 8rem」（`.player-fit`，16:9 跟着收），右边剧集栏和播放器一样高、自己滚动；「宽屏模式」（按钮或 T 键，记在 localStorage）把剧集栏挪到下面，播放器整条铺满窗口（`.player-theater`）。实测 1920×1080：播放器 1440×810（原来约 932×524）。
+  - `canonicalTitle` 改成预先建好的别名表查找（结果不变，片库上万部融合时才不慢）；`WorkGroups` 的「译名不同」兜底只比同一年份、同一类型那一桶（结果不变）。
+
 - **2026-10-25 观看记录合并、货架一批取数、「不再推荐」进设定档**（声纹 / 去广告 / 去水印没动）：
   - 观看记录和首页「继续观看」用 `workKeyOf`（`src/lib/history-work.ts`）：先剥季数，再按别名收成同一个名字。海贼王 = 航海王，写不写「第一季」都算同一部。列表只显示最近那个源；库里仍按源留进度。删掉一部时换过的源一起从列表消失。超过 100 条先淘汰重复源，再淘汰更老的剧。
   - 首页 `GET /api/shelves?ids=`，每 3 行一次。`/api/shelf` 还在。同一进程里同一份热榜或同一行货架已经在算，就不再打第二遍上游（`singleflight`）。

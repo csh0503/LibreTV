@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { analyzeMediaPlaylist, bestVariant, filenameShape, suspectAdSeconds, heightFromKbps, parseMasterPlaylist, qualityLabel, qualityTier } from './stream-quality';
+import { analyzeMediaPlaylist, bestVariant, bitrateNote, effectiveTier, filenameShape, medianKbps, suspectAdSeconds, heightFromKbps, parseMasterPlaylist, qualityLabel, qualityTier } from './stream-quality';
 
 describe('片源质检', () => {
   it('主播放列表挑最高一档', () => {
@@ -26,6 +26,8 @@ describe('片源质检', () => {
     expect(info.adSeconds).toBe(10);
     expect(info.seconds).toBe(600);
     expect(info.sampleSegment?.uri).toMatch(/^main/);
+    expect(info.sampleSegments).toHaveLength(3);
+    expect(info.sampleSegments.every((x) => x.uri.startsWith('main'))).toBe(true);
   });
 
   it('码率估分辨率、标签与档位', () => {
@@ -63,5 +65,23 @@ describe('新规则：网站 / 文件名和正片不同的短分组', () => {
     const long = ['#EXTM3U', ...main(0, 20), '#EXT-X-DISCONTINUITY'];
     for (let i = 0; i < 15; i++) long.push('#EXTINF:10,', `https://other.net/${i}.ts`);
     expect(suspectAdSeconds(long.join('\n'))).toBe(0);
+  });
+});
+
+describe('真实有效画质', () => {
+  it('虚标 1080P（码率 <1.2 Mbps）低于真 720P（≥1.5 Mbps）', () => {
+    expect(effectiveTier(1080, 600)).toBeLessThan(effectiveTier(720, 2500));
+    expect(effectiveTier(1080, 3000)).toBeGreaterThan(effectiveTier(720, 2500));
+    expect(effectiveTier(1080, 0)).toBe(3); // 量不到码率：按标称
+    expect(qualityTier({ key: 'x', ok: true, height: 1080, kbps: 700 })).toBe(1.5);
+  });
+  it('码率说明', () => {
+    expect(bitrateNote(720, 2600)).toBe('2.6Mbps 高码率');
+    expect(bitrateNote(1080, 700)).toBe('0.7Mbps 偏糊');
+    expect(bitrateNote(1080, 0)).toBe('');
+  });
+  it('抽样取中位数（抽到黑场的那片不拉低结果）', () => {
+    expect(medianKbps([{ bytes: 2_500_000, seconds: 10 }, { bytes: 200_000, seconds: 10 }, { bytes: 2_700_000, seconds: 10 }])).toBe(2000);
+    expect(medianKbps([{ bytes: 0, seconds: 10 }])).toBe(0);
   });
 });
