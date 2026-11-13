@@ -1,0 +1,32 @@
+# LibreTV (web) on homeserver. Built from /opt/libretv/src (GitHub csh0503/LibreTV, branch main).
+# Secrets live in /opt/libretv/.env (chmod 600): PASSWORD and DUCKDNS_TOKEN (set by you), PROXY_SECRET (random).
+# Outside access: https://qingran-libretv.duckdns.org (router forwards TCP 443 -> 192.168.31.76:443 -> Caddy -> LibreTV)
+services:
+  libretv:
+    image: libretv-local:main
+    container_name: libretv
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/app/.data   # profiles ("who's watching") are stored here, on this server only
+    ports:
+      - "8080:8080"   # LAN only (plain http; profiles need https, so use the duckdns address normally)
+
+  caddy:
+    build: ./caddy
+    image: libretv-caddy-duckdns:2.11.6
+    container_name: libretv-caddy
+    restart: unless-stopped
+    environment:
+      DUCKDNS_TOKEN: ${DUCKDNS_TOKEN}
+      VPN_PANEL_HASH: ${VPN_PANEL_HASH}   # bcrypt hash for the qingran-cuhkvpn page (set-panel-password.sh)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # reach the VPN panel on the host (172.17.0.1:8091)
+    ports:
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy-data:/data   # certificates are kept here across restarts
+    depends_on:
+      - libretv

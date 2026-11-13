@@ -1,0 +1,106 @@
+[
+  {
+    "name": "电影天堂",
+    "url": "https://caiji.dyttzyapi.com/api.php/provide/vod"
+  },
+  {
+    "name": "U酷",
+    "url": "https://api.ukuapi88.com/api.php/provide/vod"
+  },
+  {
+    "name": "非凡影视(5线)",
+    "url": "http://ffzy5.tv/api.php/provide/vod"
+  },
+  {
+    "name": "无尽资源(me)",
+    "url": "https://api.wujinapi.me/api.php/provide/vod"
+  },
+  {
+    "name": "新浪",
+    "url": "https://api.xinlangapi.com/xinlangapi.php/provide/vod"
+  },
+  {
+    "name": "无尽",
+    "url": "https://api.wujinapi.net/api.php/provide/vod"
+  },
+  {
+    "name": "豆瓣(备线)",
+    "url": "https://dbzy.tv/api.php/provide/vod"
+  },
+  {
+    "name": "量子",
+    "url": "https://cj.lziapi.com/api.php/provide/vod"
+  },
+  {
+    "name": "iKun",
+    "url": "https://ikunzyapi.com/api.php/provide/vod"
+  },
+  {
+    "name": "非凡",
+    "url": "https://api.ffzyapi.com/api.php/provide/vod"
+  },
+  {
+    "name": "魔都",
+    "url": "https://www.mdzyapi.com/api.php/provide/vod"
+  },
+  {
+    "name": "1080优质",
+    "url": "https://api.1080zyku.com/inc/apijson.php"
+  },
+  {
+    "name": "极速",
+    "url": "https://jszyapi.com/api.php/provide/vod"
+  },
+  {
+    "name": "红牛(3号线)",
+    "url": "https://www.hongniuzy3.com/api.php/provide/vod"
+  },
+  {
+    "name": "暴风",
+    "url": "https://bfzyapi.com/api.php/provide/vod"
+  },
+  {
+    "name": "红牛",
+    "url": "https://www.hongniuzy2.com/api.php/provide/vod"
+  },
+  {
+    "name": "豪华",
+    "url": "https://hhzyapi.com/api.php/provide/vod"
+  },
+  {
+    "name": "最大",
+    "url": "https://api.zuidapi.com/api.php/provide/vod"
+  },
+  {
+    "name": "速播",
+    "url": "https://subocaiji.com/api.php/provide/vod"
+  },
+  {
+    "name": "金鹰",
+    "url": "https://jyzyapi.com/api.php/provide/vod"
+  },
+  {
+    "name": "360",
+    "url": "https://360zy.com/api.php/provide/vod"
+  },
+  {
+    "name": "光速",
+    "url": "https://api.guangsuapi.com/api.php/provide/vod"
+  },
+  {
+    "name": "如意",
+    "url": "https://cj.rycjapi.com/api.php/provide/vod"
+  },
+  {
+    "name": "茅台",
+    "url": "https://caiji.maotaizy.cc/api.php/provide/vod"
+  },
+  {
+    "name": "樱花资源",
+    "url": "https://m3u8.apiyhzy.com/api.php/provide/vod"
+  },
+  {
+    "name": "iqiyi资源",
+    "url": "https://www.iqiyizyapi.com/api.php/provide/vod"
+  }
+]

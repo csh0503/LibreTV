@@ -1,0 +1,2 @@
+# Keep qingran-libretv (+ other) duckdns names pointed at the home public IP
+*/5 * * * * qingran /opt/libretv/duckdns-update.sh >> /opt/libretv/duckdns.log 2>&1

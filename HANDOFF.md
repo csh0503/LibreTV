@@ -5,7 +5,9 @@
 > - **Vercel**（https://libre-tv-dusky-delta.vercel.app）只当备份：推 `main` 仍会自动部署（`git push origin HEAD:main`，main 线性历史，只快进、不强推）；`claude/*` 分支不部署 Preview。两边的设定档**不同步**（家里存在 `/opt/libretv/data/`，Vercel 用自己的 Upstash）。
 > - **伺服器很弱**：i5-7200U 2 核 4 线程、12 GB、只有 2.4G Wi-Fi（约 72 Mbps）。不要把视频流经伺服器转发或转码；重活放浏览器。没有 Vercel 的函数时长 / 常驻连接限制，WebSocket 等常驻服务可以跑，但要算上这台机器的上行和 CPU。
 > - **电视 App 还连着 Vercel**，要改成正式站网址并重新打包（伺服器说明的待办）。
-> - 伺服器的完整说明（网络、证书、秘密放哪、常用操作）在用户 Google Drive「homeserver 家用伺服器 / 00 README - homeserver 伺服器說明.md」。秘密只在伺服器的 `.env`，不要写进仓库。
+> - **部署文件和说明在仓库 `deploy/homeserver/`**（`README.md` 先读：请求怎么走、文件放哪、常用操作、从零重建、踩过的坑）。那里是伺服器 `/opt/libretv` 的副本：改了伺服器上的部署文件要同步回仓库，反之亦然。整台伺服器（硬件、BIOS、路由器、同机的 Vikunja / VPN / OpenMausBot）的说明在用户 Google Drive「00 伺服器金鑰 Server Keys / homeserver 家用伺服器 / 00 README - homeserver 伺服器說明.md」。
+> - **秘密只在伺服器的 `.env`**（变量名见 `deploy/homeserver/.env.example`），不要写进仓库，也不要让用户把秘密贴进对话：用 `deploy/homeserver/scripts/set-*.sh`（隐藏输入）。
+> - **搬家记录（2026-11-08）**：网页版从 Vercel 搬到 homeserver；3 个设定档（alyson / zzj / csh）用 Upstash **只读** token 导入到 `/opt/libretv/data/`；预设片源从 Vercel 的 `/api/status` 拷来，2026-11-09 删掉 8 个成人源（剩 26 个）并把单源搜索死线设为 5 秒；首页「成人内容」按钮删除（`0fec0f3`），设定档默认就过滤成人内容。
 >
 > 先读完这份再动手。用户用中文（繁体/简体混用）沟通；`PASSWORD` 环境变量未设置时所有 `/api/*` 返回 503，本地调试需要自建 `.env.local`（已被 git 忽略）。
 
@@ -192,7 +194,7 @@
 - **片源质检（旧记录，2026-10-16 起全在浏览器做，见上）`/api/quality`**（`src/lib/stream-quality.ts`）：详情弹窗搜完后、搜索结果卡片展开时（共用 `use-source-quality.tsx`），对最靠前的 8 个源取第 1 集播放列表：主列表有 RESOLUTION 就读分辨率，否则 Range 量一个分片大小按码率估；用播放时同一套 `stripAdGroups` 数能识别的插入广告秒数。结果缓存 1 小时，`rankSources` 排序为：没出错 → 清晰度档位 → 集数 → 广告少 → 速度。压在画面里的水印 / 口播广告测不出来。另有**新规则（只计数、播放时不跳过）** `suspectAdSeconds`：分组的网站或文件名样式与正片主样式（占比 ≥70%）不同、且 ≤120 秒，算「疑似广告」，显示在质检标签里，排序时按两倍计；观察准确后再考虑接进 `stripAdGroups`。质检已改为一次测全部源（按组顺序：第一组全测、余量给其他季；每批 30 个并发，最多 90 个；单源 14 秒超时）。带季数的片名查 TMDB 时去掉季数、不卡年份，再取 `/tv/{id}/season/{n}` 的日期、集数、简介。详情弹窗另显示 TMDB 中文简介与资讯（`/api/identity` 的 `info`）和首个片源详情里的导演 / 主演。
 - **数据源体检页 `/diagnostics`**（`/api/diagnostics`）：现场请求热榜、片库（动漫连载/完结）、TMDB 别名、设定档存储的每个上游，列出条数、耗时、报错、前几个片名。云端容器连不上这些上游，排查时请用户截这一页。
 
-- **Vercel Blob 免费额度**（每月约 1 万次读、2 千次写）：设定档同步原来每 2 秒读一次名单、播放时每 5 秒整份上传，额度很快用完。已改为：轮询 2 分钟一次 + 切回页面时；播放进度 `markProfileDirty('lazy')` 最多 5 分钟传一次、离开页面时补传；上传前名单显示云端没变就不再下载；服务端名单内存缓存 30 秒；榜单快照每实例每小时读一次。以后加任何读写存储的功能都要先算请求次数。**已接 Upstash Redis（2026-10-16，库名 libretv，iad1，Free）**，`profile-sync-store.ts` 认 `KV_REST_API_*`、`UPSTASH_REDIS_REST_*` 和自定义前缀的变量：两个都接着时 Redis 优先，Redis 没有的键回 Blob 读一次并搬进来，读到名单时整批搬设定档；删除时连 Blob 旧副本一起删。`/api/status` 的 `syncStorage` 显示当前用的是哪个。
+- **Vercel Blob 免费额度**（每月约 1 万次读、2 千次写）：设定档同步原来每 2 秒读一次名单、播放时每 5 秒整份上传，额度很快用完。已改为：轮询 2 分钟一次 + 切回页面时；播放进度 `markProfileDirty('lazy')` 最多 5 分钟传一次、离开页面时补传；上传前名单显示云端没变就不再下载；服务端名单内存缓存 30 秒；榜单快照每实例每小时读一次。以后加任何读写存储的功能都要先算请求次数。**已接 Upstash Redis（2026-10-16，库名 libretv，iad1，Free）**，`profile-sync-store.ts` 认 `KV_REST_API_*`、`UPSTASH_REDIS_REST_*` 和自定义前缀的变量：两个都接着时 Redis 优先，Redis 没有的键回 Blob 读一次并搬进来，读到名单时整批搬设定档；删除时连 Blob 旧副本一起删。`/api/status` 的 `syncStorage` 显示当前用的是哪个。**2026-11-14**：Blob 已经没用（Redis 里有完整名单和 3 个设定档，家里伺服器用本地文件），但只要 Vercel 还连着 Blob，Redis 查不到的键都会去 Blob 读一次、继续消耗 Blob 额度；用户准备在 Vercel 断开并删除 Blob 存储（删后 `hasBlob()` 为假，不再访问 Blob）。
 
 - `src/app/api/live/probe/route.test.ts` 有 10 个用例本来就超时失败（在我的改动之前就是），与本项目无关，可忽略。
 - 线上 Vercel 部署有 Vercel 登录保护，无法直接 curl；调接口请直连上游或本地起服务。

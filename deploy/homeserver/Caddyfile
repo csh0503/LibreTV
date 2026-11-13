@@ -1,0 +1,38 @@
+# https://qingran-libretv.duckdns.org -> LibreTV
+# https://qingran-cuhkvpn.duckdns.org -> CUHK VPN page (password, user "qingran"), /opt/cuhk-vpn/panel.py on the host (172.17.0.1:8091)
+# Certificates: Let's Encrypt via DuckDNS DNS challenge (token from .env), so only TCP 443 is forwarded on the router.
+{
+	admin off
+	auto_https disable_redirects
+}
+
+(duckdns_tls) {
+	tls {
+		dns duckdns {env.DUCKDNS_TOKEN}
+		propagation_delay 20s
+	}
+}
+
+qingran-libretv.duckdns.org {
+	import duckdns_tls
+	encode zstd gzip
+	reverse_proxy libretv:8080
+}
+
+qingran-cuhkvpn.duckdns.org {
+	import duckdns_tls
+	encode zstd gzip
+	basic_auth {
+		qingran {env.VPN_PANEL_HASH}
+	}
+	reverse_proxy host.docker.internal:8091
+}
+
+qingran-mausbot.duckdns.org {
+	import duckdns_tls
+	encode zstd gzip
+	reverse_proxy host.docker.internal:8798 {
+		flush_interval -1
+		header_up -Accept-Encoding
+	}
+}
