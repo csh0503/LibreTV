@@ -52,25 +52,25 @@ export interface CatalogRawItem extends DoubanItem {
 }
 
 /**
- * 各线索的「冷门 → 顶流」参考值（取对数后线性映射到 0~1）和可信度（权重）。
- * B站总播放水分大（儿童动画、B站独播国创动辄几十亿），只当弱信号。
+ * 各线索的「冷门 → 顶流」参考值（取对数后线性映射到 0~1）和可信度（w）。
+ * 豆瓣最贴近华语观众；Bangumi 专管动画；TMDB 按英语圈投票（国产剧、日本长篇动画票数普遍很少）；
+ * B站总播放水分大（儿童动画、B站独播国创动辄几十亿）。
  */
 const POP_REF: Record<'doubanVotes' | 'bgmCollect' | 'biliPlays' | 'tmdbVotes', { lo: number; hi: number; w: number }> = {
-  // 豆瓣：几百人评 = 冷门，30 万人评 = 国民级（灌篮高手 25 万、猫和老鼠 21 万）
-  doubanVotes: { lo: 200, hi: 300_000, w: 1 },
-  // Bangumi：几十人看过 = 冷门，7 万 = 顶流（孤独摇滚 6.8 万、命运石之门 6.4 万）
-  bgmCollect: { lo: 100, hi: 70_000, w: 0.85 },
-  // B站：十万播放 = 冷门，百亿 = 顶流（凡人修仙传 76 亿、全职猎人 1.6 亿）
-  biliPlays: { lo: 300_000, hi: 5_000_000_000, w: 0.45 },
-  // TMDB：几十票 = 冷门，两万票 = 顶流（中文圈作品票数普遍偏少，权重低一点）
-  tmdbVotes: { lo: 20, hi: 20_000, w: 0.6 },
+  // 豆瓣：几百人评 = 冷门，150 万人评 = 现象级（狂飙 107 万、琅琊榜 95 万、灌篮高手 25 万）
+  doubanVotes: { lo: 200, hi: 1_500_000, w: 1 },
+  // Bangumi：几十人看过 = 冷门，10 万 = 顶流（孤独摇滚 6.8 万、命运石之门 6.4 万）
+  bgmCollect: { lo: 100, hi: 100_000, w: 0.6 },
+  // B站：几十万播放 = 冷门，百亿 = 顶流（凡人修仙传 76 亿、全职猎人 1.6 亿）
+  biliPlays: { lo: 300_000, hi: 10_000_000_000, w: 0.7 },
+  // TMDB：几十票 = 冷门，三万票 = 顶流
+  tmdbVotes: { lo: 20, hi: 30_000, w: 0.5 },
 };
 /**
- * 「资料不足」的收缩量：分母多加这么多权重（相当于一个 0 分的虚拟来源）。
- * 只有一个站有记录的作品被往下拉，几个站都公认的才排得上去——
- * 不会出现只在 B站有几十亿播放的儿童动画压过《名侦探柯南》。
+ * 其他站的佐证占多少：分数 = 主线索 × (0.92 + 0.08 × 佐证)。只有一个站有记录的打 92 折；
+ * 主线索已经乘过可信度，只在 B站有几十亿播放的儿童动画（0.7）压不过各站公认的《名侦探柯南》。
  */
-const POP_SHRINK = 0.6;
+const SUPPORT_SHARE = 0.08;
 
 export function normLog(value: number | undefined, lo: number, hi: number): number | undefined {
   if (!(value !== undefined && value > 0)) return undefined;
@@ -78,18 +78,63 @@ export function normLog(value: number | undefined, lo: number, hi: number): numb
   return Math.max(0, Math.min(1, x));
 }
 
-/** 总热门分（0~1）：累计人气的加权平均，资料越少往 0 收缩得越多；不看年份 */
-export function popAllScore(sig: RawSignals): number {
-  let sum = 0;
-  let weight = 0;
-  for (const [key, ref] of Object.entries(POP_REF) as [keyof typeof POP_REF, (typeof POP_REF)[keyof typeof POP_REF]][]) {
-    const v = normLog(sig[key], ref.lo, ref.hi);
-    if (v === undefined) continue;
-    sum += v * ref.w;
-    weight += ref.w;
+export type PopKey = keyof typeof POP_REF;
+export const POP_KEYS = Object.keys(POP_REF) as PopKey[];
+
+/** 某个线索的原始值 → 0~1。默认按固定参考值取对数（见 POP_REF）；片库融合时换成「同频道里的位置」校准过的版本 */
+export type PopNormalizer = (key: PopKey, value: number | undefined) => number | undefined;
+
+export const absoluteNorm: PopNormalizer = (key, value) => normLog(value, POP_REF[key].lo, POP_REF[key].hi);
+
+/**
+ * 按频道校准：同一个线索在这个频道里排第几（百分位，占八成）和绝对量级（占两成）。
+ * 不同频道、不同站的口径差很多（动漫在 TMDB 上的票数普遍比美剧少一个数量级），
+ * 只看绝对值时，TMDB 票数少的日本长篇（《名侦探柯南》801 票）会被拖下去；看它在动漫里排第几就公平了。
+ */
+export function channelNormalizer(signals: RawSignals[]): PopNormalizer {
+  const sorted = new Map<PopKey, number[]>();
+  for (const key of POP_KEYS) {
+    sorted.set(
+      key,
+      signals.map((s) => s[key]).filter((v): v is number => v !== undefined && v > 0).sort((a, b) => a - b),
+    );
   }
-  if (weight === 0) return 0;
-  return sum / (weight + POP_SHRINK);
+  return (key, value) => {
+    const abs = absoluteNorm(key, value);
+    if (abs === undefined || value === undefined) return undefined;
+    const list = sorted.get(key)!;
+    if (list.length < 20) return abs;
+    // 小于等于它的有几个（二分）
+    let lo = 0;
+    let hi = list.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (list[mid] <= value) lo = mid + 1;
+      else hi = mid;
+    }
+    return 0.8 * (lo / list.length) + 0.2 * abs;
+  };
+}
+
+/**
+ * 总热门分（0~1）：累计人气，不看年份。
+ * 以「最有力的那个站」为主（可信度 × 校准值最高的那个），其他站当佐证：
+ * 分数 = 主线索 × (0.92 + 0.08 × 其他站的加权平均)。
+ * 不用平均数：国产剧在 TMDB 上只有一两百票，平均会把 107 万人评的《狂飙》拖到美剧后面；
+ * 片库融合时各线索先换成「在这个频道里排第几」，不同站的口径才能比。
+ */
+export function popAllScore(sig: RawSignals, norm: PopNormalizer = absoluteNorm): number {
+  const vals: { v: number; w: number }[] = [];
+  for (const key of POP_KEYS) {
+    const v = norm(key, sig[key]);
+    if (v !== undefined) vals.push({ v, w: POP_REF[key].w });
+  }
+  if (vals.length === 0) return 0;
+  vals.sort((a, b) => b.v * b.w - a.v * a.w);
+  const primary = vals[0].v * vals[0].w;
+  const rest = vals.slice(1);
+  const support = rest.length > 0 ? rest.reduce((t, x) => t + x.v * x.w, 0) / rest.reduce((t, x) => t + x.w, 0) : 0;
+  return primary * (1 - SUPPORT_SHARE + SUPPORT_SHARE * support);
 }
 
 const DAY = 86_400_000;

@@ -30,6 +30,12 @@ describe('总热门：累计人气，不扣老剧的分', () => {
     expect(popAllScore({ doubanVotes: 50_000, biliPlays: 3e8 })).toBeGreaterThan(popAllScore({ doubanVotes: 50_000 }));
   });
 
+  it('国产剧在 TMDB 上票很少也不被拖累：107 万人评的《狂飙》排在 25 万人评的美剧前面', () => {
+    const kuangbiao = popAllScore({ doubanVotes: 1_075_000, tmdbVotes: 114 });
+    const usShow = popAllScore({ doubanVotes: 251_000, tmdbVotes: 11_500 });
+    expect(kuangbiao).toBeGreaterThan(usShow);
+  });
+
   it('只在 B站有百亿播放的儿童动画，排不过各站公认的《名侦探柯南》', () => {
     const kids = popAllScore({ biliPlays: 12_500_000_000 });
     const conan = popAllScore({ doubanVotes: 198_000, bgmCollect: 9000, tmdbVotes: 1200 });

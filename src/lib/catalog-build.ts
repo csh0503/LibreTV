@@ -2,7 +2,9 @@ import type { DoubanItem } from './types';
 import type { CatalogChannel, WorkRow } from './catalog-db';
 import {
   bayesRating,
+  channelNormalizer,
   popAllScore,
+  type PopNormalizer,
   popRecentScore,
   sortDateOf,
   totalVotes,
@@ -161,7 +163,16 @@ export async function buildChannelWorks(
       updated_at: now,
     });
   }
-  poolSeriesPopularity(rows);
+  // 总热门按频道校准后重算（各线索在这个频道里排第几 + 绝对量级），再按整个系列合计
+  const norm = channelNormalizer(rows.map((r) => JSON.parse(r.signals_json) as RawSignals));
+  for (const row of rows) {
+    const sig = JSON.parse(row.signals_json) as RawSignals;
+    const popAll = popAllScore(sig, norm);
+    const dates = { firstDate: sig.firstDate, lastDate: sig.lastDate, year: row.year ?? undefined };
+    row.pop_all = round4(popAll);
+    row.pop_recent = round4(popRecentScore(sig, dates, popAll, now));
+  }
+  poolSeriesPopularity(rows, norm);
   return rows;
 }
 
@@ -172,7 +183,7 @@ export async function buildChannelWorks(
  * 每一季的总热门 = 系列分 × 0.8 + 自己 × 0.2：系列整体排得上去，系列里仍按各季自己的人气排，
  * 片库前端同一系列只留排在最前的那一季。
  */
-export function poolSeriesPopularity(rows: WorkRow[]): void {
+export function poolSeriesPopularity(rows: WorkRow[], norm?: PopNormalizer): void {
   const groups = new Map<string, WorkRow[]>();
   for (const row of rows) {
     if (row.series_key.length < 2) continue;
@@ -190,7 +201,7 @@ export function poolSeriesPopularity(rows: WorkRow[]): void {
       agg.biliPlays = (agg.biliPlays ?? 0) + (sig.biliPlays ?? 0) || undefined;
       if (sig.tmdbVotes && sig.tmdbVotes > (agg.tmdbVotes ?? 0)) agg.tmdbVotes = sig.tmdbVotes;
     }
-    const series = popAllScore(agg);
+    const series = popAllScore(agg, norm);
     for (const row of list) row.pop_all = round4(Math.max(row.pop_all, series * 0.8 + row.pop_all * 0.2));
   }
 }
