@@ -772,7 +772,8 @@ export async function runIncrementalSync(now = Date.now()): Promise<void> {
 export function catalogSyncStatus() {
   const state = kvGet<SyncState>('sync:state');
   return {
-    running,
+    // 同步在启动时那份模块实例里跑，API 路由这边的 running 看不到：以存档里的阶段为准
+    running: running || state?.value?.phase === 'full',
     state: state?.value ?? null,
     counts: Object.fromEntries(CATALOG_CHANNELS.map((c) => [c, countWorks(c)])),
   };

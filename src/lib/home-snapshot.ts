@@ -115,12 +115,23 @@ export function computeHomeSnapshot(): Promise<HomeSnapshot> {
  * 拿快照（序列化好的 JSON）：内存 → 本地片库 kv → 都没有返回 undefined（并在背后开始算）。
  * 过期了也先返回旧的、背后再算。
  */
+/** 多久以后去存档里看看有没有更新的（背景重算是另一份模块实例写进存档的） */
+const RELOAD_MS = 60_000;
+let checkedAt = 0;
+
 export function readHomeSnapshot(): { json: string; at: number } | undefined {
-  if (!memory) {
+  const now = Date.now();
+  // Next.js 正式版里，启动时跑的背景重算和 API 路由是两份模块实例，内存不共用：
+  // 路由这边隔一分钟去存档里拿背景算好的新版本，不自己重算
+  if (!memory || (now - memory.snap.at > REFRESH_MS && now - checkedAt > RELOAD_MS)) {
+    checkedAt = now;
     const saved = kvGet<HomeSnapshot>(KV_KEY)?.value;
-    if (saved && saved.at) memory = { snap: saved, json: JSON.stringify({ ready: true, ...saved }) };
+    if (saved && saved.at && (!memory || saved.at > memory.snap.at)) {
+      memory = { snap: saved, json: JSON.stringify({ ready: true, ...saved }) };
+    }
   }
-  if (!memory || Date.now() - memory.snap.at > REFRESH_MS) void computeHomeSnapshot().catch(() => undefined);
+  // 存档也很久没更新（没有背景重算：Vercel、HOME_SNAPSHOT=0，或背景那边出错了）才在这里算
+  if (!memory || now - memory.snap.at > 2 * REFRESH_MS + 60_000) void computeHomeSnapshot().catch(() => undefined);
   return memory ? { json: memory.json, at: memory.snap.at } : undefined;
 }
 
