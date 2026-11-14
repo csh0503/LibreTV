@@ -8,7 +8,7 @@
 
 | 项目 | 内容 |
 |---|---|
-| 正式网址 | **https://qingran-libretv.duckdns.org** |
+| 正式网址 | **https://tv.qingran.uk** （旧 `qingran-libretv.duckdns.org` 仅暂留兼容；Caddy 万用凭证与 `cf-ddns.sh` 现由独立仓库 `csh0503/homeserver-cloudflare` 统一维护） |
 | 备份网址 | https://libre-tv-dusky-delta.vercel.app （Vercel，推 `main` 自动部署；设定档存在它自己的 Upstash，和家里**不同步**） |
 | 机器 | 旧 ASUS VivoBook X540UP 改的伺服器：i5-7200U（2 核 4 线程）、12 GB、256 GB SSD、2.4G Wi-Fi（约 72 Mbps）、电池已坏 |
 | 系统 | Debian 13 (trixie)，无桌面 |
@@ -84,7 +84,7 @@ sudo tar czf ~/libretv-data-$(date +%F).tar.gz -C /opt/libretv data
 | `HOME_SNAPSHOT=0` | 不在背景重算首页快照（`/api/home` 第一次被请求时才算） |
 | `CATALOG_DB=/路径` | 换库文件位置（默认 `/app/.data/catalog/catalog.db`） |
 
-看同步进度：登录网站后打开 `https://qingran-libretv.duckdns.org/api/catalog?sync=1`（各频道作品数、上次全量 / 增量时间、出错信息），或 `docker logs libretv | grep catalog`。
+看同步进度：登录网站后打开 `https://tv.qingran.uk/api/catalog?sync=1`（各频道作品数、上次全量 / 增量时间、出错信息），或 `docker logs libretv | grep catalog`。
 
 ## 6. 踩过的坑
 
@@ -100,5 +100,4 @@ sudo tar czf ~/libretv-data-$(date +%F).tar.gz -C /opt/libretv data
 ## 7. 待办
 
 - [ ] 电视 App（`tv/`，分支 `fix/tv-native-ux` / `fix/tv-webview-compat`，未合并进 `main`）还连着 Vercel，要改成正式站网址并重新打包。
-- [ ] Vercel 的 Blob 已经没用（设定档在 Upstash，家里不用 Blob），用户准备在 Vercel 删除 Blob 存储并断开连接。
 - [ ] 换电池；改用网线（USB 3.0 千兆网卡，换了网卡要改路由器的静态 IP 和端口转发）。
