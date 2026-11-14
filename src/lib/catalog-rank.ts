@@ -9,8 +9,8 @@ import type { CatalogChannel } from './catalog-db';
  *   《海贼王》《银魂》《名侦探柯南》这种国民作品自然在最前面。
  * - 近期热播（pop_recent）：现在正在火——综合热榜名次、豆瓣「近期热门」名次、B站最近更新、
  *   TMDB 当下热度，乘上「最近有没有新内容」。
- * - 最新上线（sort_date）：首播日 / 最新一集日期（YYYY-MM-DD）由新到旧；只有年份的记成 YYYY-00-00，
- *   排在同一年有确切日期的后面。还没播出的不进片库。
+ * - 最新上线（sort_date）：首播 / 上映日（YYYY-MM-DD，这一季自己的首播）由新到旧；只有年份的记成 YYYY-00-00，
+ *   排在同一年有确切日期的后面。还没播出的不进片库。最近更新了新集的老剧不算「新上线」（那是近期热播）。
  * - 最高评分（sort_rate）：各站评分按 catalog-meta 的校正合成一个分，再按评价人数做贝叶斯收缩
  *   （人少的往平均分拉），冷门刷分剧上不来。
  */
@@ -49,28 +49,37 @@ export interface RawSignals {
 export interface CatalogRawItem extends DoubanItem {
   channel: CatalogChannel;
   sig: RawSignals;
+  /** 不进片库（TMDB 的欧美日播肥皂剧）：照样存下来，好让重抓时盖掉以前存的那条 */
+  excluded?: boolean;
 }
 
 /**
  * 各线索的「冷门 → 顶流」参考值（取对数后线性映射到 0~1）和可信度（w）。
- * 豆瓣最贴近华语观众；Bangumi 专管动画；TMDB 按英语圈投票（国产剧、日本长篇动画票数普遍很少）；
- * B站总播放水分大（儿童动画、B站独播国创动辄几十亿）。
+ * 用户在海外、基本不用豆瓣（2026-11-14 用户要求）：海外来源权重高、国内来源低——
+ * Bangumi（动画，含大陆下架的《进击的巨人》《死亡笔记》《东京喰种》这类，豆瓣上根本没有词条）1、
+ * TMDB 0.9、豆瓣 0.7、B站总播放（水分大：儿童动画、B站独播国创动辄几十亿）0.45。
  */
 const POP_REF: Record<'doubanVotes' | 'bgmCollect' | 'biliPlays' | 'tmdbVotes', { lo: number; hi: number; w: number }> = {
   // 豆瓣：几百人评 = 冷门，150 万人评 = 现象级（狂飙 107 万、琅琊榜 95 万、灌篮高手 25 万）
-  doubanVotes: { lo: 200, hi: 1_500_000, w: 1 },
+  doubanVotes: { lo: 200, hi: 1_500_000, w: 0.7 },
   // Bangumi：几十人看过 = 冷门，10 万 = 顶流（孤独摇滚 6.8 万、命运石之门 6.4 万）
-  bgmCollect: { lo: 100, hi: 100_000, w: 0.6 },
+  bgmCollect: { lo: 100, hi: 100_000, w: 1 },
   // B站：几十万播放 = 冷门，百亿 = 顶流（凡人修仙传 76 亿、全职猎人 1.6 亿）
-  biliPlays: { lo: 300_000, hi: 10_000_000_000, w: 0.7 },
+  biliPlays: { lo: 300_000, hi: 10_000_000_000, w: 0.45 },
   // TMDB：几十票 = 冷门，三万票 = 顶流
-  tmdbVotes: { lo: 20, hi: 30_000, w: 0.5 },
+  tmdbVotes: { lo: 20, hi: 30_000, w: 0.9 },
 };
 /**
  * 其他站的佐证占多少：分数 = 主线索 × (0.92 + 0.08 × 佐证)。只有一个站有记录的打 92 折；
- * 主线索已经乘过可信度，只在 B站有几十亿播放的儿童动画（0.7）压不过各站公认的《名侦探柯南》。
+ * 主线索已经乘过可信度，只在 B站有几十亿播放的儿童动画（0.45）压不过各站公认的《名侦探柯南》。
  */
 const SUPPORT_SHARE = 0.08;
+/**
+ * 只靠 B站播放撑着、全网评分人数不到这么多的（B站自制短片、儿童动画、微电影）：总热门打五折。
+ * 伺服器实测这类条目（《大世界扭蛋机》《开心锤锤》《奇妙博物馆》，0 人评分）曾挤进各频道总热门前排。
+ */
+const BILI_ONLY_MIN_VOTES = 500;
+const BILI_ONLY_FACTOR = 0.5;
 
 export function normLog(value: number | undefined, lo: number, hi: number): number | undefined {
   if (!(value !== undefined && value > 0)) return undefined;
@@ -134,7 +143,8 @@ export function popAllScore(sig: RawSignals, norm: PopNormalizer = absoluteNorm)
   const primary = vals[0].v * vals[0].w;
   const rest = vals.slice(1);
   const support = rest.length > 0 ? rest.reduce((t, x) => t + x.v * x.w, 0) / rest.reduce((t, x) => t + x.w, 0) : 0;
-  return primary * (1 - SUPPORT_SHARE + SUPPORT_SHARE * support);
+  const score = primary * (1 - SUPPORT_SHARE + SUPPORT_SHARE * support);
+  return sig.biliPlays && totalVotes(sig) < BILI_ONLY_MIN_VOTES ? score * BILI_ONLY_FACTOR : score;
 }
 
 const DAY = 86_400_000;
@@ -191,11 +201,10 @@ export function bayesRating(rating: number | undefined, votes: number, prior = 6
 
 /** 「最新上线」的排序键：YYYY-MM-DD；只有年份的 YYYY-00-00（排在同年有日期的后面）；什么都没有给空串 */
 export function sortDateOf(dates: { firstDate?: string; lastDate?: string; year?: number }, today: string): string {
-  const exact = [dates.lastDate, dates.firstDate]
-    .filter((d): d is string => Boolean(d && /^\d{4}-\d{2}-\d{2}$/.test(d) && d <= today))
-    .sort()
-    .pop();
-  if (exact) return exact;
+  // 只看首播 / 上映日：用「最新一集」的话，播了几十年的欧美日播剧、刚被 B站补上架的老电影会冲到最前面
+  //（「最近有更新」归「近期热播」管）
+  const first = dates.firstDate;
+  if (first && /^\d{4}-\d{2}-\d{2}$/.test(first) && first <= today) return first;
   if (dates.year && String(dates.year) <= today.slice(0, 4)) return `${dates.year}-00-00`;
   return '';
 }

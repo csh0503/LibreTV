@@ -70,7 +70,6 @@ export function DoubanCard({
   const { toast } = useToast();
   useEffect(() => setImgFailed(false), [item.cover]);
 
-  const hidden = (e: React.SyntheticEvent) => e.stopPropagation();
   const notInterested = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!profileId) return;
@@ -145,11 +144,12 @@ export function DoubanCard({
           </div>
         )}
 
-        {/* 悬停浮层（只在有鼠标的设备上）：重点资讯 + 快捷操作 */}
+        {/* 悬停浮层（只在有鼠标的设备上）：重点资讯 + 快捷操作。
+            浮层盖满整张海报：点空白处要照样冒泡到卡片打开详情（只有按钮自己拦冒泡），
+            以前这里整层拦住了，鼠标点海报什么都不发生，只有「播放」键能用 */}
         {hasOverlay && (
           <div
             className="absolute inset-0 hidden [@media(hover:hover)]:flex flex-col justify-end p-2.5 bg-gradient-to-t from-black/90 via-black/55 to-black/0 opacity-0 group-hover/card:opacity-100 group-focus-within/card:opacity-100 transition-opacity duration-200"
-            onClick={hidden}
           >
             {detailLine && <p className="text-[10.5px] text-white/80 line-clamp-1 mb-1">{detailLine}</p>}
             {item.subtitle && <p className="text-[11px] leading-snug text-white/85 line-clamp-2 mb-2">{item.subtitle}</p>}

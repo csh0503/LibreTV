@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bgmToRaw, biliToRaw, rawKeyOf, tmdbRowToRaw } from './catalog-sync';
+import { bgmToRaw, biliToRaw, doubanQueryChannel, rawKeyOf, tmdbRowToRaw } from './catalog-sync';
 
 const NOW = Date.parse('2026-11-14T04:00:00Z');
 
@@ -41,5 +41,25 @@ describe('各来源条目 → 本地片库原始条目', () => {
     const recent = biliToRaw({ season_id: 2, title: '某新番', cover: 'https://x.jpg', index_show: '更新至第6话', is_finish: 0, order: '11月12日更新' }, type, 'recent', 3, NOW)!;
     expect(recent.sig).toMatchObject({ biliRecentRank: 3, lastDate: '2026-11-12', recentAt: NOW });
     expect(biliToRaw({ season_id: 3, title: '某番（中配）', cover: 'https://x.jpg' }, type, 'plays', 0, NOW)).toBeUndefined();
+  });
+
+  it('B站电影的「X月X日更新」是上架日，不当成最新内容（1979 年《哪吒闹海》不会变成 2026 年的新片）', () => {
+    const movieType = { st: 2, channel: 'movie' as const, isTv: false };
+    const nezha = biliToRaw({ season_id: 9, title: '哪吒闹海', cover: 'https://x.jpg', order: '8月13日更新' }, movieType, 'recent', 0, NOW)!;
+    expect(nezha.sig.lastDate).toBeUndefined();
+  });
+
+  it('TMDB 欧美日播肥皂剧标成不进片库（照样存下来盖掉旧的那条）', () => {
+    const soap = tmdbRowToRaw({ id: 1871, name: '东区人', poster_path: '/e.jpg', genre_ids: [10766, 18], first_air_date: '1985-02-19' }, 'tv', NOW)!;
+    expect(soap.excluded).toBe(true);
+    expect(tmdbRowToRaw({ id: 2, name: '某剧', poster_path: '/e.jpg', genre_ids: [18] }, 'tv', NOW)!.excluded).toBeUndefined();
+  });
+
+  it('豆瓣查询按标签分频道（按频道分批融合用）', () => {
+    expect(doubanQueryChannel({ kind: 'tv', tags: '动画,日本' })).toBe('anime');
+    expect(doubanQueryChannel({ kind: 'movie', tags: '动画' })).toBe('movie');
+    expect(doubanQueryChannel({ kind: 'tv', tags: '综艺,韩国' })).toBe('show');
+    expect(doubanQueryChannel({ kind: 'movie', tags: '纪录片' })).toBe('doc');
+    expect(doubanQueryChannel({ kind: 'tv', tags: '电视剧,美国' })).toBe('tv');
   });
 });

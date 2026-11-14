@@ -123,8 +123,9 @@ export function tmdbRowToRaw(row: TmdbRow, kind: 'tv' | 'movie', now: number): C
   const animated = genreIds.includes(16);
   const doc = genreIds.includes(99);
   const show = isTv && (genreIds.includes(10764) || genreIds.includes(10767));
-  // 新闻、肥皂剧（美国日播）不要
+  // 新闻不要；欧美日播肥皂剧（10766：东区人、好时光坏时光，一播几十年）标成不进片库
   if (isTv && genreIds.includes(10763)) return undefined;
+  const soap = isTv && genreIds.includes(10766);
   const area = TMDB_CODE_TO_AREA[row.origin_country?.[0] ?? ''] || undefined;
   return {
     id: `tmdb_${row.id}`,
@@ -139,6 +140,7 @@ export function tmdbRowToRaw(row: TmdbRow, kind: 'tv' | 'movie', now: number): C
     genres: genreIds.map((g) => TMDB_ID_TO_GENRE[g]).filter(Boolean).slice(0, 4).join(' ') || undefined,
     originalTitle: (row.original_title || row.original_name || '').trim() || undefined,
     channel: channelFor({ isTv, animated, doc, show }),
+    ...(soap ? { excluded: true } : {}),
     sig: {
       tmdbVotes: row.vote_count || undefined,
       tmdbPopularity: row.popularity || undefined,
@@ -408,7 +410,12 @@ export function biliToRaw(
   const sig: RawSignals =
     mode === 'plays'
       ? { biliPlays: /播放/.test(row.order ?? '') ? parseChineseCount(row.order) : undefined }
-      : { biliRecentRank: rank, lastDate: parseBiliUpdate(row.order, now), recentAt: now };
+      : {
+          biliRecentRank: rank,
+          // 电影没有「最新一集」：B站的「X月X日更新」是老电影刚上架的日子，不能当成上映日 / 新内容
+          lastDate: type.isTv ? parseBiliUpdate(row.order, now) : undefined,
+          recentAt: now,
+        };
   return {
     id: `bili_idx_${row.season_id}`,
     origin: 'bili',
@@ -482,6 +489,17 @@ function doubanChannel(kind: 'tv' | 'movie', tags: string, item: DoubanItem): Ca
   if (/动画/.test(g)) return 'anime';
   return 'tv';
 }
+
+/** 豆瓣查询属于哪个频道（按标签，和 doubanChannel 对单条的判断一致） */
+export function doubanQueryChannel(q: Pick<DoubanQuery, 'kind' | 'tags'>): CatalogChannel {
+  if (/纪录片/.test(q.tags)) return 'doc';
+  if (/综艺/.test(q.tags)) return 'show';
+  if (q.kind === 'movie') return 'movie';
+  if (/动画/.test(q.tags)) return 'anime';
+  return 'tv';
+}
+
+const DOUBAN_CHANNEL_ORDER: CatalogChannel[] = ['anime', 'tv', 'movie', 'show', 'doc'];
 
 function doubanFullQueries(): DoubanQuery[] {
   const q: DoubanQuery[] = [];
@@ -698,7 +716,9 @@ export async function runFullSync(now = Date.now()): Promise<void> {
   const { sink, flush, touched } = makeSink();
   try {
     log('全量同步开始', done.size > 0 ? `（续跑，已完成 ${done.size} 项）` : '');
-    // 先抓快的、能让片库马上有内容的（每抓完一批就融合一次，第一次打开就有东西）：
+    // 26 个点播源的最近更新只要几十秒：最先做，卡片上「有片源」马上能亮
+    await syncSourceUpdates(72, 15);
+    // 再抓快的、能让片库马上有内容的（每抓完一批就融合一次，第一次打开就有东西）：
     // B站片库整份（约 2 分钟）→ TMDB + Bangumi 按年份（约 10 分钟）→ 最慢的豆瓣（每页 4~6 秒，约半小时）
     await syncBiliFull(sink, now, isDone, markDone);
     await syncHotLists(sink, now);
@@ -711,9 +731,14 @@ export async function runFullSync(now = Date.now()): Promise<void> {
     flush();
     kvSet(doneKey, [...done]);
     await rebuildChannels(CATALOG_CHANNELS, now);
+    // 豆瓣按频道分批：每抓完一个频道就重新融合这个频道（不用等半小时全部抓完才看到新排名）
     const doubanQueries = doubanFullQueries();
-    await syncDoubanQueries(sink, doubanQueries, now, isDone, markDone);
-    flush();
+    for (const channel of DOUBAN_CHANNEL_ORDER) {
+      await syncDoubanQueries(sink, doubanQueries.filter((q) => doubanQueryChannel(q) === channel), now, isDone, markDone);
+      flush();
+      kvSet(doneKey, [...done]);
+      await rebuildChannels([channel], now);
+    }
     // 第一轮取不到的页（超时 / 被拒，没记成做完）再试一轮
     await syncBiliFull(sink, now, isDone, markDone);
     await Promise.all([syncTmdbFull(sink, now, isDone, markDone), syncBangumiFull(sink, now, isDone, markDone)]);
@@ -721,7 +746,6 @@ export async function runFullSync(now = Date.now()): Promise<void> {
     flush();
     kvSet(doneKey, [...done]);
     await rebuildChannels(CATALOG_CHANNELS, now);
-    await syncSourceUpdates(72, 15);
     pruneRawItems(30 * DAY);
     pruneSourceIndex(30 * DAY);
     kvSet('sync:state', { fullAt: Date.now(), incAt: Date.now(), phase: 'idle' } satisfies SyncState);

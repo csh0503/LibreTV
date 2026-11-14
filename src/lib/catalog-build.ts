@@ -96,7 +96,8 @@ export async function buildChannelWorks(
 ): Promise<WorkRow[]> {
   const today = new Date(now + 8 * 3600_000).toISOString().slice(0, 10);
   const nowYear = Number(today.slice(0, 4));
-  const sorted = [...raws].sort(
+  // 标了不进片库的（欧美日播肥皂剧）在这里拿掉
+  const sorted = raws.filter((r) => !r.excluded).sort(
     (a, b) => (PRIMARY_ORDER[sourceOfItem(a)] ?? 9) - (PRIMARY_ORDER[sourceOfItem(b)] ?? 9),
   );
   const works = new WorkGroups<{ members: CatalogRawItem[] }>({ nowYear });
@@ -119,6 +120,8 @@ export async function buildChannelWorks(
     const primary = members[0];
     const meta = mergeWorkMeta({ ...primary, cover: primary.cover || members.find((m) => m.cover)?.cover || '' }, members);
     const sig = mergeSignals(members.map((m) => m.sig ?? {}), now);
+    // 电影没有「最新一集」（各站给的更新日是上架日）：不参与近期 / 最新的判断
+    if (channel === 'movie') delete sig.lastDate;
     const year = meta.year && /^\d{4}$/.test(meta.year) ? Number(meta.year) : undefined;
     // 还没播出的不进片库（「即将播出」那一行管它们）
     if (sig.firstDate && sig.firstDate > today) continue;

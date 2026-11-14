@@ -30,10 +30,23 @@ describe('总热门：累计人气，不扣老剧的分', () => {
     expect(popAllScore({ doubanVotes: 50_000, biliPlays: 3e8 })).toBeGreaterThan(popAllScore({ doubanVotes: 50_000 }));
   });
 
-  it('国产剧在 TMDB 上票很少也不被拖累：107 万人评的《狂飙》排在 25 万人评的美剧前面', () => {
-    const kuangbiao = popAllScore({ doubanVotes: 1_075_000, tmdbVotes: 114 });
-    const usShow = popAllScore({ doubanVotes: 251_000, tmdbVotes: 11_500 });
-    expect(kuangbiao).toBeGreaterThan(usShow);
+  it('海外来源优先：豆瓣上根本没有词条的《进击的巨人》靠 Bangumi / TMDB 排在豆瓣人多的作品前面', () => {
+    const aot = popAllScore({ bgmCollect: 58_083, tmdbVotes: 7_825 });
+    const doubanHeavy = popAllScore({ doubanVotes: 207_000, bgmCollect: 28_114, tmdbVotes: 5_649 });
+    expect(aot).toBeGreaterThan(doubanHeavy);
+  });
+
+  it('只靠 B站播放、全网不到 500 人评分的短片打五折（《大世界扭蛋机》压不过《千与千寻》）', () => {
+    const shortFilm = popAllScore({ biliPlays: 220_000_000 });
+    const spirited = popAllScore({ doubanVotes: 2_000_000, tmdbVotes: 17_000 });
+    expect(spirited).toBeGreaterThan(shortFilm * 2);
+    const rated = popAllScore({ biliPlays: 1e9, doubanVotes: 600 });
+    const unrated = popAllScore({ biliPlays: 1e9 });
+    expect(unrated).toBeLessThan(rated * 0.6);
+  });
+
+  it('TMDB 票少的国产剧仍靠豆瓣保底，排在 0 人评分的 B站短片前面', () => {
+    expect(popAllScore({ doubanVotes: 1_075_000, tmdbVotes: 114 })).toBeGreaterThan(popAllScore({ biliPlays: 5_000_000_000 }));
   });
 
   it('只在 B站有百亿播放的儿童动画，排不过各站公认的《名侦探柯南》', () => {
@@ -66,6 +79,10 @@ describe('近期热播', () => {
 });
 
 describe('最新上线 / 最高评分', () => {
+  it('只按首播日：播了四十年、最近还在更新的日播剧（1985 年）不算新上线', () => {
+    expect(sortDateOf({ firstDate: '1985-02-19', lastDate: '2026-11-13' }, '2026-11-14')).toBe('1985-02-19');
+  });
+
   it('有确切日期的按日期；只有年份的排在同年有日期的后面；还没播的不算', () => {
     const today = '2026-11-14';
     const a = sortDateOf({ firstDate: '2026-10-02', lastDate: '2026-11-12' }, today);
@@ -124,12 +141,24 @@ describe('融合：同一部作品各来源合成一行（沿用 work-identity /
     const op = rows.find((r) => r.title === '航海王')!;
     expect(op.first_date).toBe('1999-10-20');
     expect(op.last_date).toBe('2026-11-09');
-    expect(op.sort_date).toBe('2026-11-09');
+    expect(op.sort_date).toBe('1999-10-20');
     expect(JSON.parse(op.ids_json)).toMatchObject({ douban: '1', bangumi: 'bgm_975', tmdb: 'tmdb_37854' });
     // 豆瓣 9.6 / Bangumi 8.0(+0.5) / TMDB 8.7(-0.1) 加权
     expect(op.rating).toBeGreaterThan(8.6);
     expect(op.rating).toBeLessThan(9.2);
     expect(op.pop_all).toBeGreaterThan(0.6);
+  });
+
+  it('标了不进片库的（肥皂剧）不出现', async () => {
+    const rows = await buildChannelWorks(
+      'tv',
+      [
+        raw({ id: 'tmdb_1871', origin: 'tmdb', title: '东区人', year: '1985', channel: 'tv', excluded: true, sig: { firstDate: '1985-02-19' } }),
+        raw({ id: 'tmdb_5', origin: 'tmdb', title: '某剧', year: '2026', channel: 'tv', sig: { firstDate: '2026-10-01' } }),
+      ],
+      NOW,
+    );
+    expect(rows.map((r) => r.title)).toEqual(['某剧']);
   });
 
   it('同名不同作品（2026 年乐高特别篇 vs 1999 年老番）不合并；还没播出的不进库', async () => {
