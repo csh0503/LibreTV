@@ -1,7 +1,7 @@
 # 交接说明（给接手的会话）
 
 > **部署规则（2026-11-08 起，正式站在家用伺服器）**：
-> - **正式站**：https://qingran-libretv.duckdns.org ，跑在家里的 homeserver（Debian 13，`ssh qingran@192.168.31.76`，外面用 Tailscale `100.95.85.48`）。Docker Compose 在 `/opt/libretv`，映像 `libretv-local:main` 是在伺服器上用 GitHub `main` **自己 build** 的，**推送后不会自动更新**。改完、测试通过、`main` 快进之后，要在伺服器上执行：`cd /opt/libretv/src && git pull && docker build -t libretv-local:main . && cd .. && docker compose up -d`。这一步会让正式站换版本，先问用户再做。
+> - **正式站**：https://tv.qingran.uk （舊別名 `https://qingran-libretv.duckdns.org` 暫時並存），跑在家里的 homeserver（Debian 13，`ssh qingran@192.168.31.76`，外面用 Tailscale `100.95.85.48`）。Docker Compose 在 `/opt/libretv`（Caddy 與 Cloudflare 網域設定同步維護在獨立倉庫 `csh0503/homeserver-cloudflare`），映像 `libretv-local:main` 是在伺服器上用 GitHub `main` **自己 build** 的，**推送后不会自动更新**。改完、测试通过、`main` 快进之后，要在伺服器上执行：`cd /opt/libretv/src && git pull && docker build -t libretv-local:main . && cd .. && docker compose up -d`。这一步会让正式站换版本，先问用户再做。
 > - **Vercel**（https://libre-tv-dusky-delta.vercel.app）只当备份：推 `main` 仍会自动部署（`git push origin HEAD:main`，main 线性历史，只快进、不强推）；`claude/*` 分支不部署 Preview。两边的设定档**不同步**（家里存在 `/opt/libretv/data/`，Vercel 用自己的 Upstash）。
 > - **伺服器很弱**：i5-7200U 2 核 4 线程、12 GB、只有 2.4G Wi-Fi（约 72 Mbps）。不要把视频流经伺服器转发或转码；重活放浏览器。没有 Vercel 的函数时长 / 常驻连接限制，WebSocket 等常驻服务可以跑，但要算上这台机器的上行和 CPU。
 > - **电视 App 还连着 Vercel**，要改成正式站网址并重新打包（伺服器说明的待办）。
@@ -39,6 +39,9 @@
   - **画质选源**：质检抽正片 30% / 50% / 70% 三片取码率中位数；浏览器直连 HEAD 读不到大小（跨域）就交给伺服器 `/api/segment-size`（HEAD 或 `Range: bytes=0-0` 只读响应头，每一跳过 SSRF 检查）；`effectiveTier`：码率 <1.2 Mbps 的「1080P」排在 ≥1.5 Mbps 的 720P 后面，标签显示「1080P · 0.7Mbps 偏糊」「720P · 2.6Mbps 高码率」；播放时 hls.js 最高一档的 6 片中位码率和真实画面高度写回 `playback-stats`，质检量不到时用它。质检缓存升到 `libretv:quality:v2`。
   - **播放页**：去掉 `max-w-7xl`，宽度跟窗口走（最大 1920 / 2400px），播放器高度不超过「窗口高 − 8rem」（`.player-fit`，16:9 跟着收），右边剧集栏和播放器一样高、自己滚动；「宽屏模式」（按钮或 T 键，记在 localStorage）把剧集栏挪到下面，播放器整条铺满窗口（`.player-theater`）。实测 1920×1080：播放器 1440×810（原来约 932×524）。
   - `canonicalTitle` 改成预先建好的别名表查找（结果不变，片库上万部融合时才不慢）；`WorkGroups` 的「译名不同」兜底只比同一年份、同一类型那一桶（结果不变）。
+  - **部署（2026-11-14，用户在规格书里要求推送并部署）**：`main` 快进到 `dfe2fac`，homeserver 已重建镜像重启，`backup-data.sh` 已拷回伺服器（排除 `data/catalog`）。容器里实测：`/api/home` 14~19 ms（重启后第一次 90~116 ms，读存档）、`/api/catalog` 9~11 ms。第一次全量同步在伺服器上：B站 + TMDB + Bangumi 约 15 分钟（比本机快很多），豆瓣约半小时。
+  - 正式版注意：Next.js 的 `instrumentation` 和 API 路由是**两份模块实例**，内存变量不共用——背景同步 / 首页快照的状态都要经过 SQLite（`kv` 表），别用模块变量在两边传。
+  - 验证方法（不碰站点密码）：`ssh qingran@192.168.31.76 'docker exec -i libretv node -' < 脚本`，脚本在容器里用容器自己的 `PROXY_SECRET` 签一个 5 分钟的会话再请求 `127.0.0.1:8080`，只打印状态 / 耗时 / 片名。
 
 - **2026-10-25 观看记录合并、货架一批取数、「不再推荐」进设定档**（声纹 / 去广告 / 去水印没动）：
   - 观看记录和首页「继续观看」用 `workKeyOf`（`src/lib/history-work.ts`）：先剥季数，再按别名收成同一个名字。海贼王 = 航海王，写不写「第一季」都算同一部。列表只显示最近那个源；库里仍按源留进度。删掉一部时换过的源一起从列表消失。超过 100 条先淘汰重复源，再淘汰更老的剧。
